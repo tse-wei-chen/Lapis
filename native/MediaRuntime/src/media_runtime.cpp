@@ -221,6 +221,57 @@ lapis_transport_state transport_from_execution_state(
     return fallback;
 }
 
+bool terminal_transport(lapis_transport_state transport) noexcept {
+    return transport == LAPIS_TRANSPORT_ENDED ||
+        transport == LAPIS_TRANSPORT_FAULTED;
+}
+
+bool active_transport(lapis_transport_state transport) noexcept {
+    return transport == LAPIS_TRANSPORT_PLAYING ||
+        transport == LAPIS_TRANSPORT_PAUSED;
+}
+
+// Control commands call this while holding command_mutex. Natural completion is
+// asynchronous, so publish it through the same single-writer command path before
+// validating the next mutation. Snapshot reads stay observational and never write
+// session transport behind a command's back.
+void refresh_terminal_transport(lapis_session* session) {
+    std::shared_ptr<RuntimePlaybackPipeline> pipeline;
+    lapis_transport_state observed_transport{};
+    uint64_t observed_epoch{};
+
+    {
+        std::scoped_lock lock(session->mutex);
+        if (!active_transport(session->transport) ||
+            session->pipeline == nullptr ||
+            session->pipeline->execution == nullptr) {
+            return;
+        }
+
+        pipeline = session->pipeline;
+        observed_transport = session->transport;
+        observed_epoch = session->epoch;
+    }
+
+    const auto execution_snapshot = pipeline->execution->snapshot();
+    const auto effective_transport = transport_from_execution_state(
+        execution_snapshot.state,
+        observed_transport);
+    if (!terminal_transport(effective_transport)) {
+        return;
+    }
+
+    std::scoped_lock lock(session->mutex);
+    if (session->epoch != observed_epoch ||
+        session->pipeline != pipeline ||
+        !active_transport(session->transport)) {
+        return;
+    }
+
+    session->position_ns = execution_snapshot.clock.position.nanoseconds;
+    session->transport = effective_transport;
+}
+
 } // namespace
 
 uint32_t lapis_runtime_get_abi_version(void) {
@@ -352,6 +403,7 @@ lapis_result lapis_session_play(lapis_session* session, lapis_playback_epoch epo
         }
 
         std::scoped_lock command_lock(session->command_mutex);
+        refresh_terminal_transport(session);
 
         std::shared_ptr<RuntimePlaybackPipeline> pipeline;
         lapis_transport_state prior_transport{};
@@ -404,6 +456,7 @@ lapis_result lapis_session_pause(lapis_session* session, lapis_playback_epoch ep
         }
 
         std::scoped_lock command_lock(session->command_mutex);
+        refresh_terminal_transport(session);
 
         std::shared_ptr<RuntimePlaybackPipeline> pipeline;
         {
@@ -451,6 +504,7 @@ lapis_result lapis_session_seek(
         }
 
         std::scoped_lock command_lock(session->command_mutex);
+        refresh_terminal_transport(session);
 
         lapis_transport_state return_state{};
         std::shared_ptr<RuntimePlaybackPipeline> pipeline;
@@ -553,35 +607,32 @@ lapis_result lapis_session_get_snapshot(
             return LAPIS_E_INVALID_ARGUMENT;
         }
 
-        std::scoped_lock lock(session->mutex);
+        lapis_playback_session_id session_id{};
+        uint64_t epoch{};
+        int64_t position_ns{};
+        lapis_transport_state transport{};
+        std::shared_ptr<RuntimePlaybackPipeline> pipeline;
+        {
+            std::scoped_lock lock(session->mutex);
+            session_id = session->session_id;
+            epoch = session->epoch;
+            position_ns = session->position_ns;
+            transport = session->transport;
+            pipeline = session->pipeline;
+        }
 
-        auto transport = session->transport;
-        auto position_ns = session->position_ns;
-        if (session->pipeline != nullptr &&
-            session->pipeline->execution != nullptr &&
-            (transport == LAPIS_TRANSPORT_PLAYING ||
-             transport == LAPIS_TRANSPORT_PAUSED ||
-             transport == LAPIS_TRANSPORT_ENDED ||
-             transport == LAPIS_TRANSPORT_FAULTED)) {
-            const auto execution_snapshot =
-                session->pipeline->execution->snapshot();
+        if (pipeline != nullptr &&
+            pipeline->execution != nullptr &&
+            (active_transport(transport) || terminal_transport(transport))) {
+            const auto execution_snapshot = pipeline->execution->snapshot();
             transport = transport_from_execution_state(
                 execution_snapshot.state,
                 transport);
             position_ns = execution_snapshot.clock.position.nanoseconds;
-
-            // Natural completion/failure is asynchronous. Latch the effective
-            // state here so later command validation observes the same transport
-            // state that this snapshot publishes.
-            if (transport == LAPIS_TRANSPORT_ENDED ||
-                transport == LAPIS_TRANSPORT_FAULTED) {
-                session->transport = transport;
-            }
-            session->position_ns = position_ns;
         }
 
-        out_snapshot->session_id = session->session_id;
-        out_snapshot->epoch.value = session->epoch;
+        out_snapshot->session_id = session_id;
+        out_snapshot->epoch.value = epoch;
         out_snapshot->position.nanoseconds = position_ns;
         out_snapshot->transport = transport;
         return LAPIS_OK;
