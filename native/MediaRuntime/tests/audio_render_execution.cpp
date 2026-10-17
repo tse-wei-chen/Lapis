@@ -3,6 +3,7 @@
 #include "execution/audio_render_worker.hpp"
 #include "session/playback_media_session.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -25,6 +26,7 @@ namespace {
 
 enum class OutputMode {
     BackpressureOnce,
+    PartialChunks,
     BlockUntilStopped,
     DeviceLost
 };
@@ -39,24 +41,38 @@ public:
         return lapis::media::AudioOutputOpenStatus::Ready;
     }
 
-    lapis::media::AudioOutputStatus try_submit(
-        const lapis::media::AudioFrame& frame) override {
+    lapis::media::AudioOutputSubmitResult try_submit(
+        const lapis::media::AudioFrame& frame,
+        std::uint32_t first_sample_frame) override {
         submit_attempts.fetch_add(1, std::memory_order_relaxed);
+        if (first_sample_frame != 0) {
+            saw_nonzero_offset.store(true, std::memory_order_release);
+        }
         if (mode_ == OutputMode::DeviceLost) {
-            return lapis::media::AudioOutputStatus::DeviceLost;
+            return {lapis::media::AudioOutputStatus::DeviceLost, 0};
         }
         if (mode_ == OutputMode::BlockUntilStopped) {
-            return lapis::media::AudioOutputStatus::Backpressure;
+            return {lapis::media::AudioOutputStatus::Backpressure, 0};
         }
-        if (!returned_backpressure_.exchange(true, std::memory_order_acq_rel)) {
-            return lapis::media::AudioOutputStatus::Backpressure;
+        if (mode_ == OutputMode::BackpressureOnce &&
+            !returned_backpressure_.exchange(true, std::memory_order_acq_rel)) {
+            return {lapis::media::AudioOutputStatus::Backpressure, 0};
         }
 
-        accepted_frames.fetch_add(1, std::memory_order_relaxed);
-        accepted_sample_frames.fetch_add(
-            frame.buffer->sample_frame_count(),
-            std::memory_order_relaxed);
-        return lapis::media::AudioOutputStatus::Accepted;
+        const auto total = frame.buffer->sample_frame_count();
+        if (first_sample_frame >= total) {
+            return {lapis::media::AudioOutputStatus::Faulted, 0};
+        }
+        const auto remaining = total - first_sample_frame;
+        const auto accepted = mode_ == OutputMode::PartialChunks
+            ? std::min<std::uint32_t>(remaining, 128U)
+            : remaining;
+
+        accepted_sample_frames.fetch_add(accepted, std::memory_order_relaxed);
+        if (accepted == remaining) {
+            accepted_frames.fetch_add(1, std::memory_order_relaxed);
+        }
+        return {lapis::media::AudioOutputStatus::Accepted, accepted};
     }
 
     lapis::media::AudioOutputWaitStatus wait_until_writable(
@@ -106,6 +122,7 @@ public:
     std::atomic<std::uint64_t> reset_count{};
     std::atomic<std::uint64_t> close_count{};
     std::atomic<bool> wait_started{};
+    std::atomic<bool> saw_nonzero_offset{};
 
 private:
     OutputMode mode_;
@@ -178,7 +195,7 @@ int main() {
         const auto stats = renderer.stats();
         CHECK(stats.submitted_frames > 0);
         CHECK(stats.submitted_sample_frames == 480);
-        CHECK(stats.backpressure_waits == 1);
+        CHECK(stats.writable_waits == 1);
         CHECK(stats.output_failures == 0);
         CHECK(probe->open_count.load() == 1);
         CHECK(probe->accepted_sample_frames.load() == 480);
@@ -188,6 +205,36 @@ int main() {
         CHECK(probe->close_count.load() == 1);
     }
 
+    // A device buffer smaller than a decoded frame must make forward progress
+    // through accepted prefixes instead of entering permanent backpressure.
+    {
+        PlaybackMediaSession media;
+        CHECK(open_audio_media(media));
+        AudioDecodeWorker decoder(media, 1);
+        auto stream = decoder.start(PlaybackEpoch{22});
+
+        auto output = std::make_unique<RecordingAudioOutput>(
+            OutputMode::PartialChunks);
+        auto* probe = output.get();
+        AudioRenderWorker renderer(std::move(output));
+        renderer.start(stream);
+
+        CHECK(wait_for_state(renderer, AudioRenderWorkerState::Drained));
+        renderer.stop();
+        decoder.stop();
+        media.stop_decode_generation();
+
+        const auto stats = renderer.stats();
+        CHECK(stats.submitted_frames > 0);
+        CHECK(stats.submitted_sample_frames == 480);
+        CHECK(stats.writable_waits >= 1);
+        CHECK(stats.output_failures == 0);
+        CHECK(probe->accepted_sample_frames.load() == 480);
+        CHECK(probe->saw_nonzero_offset.load(std::memory_order_acquire));
+        CHECK(probe->writable_waits.load() >= 1);
+        CHECK(probe->drain_waits.load() == 1);
+    }
+
     // A seek/close-style stop must interrupt an output readiness wait and reset
     // queued device samples before close. The upstream decoder can then be
     // stopped even if it was backpressured by its bounded stream.
@@ -195,7 +242,7 @@ int main() {
         PlaybackMediaSession media;
         CHECK(open_audio_media(media));
         AudioDecodeWorker decoder(media, 1);
-        auto stream = decoder.start(PlaybackEpoch{22});
+        auto stream = decoder.start(PlaybackEpoch{23});
 
         auto output = std::make_unique<RecordingAudioOutput>(
             OutputMode::BlockUntilStopped);
@@ -221,7 +268,7 @@ int main() {
         PlaybackMediaSession media;
         CHECK(open_audio_media(media));
         AudioDecodeWorker decoder(media, 1);
-        auto stream = decoder.start(PlaybackEpoch{23});
+        auto stream = decoder.start(PlaybackEpoch{24});
 
         auto output = std::make_unique<RecordingAudioOutput>(
             OutputMode::DeviceLost);

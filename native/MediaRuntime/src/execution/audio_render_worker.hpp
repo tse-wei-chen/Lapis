@@ -26,7 +26,7 @@ struct AudioRenderStats final {
     std::uint64_t submitted_frames{};
     std::uint64_t submitted_sample_frames{};
     std::uint64_t stale_epoch_drops{};
-    std::uint64_t backpressure_waits{};
+    std::uint64_t writable_waits{};
     std::uint64_t output_failures{};
 };
 
@@ -78,7 +78,7 @@ private:
     std::atomic<std::uint64_t> submitted_frames_{};
     std::atomic<std::uint64_t> submitted_sample_frames_{};
     std::atomic<std::uint64_t> stale_epoch_drops_{};
-    std::atomic<std::uint64_t> backpressure_waits_{};
+    std::atomic<std::uint64_t> writable_waits_{};
     std::atomic<std::uint64_t> output_failures_{};
     mutable std::mutex control_mutex_;
     std::jthread worker_;

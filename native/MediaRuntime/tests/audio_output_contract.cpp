@@ -38,6 +38,16 @@ int main() {
     Buffer buffer;
     buffer.views = {{storage.data(), 16}};
     CHECK(valid_audio_buffer(buffer));
+
+    auto interleaved = audio_plane_slice(buffer, 0, 1, 2);
+    CHECK(interleaved.has_value());
+    CHECK(interleaved->data == storage.data() + 4);
+    CHECK(interleaved->size_bytes == 8);
+    CHECK(!audio_plane_slice(buffer, 1, 1, 2).has_value());
+    CHECK(!audio_plane_slice(buffer, 0, 4, 1).has_value());
+    CHECK(!audio_plane_slice(buffer, 0, 3, 2).has_value());
+    CHECK(!audio_plane_slice(buffer, 0, 0, 0).has_value());
+
     buffer.views[0].size_bytes = 15;
     CHECK(!valid_audio_buffer(buffer));
     buffer.views[0].size_bytes = 16;
@@ -51,6 +61,15 @@ int main() {
     buffer.spec.packing = AudioPacking::Planar;
     buffer.views = {{storage.data(), 8}, {storage.data() + 8, 8}};
     CHECK(valid_audio_buffer(buffer));
+    auto planar_left = audio_plane_slice(buffer, 0, 1, 2);
+    auto planar_right = audio_plane_slice(buffer, 1, 1, 2);
+    CHECK(planar_left.has_value());
+    CHECK(planar_right.has_value());
+    CHECK(planar_left->data == storage.data() + 2);
+    CHECK(planar_left->size_bytes == 4);
+    CHECK(planar_right->data == storage.data() + 10);
+    CHECK(planar_right->size_bytes == 4);
+
     buffer.views.pop_back();
     CHECK(!valid_audio_buffer(buffer));
     buffer.views.push_back({nullptr, 8});
