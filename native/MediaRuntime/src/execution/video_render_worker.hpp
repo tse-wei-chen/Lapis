@@ -5,6 +5,7 @@
 #include "video/video_presenter.hpp"
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -34,13 +35,16 @@ public:
     VideoRenderWorker(
         PlaybackClock& clock,
         std::unique_ptr<IVideoPresenter> presenter);
-    ~VideoRenderWorker() = default;
+    ~VideoRenderWorker();
 
     VideoRenderWorker(const VideoRenderWorker&) = delete;
     VideoRenderWorker& operator=(const VideoRenderWorker&) = delete;
 
     void start(std::shared_ptr<VideoPresentationStream> input);
     void stop();
+
+    [[nodiscard]] VideoOutputSurfaceControlStatus set_output_surface(
+        VideoOutputSurfaceDescriptor surface);
 
     [[nodiscard]] VideoRenderWorkerState state() const noexcept {
         return state_.load(std::memory_order_acquire);
@@ -56,7 +60,20 @@ public:
         return last_present_status_.load(std::memory_order_acquire);
     }
 
+    [[nodiscard]] VideoOutputSurfaceApplyStatus
+    last_output_surface_apply_status() const noexcept {
+        return last_surface_apply_status_.load(std::memory_order_acquire);
+    }
+
 private:
+    [[nodiscard]] bool apply_requested_surface(
+        std::stop_token stop_token,
+        std::uint64_t& applied_revision,
+        VideoOutputSurfaceDescriptor& applied_surface,
+        VideoRenderWorkerState& final_state);
+    [[nodiscard]] std::stop_token current_wait_token();
+    void interrupt_waits();
+    void publish_terminal_state(VideoRenderWorkerState state) noexcept;
     void run(
         std::stop_token stop_token,
         const std::shared_ptr<VideoPresentationStream>& input) noexcept;
@@ -70,11 +87,25 @@ private:
     std::atomic<VideoPresentStatus> last_present_status_{
         VideoPresentStatus::Presented
     };
+    std::atomic<VideoOutputSurfaceApplyStatus> last_surface_apply_status_{
+        VideoOutputSurfaceApplyStatus::Ready
+    };
     std::atomic<std::uint64_t> presented_frames_{};
     std::atomic<std::uint64_t> stale_epoch_drops_{};
     std::atomic<std::uint64_t> inactive_clock_drops_{};
     std::atomic<std::uint64_t> presenter_failures_{};
-    mutable std::mutex control_mutex_;
+
+    mutable std::mutex lifecycle_mutex_;
+    std::mutex surface_command_mutex_;
+    std::mutex surface_mutex_;
+    std::condition_variable_any surface_changed_;
+    VideoOutputSurfaceDescriptor requested_surface_{};
+    std::uint64_t requested_surface_revision_{};
+    std::uint64_t acknowledged_surface_revision_{};
+    VideoOutputSurfaceControlStatus acknowledged_surface_status_{
+        VideoOutputSurfaceControlStatus::Deferred
+    };
+    std::shared_ptr<std::stop_source> wait_interrupt_source_;
     std::jthread worker_;
 };
 
