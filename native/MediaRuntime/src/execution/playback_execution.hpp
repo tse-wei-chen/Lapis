@@ -1,8 +1,13 @@
 #pragma once
 
+#include "audio/audio_output_provider.hpp"
+#include "audio/audio_processor.hpp"
 #include "core/media_time.hpp"
 #include "core/playback_clock.hpp"
 #include "core/playback_epoch.hpp"
+#include "execution/audio_decode_worker.hpp"
+#include "execution/audio_process_worker.hpp"
+#include "execution/audio_render_worker.hpp"
 #include "execution/video_decode_worker.hpp"
 #include "execution/video_process_worker.hpp"
 #include "execution/video_render_worker.hpp"
@@ -13,12 +18,16 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 
 namespace lapis::media {
 
 class PlaybackMediaSession;
+
+using AudioFrameProcessorFactory =
+    std::function<std::unique_ptr<IAudioFrameProcessor>(const AudioFormat&)>;
 
 enum class PlaybackExecutionState : std::uint8_t {
     Stopped,
@@ -52,11 +61,15 @@ struct PlaybackExecutionConfig final {
     std::size_t process_queue_capacity{4};
     std::size_t presentation_queue_capacity{2};
     VideoSchedulerConfig scheduler{};
+    std::size_t audio_decode_queue_capacity{16};
+    std::size_t audio_process_queue_capacity{8};
 };
 
 struct PlaybackExecutionSnapshot final {
     PlaybackExecutionState state{PlaybackExecutionState::Stopped};
     PlaybackClockSnapshot clock{};
+    bool video_active{};
+    bool audio_active{};
     VideoDecodeWorkerState decode_state{VideoDecodeWorkerState::Idle};
     VideoProcessWorkerState process_state{VideoProcessWorkerState::Idle};
     VideoProcessStatus process_status{VideoProcessStatus::Processed};
@@ -64,6 +77,12 @@ struct PlaybackExecutionSnapshot final {
     VideoRenderWorkerState render_state{VideoRenderWorkerState::Idle};
     VideoSchedulingStats scheduling{};
     VideoRenderStats rendering{};
+    AudioDecodeWorkerState audio_decode_state{AudioDecodeWorkerState::Idle};
+    AudioProcessWorkerState audio_process_state{AudioProcessWorkerState::Idle};
+    AudioProcessStatus audio_process_status{AudioProcessStatus::NeedMoreInput};
+    AudioRenderWorkerState audio_render_state{AudioRenderWorkerState::Idle};
+    AudioRenderStats audio_rendering{};
+    AudioOutputPosition audio_position{};
 };
 
 class PlaybackExecution final {
@@ -73,6 +92,15 @@ public:
         std::unique_ptr<IVideoFrameProcessor> processor,
         std::unique_ptr<IVideoPresenter> presenter,
         PlaybackExecutionConfig config = {});
+
+    PlaybackExecution(
+        PlaybackMediaSession& media,
+        std::unique_ptr<IVideoFrameProcessor> processor,
+        std::unique_ptr<IVideoPresenter> presenter,
+        std::unique_ptr<IAudioOutputProvider> audio_output_provider,
+        AudioFrameProcessorFactory audio_processor_factory,
+        PlaybackExecutionConfig config = {});
+
     ~PlaybackExecution();
 
     PlaybackExecution(const PlaybackExecution&) = delete;
@@ -91,10 +119,14 @@ public:
     [[nodiscard]] PlaybackExecutionSnapshot snapshot() const;
 
 private:
+    [[nodiscard]] PlaybackExecutionResult fault_unlocked(
+        PlaybackExecutionError error);
     [[nodiscard]] bool epoch_advances_unlocked(PlaybackEpoch epoch) const;
     [[nodiscard]] bool workers_failed_unlocked() const noexcept;
     [[nodiscard]] bool workers_drained_unlocked() const noexcept;
     [[nodiscard]] bool start_generation_unlocked(PlaybackEpoch epoch);
+    [[nodiscard]] bool pause_audio_unlocked();
+    [[nodiscard]] bool resume_audio_unlocked();
     void stop_generation_unlocked();
 
     PlaybackMediaSession& media_;
@@ -103,6 +135,15 @@ private:
     VideoProcessWorker processor_;
     VideoSchedulerWorker scheduler_;
     VideoRenderWorker renderer_;
+    AudioDecodeWorker audio_decoder_;
+    std::unique_ptr<IAudioOutputProvider> audio_output_provider_;
+    AudioFrameProcessorFactory audio_processor_factory_;
+    const std::size_t audio_process_queue_capacity_;
+    std::unique_ptr<AudioProcessWorker> audio_processor_;
+    std::unique_ptr<AudioRenderWorker> audio_renderer_;
+    std::shared_ptr<AudioFrameStream> pending_audio_render_stream_;
+    bool video_generation_active_{};
+    bool audio_generation_active_{};
     mutable std::mutex control_mutex_;
     PlaybackExecutionState logical_state_{PlaybackExecutionState::Stopped};
 };

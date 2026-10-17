@@ -173,6 +173,14 @@ void PlaybackMediaSession::stop_decode_generation() noexcept {
     impl_->stop_decode_generation();
 }
 
+bool PlaybackMediaSession::has_video() const noexcept {
+    return impl_->video_decoder != nullptr && impl_->video_stream_index >= 0;
+}
+
+bool PlaybackMediaSession::has_audio() const noexcept {
+    return impl_->audio_decoder != nullptr && impl_->audio_stream_index >= 0;
+}
+
 std::optional<VideoFrame> PlaybackMediaSession::decode_next_video_frame(
     std::stop_token stop_token) {
     if (impl_->video_decoder == nullptr || impl_->packet_router == nullptr) {

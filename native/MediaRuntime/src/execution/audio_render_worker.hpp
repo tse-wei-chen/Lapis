@@ -51,6 +51,10 @@ public:
 
     [[nodiscard]] AudioRenderStats stats() const noexcept;
 
+    [[nodiscard]] AudioOutputPosition position() const noexcept {
+        return output_->position();
+    }
+
     [[nodiscard]] AudioOutputOpenStatus last_open_status() const noexcept {
         return last_open_status_.load(std::memory_order_acquire);
     }
