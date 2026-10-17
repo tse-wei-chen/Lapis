@@ -24,6 +24,8 @@ Native MediaRuntime
       bounded frame  bounded frame    bounded present  IVideoPresenter
           stream          stream           stream          adapter
   - prepared audio execution branch
+      IAudioOutputProvider -> target AudioFormat + bound IAudioOutput
+                                  |
       AudioDecode -> AudioProcess -> AudioRender -> IAudioOutput
            |              |              |              |
       bounded frame  libswresample  partial submit   platform adapter
@@ -51,9 +53,10 @@ Native MediaRuntime
 14. `av_read_frame` has one owner. Selected demux streams fan out through independent bounded packet queues; decoders never compete for the demuxer.
 15. Packet-routing generations and decoder buffers are discarded across seek; no queue or buffered frame crosses a discontinuity.
 16. Decoded video/audio storage is hidden behind Lapis-owned frame/buffer contracts; `AVFrame` never crosses the adapter boundary.
-17. Audio decoding, device-format conversion, and device output are separate responsibilities; WASAPI consumes processed Lapis-owned audio, not FFmpeg-native frames.
+17. Audio decoding, device-format conversion, device negotiation, and device output are separate responsibilities; WASAPI consumes processed Lapis-owned audio, not FFmpeg-native frames.
 18. AI observes playback and never sits in the blocking playback path.
 19. Audio output adapters do not silently resample, repack, reorder channels, or hide unbounded staging. Device-format policy stays in the processing/orchestration boundary.
+20. Audio target-format negotiation happens before worker startup. A prepared output plan binds the chosen `AudioFormat` and the eventual `IAudioOutput` to the same endpoint identity.
 
 ## Current implementation slice
 
@@ -61,6 +64,8 @@ The current slice opens local files through `IMediaByteStream`, feeds FFmpeg via
 
 The active product execution path is still video-only and flows Video Decode -> Process -> Scheduler -> Render under the authoritative playback clock. In parallel, the audio branch now has independently tested Decode -> Process -> Render stages: `AudioDecodeWorker` produces Lapis-owned `AudioFrame` values, `FfmpegAudioFrameConverter` performs drainable libswresample conversion behind `IAudioFrameProcessor`, and `AudioRenderWorker` drives an `IAudioOutput` through bounded partial submission, stop-aware readiness waits, drain, and reset.
 
-On Windows, `WasapiSharedAudioOutput` is the first concrete audio-output adapter. It uses exact shared-mode `WAVEFORMATEXTENSIBLE` negotiation, event-driven endpoint pacing, and current-padding-based partial writes without hidden resampling or channel remapping. Its current position snapshot is a queue-based presentation estimate, not yet the audio master clock.
+Audio output target selection now has its own portable `IAudioOutputProvider` boundary. A provider prepares an `AudioOutputPlan` before processing starts, containing the exact `AudioFormat` that the converter should produce plus an unopened output already bound to the same physical/logical endpoint used for negotiation. This prevents default-device changes from splitting format discovery and rendering across different endpoints.
 
-Blu-ray navigation, endpoint selection/capability policy, `PlaybackExecution` ownership of the audio branch, pause/resume device semantics, audio hardware-clock discipline and A/V synchronization, exclusive/bitstream output, concrete D3D11/DXGI presentation, GPU decode/processing, full color/HDR metadata, subtitles, AI taps, FFmpeg interrupt callbacks for blocking sources, and public-C-ABI delegation to `PlaybackExecution` remain deliberately outside this slice.
+On Windows, `WasapiSharedAudioOutputProvider` resolves the default multimedia render endpoint, reads its shared engine mix format with `GetMixFormat`, converts that descriptor into the Lapis audio model, verifies the reconstructed format with exact shared-mode `IsFormatSupported`, and returns a `WasapiSharedAudioOutput` bound to the captured endpoint ID. The output itself remains an event-driven stream adapter using partial writes and endpoint padding; its position snapshot is still a queue-based presentation estimate, not yet the audio master clock.
+
+Blu-ray navigation, explicit endpoint selection/change notifications, fallback target-format policy for non-representable engine mix formats, `PlaybackExecution` ownership of the audio branch, pause/resume device semantics, audio hardware-clock discipline and A/V synchronization, `IAudioClient3` low-latency period policy, exclusive/bitstream output, concrete D3D11/DXGI presentation, GPU decode/processing, full color/HDR metadata, subtitles, AI taps, FFmpeg interrupt callbacks for blocking sources, and public-C-ABI delegation to `PlaybackExecution` remain deliberately outside this slice.

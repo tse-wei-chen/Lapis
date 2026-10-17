@@ -6,12 +6,14 @@
 
 #include <memory>
 #include <stop_token>
+#include <string>
 
 namespace lapis::media::wasapi {
 
 class WasapiSharedAudioOutput final : public IAudioOutput {
 public:
     WasapiSharedAudioOutput();
+    explicit WasapiSharedAudioOutput(std::wstring endpoint_id);
     ~WasapiSharedAudioOutput() override;
 
     WasapiSharedAudioOutput(const WasapiSharedAudioOutput&) = delete;
