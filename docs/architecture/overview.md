@@ -32,7 +32,12 @@ Native MediaRuntime
           stream         adapter       + drain       (WASAPI shared)
                                       + pause/resume
                                       + clock snapshot
-  - authoritative PlaybackClock
+                                             |
+                                             v
+                                  AudioClockDiscipline
+                                  (ignore/maintain/rebase)
+                                             |
+  - authoritative PlaybackClock <-------------+
         |
         +---- media taps ----> AIHost (future, non-blocking)
 ```
@@ -61,6 +66,7 @@ Native MediaRuntime
 20. Audio target-format negotiation happens before worker startup. A prepared output plan binds the chosen `AudioFormat` and the eventual `IAudioOutput` to the same endpoint identity.
 21. Audio device control executes on the render thread. Pause/Resume only interrupt waits and preserve the current sample cursor/device queue; destructive reset remains reserved for discontinuities.
 22. Audio hardware timing crosses the platform boundary only as a portable media-position + monotonic-correlation snapshot. QPC, COM, and `IAudioClock` never enter execution/core contracts.
+23. Hardware-clock observations are filtered by a platform-independent discipline policy before they may change `PlaybackClock`; ordinary device sampling must not itself create playback-clock revisions or scheduler wakeups.
 
 ## Current implementation slice
 
@@ -74,8 +80,10 @@ Audio output target selection has its own portable `IAudioOutputProvider` bounda
 
 On Windows, `WasapiSharedAudioOutputProvider` resolves the default multimedia render endpoint, reads its shared engine mix format with `GetMixFormat`, converts that descriptor into the Lapis audio model, verifies the reconstructed format with exact shared-mode `IsFormatSupported`, and returns a `WasapiSharedAudioOutput` bound to the captured endpoint ID. The output maps Pause to `IAudioClient::Stop` and Resume to `Start`, preserving queued endpoint samples and stream position; reset remains Stop + Reset for discontinuities.
 
-`WasapiSharedAudioOutput` now also acquires `IAudioClock`. The first successfully released sample prefix maps stream position zero to its canonical media timestamp. Render-thread refreshes combine `IAudioClock::GetPosition` with `GetFrequency`, bridge the returned QPC correlation into the same monotonic domain used by `PlaybackClock`, and publish a coherent `AudioOutputPosition` snapshot through atomics. `position()` never calls COM and can be read from a future synchronization owner without crossing device-thread affinity.
+`WasapiSharedAudioOutput` acquires `IAudioClock`. The first successfully released sample prefix maps stream position zero to its canonical media timestamp. Render-thread refreshes combine `IAudioClock::GetPosition` with `GetFrequency`, bridge the returned QPC correlation into the same monotonic domain used by `PlaybackClock`, and publish a coherent `AudioOutputPosition` snapshot through atomics. `position()` never calls COM and can be read by synchronization code without crossing device-thread affinity.
 
-This hardware snapshot is an input to future clock discipline, not yet a second authoritative playback clock. `PlaybackClock` remains the product time model until an explicit A/V master-clock policy defines how hardware samples rebase or discipline it.
+`AudioClockDiscipline` is the portable policy between that snapshot and the authoritative clock. It ignores non-hardware, stale, implausibly future, paused, and stopped observations; extrapolates a valid device sample to the caller's monotonic `now`; computes signed drift against the same-time `PlaybackClockSnapshot`; and suppresses corrections inside a configurable deadband. Drift beyond the threshold yields a `Rebase` recommendation with the output revision, but the policy never mutates `PlaybackClock` itself.
 
-Blu-ray navigation, explicit endpoint selection/change notifications, fallback target-format policy for non-representable engine mix formats, `PlaybackExecution` ownership of the audio branch, audio-master clock discipline and A/V synchronization, `IAudioClient3` low-latency period policy, exclusive/bitstream output, concrete D3D11/DXGI presentation, GPU decode/processing, full color/HDR metadata, subtitles, AI taps, FFmpeg interrupt callbacks for blocking sources, and public-C-ABI delegation to `PlaybackExecution` remain deliberately outside this slice.
+This preserves one authoritative playback-time model while preventing normal hardware observation cadence from becoming `PlaybackClock` revision cadence. The eventual `PlaybackExecution` audio owner will decide when and how a `Rebase` recommendation is applied.
+
+Blu-ray navigation, explicit endpoint selection/change notifications, fallback target-format policy for non-representable engine mix formats, `PlaybackExecution` ownership of the audio branch, application of audio clock discipline and full A/V synchronization, long-term drift/rate correction, `IAudioClient3` low-latency period policy, exclusive/bitstream output, concrete D3D11/DXGI presentation, GPU decode/processing, full color/HDR metadata, subtitles, AI taps, FFmpeg interrupt callbacks for blocking sources, and public-C-ABI delegation to `PlaybackExecution` remain deliberately outside this slice.
