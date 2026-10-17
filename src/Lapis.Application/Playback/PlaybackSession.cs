@@ -20,10 +20,13 @@ public sealed class PlaybackSession : IAsyncDisposable
     private readonly IPlaybackRuntime _runtime;
     private readonly Channel<CommandEnvelope> _commands;
     private readonly Channel<PlaybackSnapshot> _snapshots;
+    private readonly CancellationTokenSource _shutdown = new();
+    private readonly object _disposeGate = new();
     private readonly Task _processingLoop;
     private PlaybackEpoch _epoch = PlaybackEpoch.Initial;
     private PlaybackSnapshot _snapshot;
-    private bool _disposed;
+    private Task? _disposeTask;
+    private int _lifecycleState; // 0 = active, 1 = disposing, 2 = disposed
 
     public PlaybackSession(IPlaybackRuntime runtime, PlaybackSessionId? sessionId = null)
     {
@@ -57,14 +60,25 @@ public sealed class PlaybackSession : IAsyncDisposable
         PlaybackCommand command,
         CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(command);
+        ThrowIfStopping();
 
         var completion = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var envelope = new CommandEnvelope(command, cancellationToken, completion);
 
-        await _commands.Writer.WriteAsync(envelope, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _commands.Writer.WriteAsync(envelope, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ChannelClosedException)
+        {
+            throw new ObjectDisposedException(nameof(PlaybackSession));
+        }
+
+        // Caller cancellation after enqueue cancels only this wait. If the actor has
+        // already started the command, the runtime operation continues against the
+        // session shutdown token so transient states cannot be stranded by a UI token.
         await completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -77,32 +91,88 @@ public sealed class PlaybackSession : IAsyncDisposable
         }
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (_disposed)
+        Task disposeTask;
+        lock (_disposeGate)
+        {
+            _disposeTask ??= DisposeCoreAsync();
+            disposeTask = _disposeTask;
+        }
+
+        return new ValueTask(disposeTask);
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        if (Interlocked.CompareExchange(ref _lifecycleState, 1, 0) != 0)
         {
             return;
         }
 
-        _disposed = true;
         _commands.Writer.TryComplete();
-        await _processingLoop.ConfigureAwait(false);
+        _shutdown.Cancel();
+
+        Exception? disposeError = null;
+        try
+        {
+            await _processingLoop.ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            disposeError = exception;
+        }
+
+        Publish(PlaybackSnapshot.CreateInitial(SessionId) with { Epoch = _epoch });
         _snapshots.Writer.TryComplete();
-        await _runtime.DisposeAsync().ConfigureAwait(false);
+
+        try
+        {
+            await _runtime.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception) when (disposeError is null)
+        {
+            disposeError = exception;
+        }
+        finally
+        {
+            Volatile.Write(ref _lifecycleState, 2);
+            _shutdown.Dispose();
+        }
+
+        if (disposeError is not null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(disposeError).Throw();
+        }
     }
 
     private async Task ProcessCommandsAsync()
     {
         await foreach (var envelope in _commands.Reader.ReadAllAsync().ConfigureAwait(false))
         {
+            if (_shutdown.IsCancellationRequested)
+            {
+                envelope.Completion.TrySetException(new ObjectDisposedException(nameof(PlaybackSession)));
+                continue;
+            }
+
+            // This check is the command start boundary. Request cancellation observed
+            // before this point prevents execution; after this point it only cancels
+            // the caller's wait and cannot interrupt runtime state mutation.
+            if (envelope.RequestCancellation.IsCancellationRequested)
+            {
+                envelope.Completion.TrySetCanceled(envelope.RequestCancellation);
+                continue;
+            }
+
             try
             {
-                await HandleCommandAsync(envelope.Command, envelope.CancellationToken).ConfigureAwait(false);
+                await HandleCommandAsync(envelope.Command, _shutdown.Token).ConfigureAwait(false);
                 envelope.Completion.TrySetResult();
             }
-            catch (OperationCanceledException) when (envelope.CancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
             {
-                envelope.Completion.TrySetCanceled(envelope.CancellationToken);
+                envelope.Completion.TrySetException(new ObjectDisposedException(nameof(PlaybackSession)));
             }
             catch (InvalidOperationException exception)
             {
@@ -232,6 +302,13 @@ public sealed class PlaybackSession : IAsyncDisposable
         }
     }
 
+    private void ThrowIfStopping()
+    {
+        ObjectDisposedException.ThrowIf(
+            Volatile.Read(ref _lifecycleState) != 0,
+            this);
+    }
+
     private void Publish(PlaybackSnapshot snapshot)
     {
         Volatile.Write(ref _snapshot, snapshot);
@@ -240,6 +317,6 @@ public sealed class PlaybackSession : IAsyncDisposable
 
     private sealed record CommandEnvelope(
         PlaybackCommand Command,
-        CancellationToken CancellationToken,
+        CancellationToken RequestCancellation,
         TaskCompletionSource Completion);
 }
