@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Lapis.Contracts/Lapis.Contracts.csproj" />
+    <Project Path="src/Lapis.Application/Lapis.Application.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Lapis.Contracts.Tests/Lapis.Contracts.Tests.csproj" />
+    <Project Path="tests/Lapis.Application.Tests/Lapis.Application.Tests.csproj" />
+    <Project Path="tests/Lapis.Architecture.Tests/Lapis.Architecture.Tests.csproj" />
+  </Folder>
+</Solution>
