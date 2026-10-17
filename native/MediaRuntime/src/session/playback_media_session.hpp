@@ -53,6 +53,9 @@ public:
     [[nodiscard]] bool start_decode_generation(MediaDecodeSelection selection);
     void stop_decode_generation() noexcept;
 
+    [[nodiscard]] bool has_video() const noexcept;
+    [[nodiscard]] bool has_audio() const noexcept;
+
     [[nodiscard]] std::optional<VideoFrame> decode_next_video_frame(
         std::stop_token stop_token = {});
     [[nodiscard]] std::optional<AudioFrame> decode_next_audio_frame(
