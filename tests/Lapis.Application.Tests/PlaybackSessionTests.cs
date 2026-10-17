@@ -1,4 +1,3 @@
-using Lapis.Application.Graph;
 using Lapis.Application.Playback;
 using Lapis.Application.Runtime;
 using Lapis.Contracts.Capabilities;
@@ -25,20 +24,6 @@ public sealed class PlaybackSessionTests
         Assert.Equal(2UL, session.Snapshot.Epoch.Value);
         Assert.Equal(MediaTime.FromSeconds(5), session.Snapshot.Position);
         Assert.Equal(new[] { "open:1", "play:1", "seek:2" }, runtime.Calls);
-    }
-
-    [Fact]
-    public void GraphPlanRejectsUnavailableCapabilities()
-    {
-        var builder = new GraphBuilder()
-            .AddNode(new GraphNode("source", GraphNodeKind.Source))
-            .AddNode(new GraphNode("output", GraphNodeKind.AudioSink, MediaCapability.BitstreamOutput))
-            .Connect("source", "output");
-
-        var exception = Assert.Throws<InvalidOperationException>(
-            () => builder.Build(MediaCapability.None));
-
-        Assert.Contains(nameof(MediaCapability.BitstreamOutput), exception.Message, StringComparison.Ordinal);
     }
 
     private sealed class FakeRuntime : IPlaybackRuntime

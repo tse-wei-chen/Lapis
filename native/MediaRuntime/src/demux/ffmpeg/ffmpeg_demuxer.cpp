@@ -11,6 +11,8 @@ extern "C" {
 
 namespace lapis::media::ffmpeg {
 
+FfmpegDemuxer::FfmpegDemuxer() = default;
+
 FfmpegDemuxer::~FfmpegDemuxer() {
     if (format_ != nullptr) {
         avformat_close_input(&format_);

@@ -15,6 +15,7 @@ struct lapis_runtime final {};
 
 struct lapis_session final {
     std::mutex mutex;
+    std::mutex media_operation_mutex;
     lapis_playback_session_id session_id{};
     uint64_t epoch{0};
     int64_t position_ns{0};
@@ -286,6 +287,18 @@ lapis_result lapis_session_seek(
 
         bool seek_succeeded{};
         try {
+            // State transitions remain protected by the short-lived session mutex,
+            // while media mutations use a separate gate. Re-check the epoch after
+            // acquiring that gate so a stale seek can never run after a newer seek
+            // and leave the demuxer at the wrong physical position.
+            std::scoped_lock media_lock(session->media_operation_mutex);
+            {
+                std::scoped_lock state_lock(session->mutex);
+                if (!matches_epoch(*session, epoch)) {
+                    return LAPIS_E_STALE_EPOCH;
+                }
+            }
+
             seek_succeeded = media != nullptr &&
                 media->seek(lapis::media::MediaTime{position.nanoseconds});
         } catch (...) {

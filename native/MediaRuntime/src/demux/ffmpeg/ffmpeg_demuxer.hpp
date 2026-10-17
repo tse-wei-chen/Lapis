@@ -26,7 +26,7 @@ struct FfmpegVideoStreamInfo final {
 
 class FfmpegDemuxer final {
 public:
-    FfmpegDemuxer() = default;
+    FfmpegDemuxer();
     ~FfmpegDemuxer();
 
     FfmpegDemuxer(const FfmpegDemuxer&) = delete;
