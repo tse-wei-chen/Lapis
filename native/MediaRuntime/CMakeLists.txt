@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(LapisMediaRuntime VERSION 0.10.0 LANGUAGES C CXX)
+project(LapisMediaRuntime VERSION 0.11.0 LANGUAGES C CXX)
 
 find_package(FFMPEG REQUIRED)
 find_package(Threads REQUIRED)
@@ -24,6 +24,7 @@ add_library(Lapis.MediaRuntime.Core STATIC
     src/decode/ffmpeg/ffmpeg_audio_decoder.cpp
     src/process/ffmpeg/ffmpeg_video_frame_converter.cpp
     src/execution/video_decode_worker.cpp
+    src/execution/audio_decode_worker.cpp
     src/execution/video_process_worker.cpp
     src/execution/video_scheduler_worker.cpp
     src/execution/video_render_worker.cpp
@@ -139,6 +140,16 @@ if(BUILD_TESTING)
     target_link_libraries(Lapis.MediaRuntime.AudioDecodeTests PRIVATE Lapis.MediaRuntime.Core)
     lapis_enable_strict_warnings(Lapis.MediaRuntime.AudioDecodeTests)
     add_test(NAME ffmpeg_audio_decode_smoke COMMAND Lapis.MediaRuntime.AudioDecodeTests)
+
+    add_executable(Lapis.MediaRuntime.AudioExecutionTests tests/audio_decode_execution.cpp)
+    target_compile_features(Lapis.MediaRuntime.AudioExecutionTests PRIVATE cxx_std_20)
+    target_compile_definitions(
+        Lapis.MediaRuntime.AudioExecutionTests
+        PRIVATE LAPIS_TEST_AUDIO_PATH="${LAPIS_TEST_AUDIO_PATH}"
+    )
+    target_link_libraries(Lapis.MediaRuntime.AudioExecutionTests PRIVATE Lapis.MediaRuntime.Core)
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.AudioExecutionTests)
+    add_test(NAME audio_decode_execution_smoke COMMAND Lapis.MediaRuntime.AudioExecutionTests)
 
     add_executable(Lapis.MediaRuntime.VideoProcessingTests tests/video_processing.cpp)
     target_compile_features(Lapis.MediaRuntime.VideoProcessingTests PRIVATE cxx_std_20)

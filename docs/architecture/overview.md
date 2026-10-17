@@ -14,7 +14,8 @@ Application control plane
 Native MediaRuntime
   - immutable GraphPlan / GraphBuilder
   - source / demux adapters
-      DemuxPump -> bounded selected-stream packet queues -> decoders
+      active DecodeGeneration
+        DemuxPump -> bounded selected-stream packet queues -> decoders
   - decoded media contracts
       VideoFrame / AudioFrame (third-party-independent lifetime + metadata)
   - PlaybackExecution generation owner
@@ -22,8 +23,8 @@ Native MediaRuntime
            |              |                |               |
       bounded frame  bounded frame    bounded present  IVideoPresenter
           stream          stream           stream          adapter
+  - AudioDecodeWorker (prepared; active sink/process path next)
   - authoritative PlaybackClock
-  - future active audio / subtitle hot paths
         |
         +---- media taps ----> AIHost (future, non-blocking)
 ```
@@ -40,17 +41,17 @@ Native MediaRuntime
 8. Decode, processing, scheduling, and render/presenter responsibilities remain separate stages.
 9. Pixel/color conversion is a Video Processor responsibility, not a presenter responsibility.
 10. Graphics APIs live behind presenter adapters; decode/process/scheduler core does not depend on D3D/DXGI types.
-11. `PlaybackExecution` is the sole owner of video worker-generation lifecycle.
-12. Generation startup is Decode -> Process -> Scheduler -> Render; shutdown is Render -> Scheduler -> Process -> Decode.
+11. `PlaybackExecution` owns worker-generation lifecycle. Active packet routing exists only for streams with active consumers.
+12. Video startup is Route -> Decode -> Process -> Scheduler -> Render; shutdown is Render -> Scheduler -> Process -> Decode -> Route.
 13. Pause keeps the generation alive and relies on bounded backpressure; seek/close tear it down before media mutation.
 14. `av_read_frame` has one owner. Selected demux streams fan out through independent bounded packet queues; decoders never compete for the demuxer.
-15. Packet-routing generations are stopped and replaced across seek; packet queues are never reopened across a discontinuity.
+15. Packet-routing generations and decoder buffers are discarded across seek; no queue or buffered frame crosses a discontinuity.
 16. Decoded video/audio storage is hidden behind Lapis-owned frame/buffer contracts; `AVFrame` never crosses the adapter boundary.
 17. Audio decoding and device-format conversion are separate responsibilities; WASAPI will consume processed audio, not FFmpeg-native frames.
 18. AI observes playback and never sits in the blocking playback path.
 
 ## Current implementation slice
 
-The current slice opens local files through `IMediaByteStream`, feeds FFmpeg via custom AVIO, and keeps FFmpeg types inside adapters. `FfmpegPacketRouter` owns sequential demux reads and fans selected streams into bounded queues. Video decode consumes its routed stream, then `VideoProcessWorker` normalizes system-memory frames through libswscale into BGRA8 before scheduling. A Lapis-owned `AudioFrame`/`IAudioBuffer` model and isolated `FfmpegAudioDecoder` now establish decoded-audio lifetime, sample-format, channel-order, timestamp, and duration semantics without activating audio in the current playback generation. `PlaybackExecution` still owns the video Decode -> Process -> Scheduler -> Render path and authoritative clock.
+The current slice opens local files through `IMediaByteStream`, feeds FFmpeg via custom AVIO, and keeps FFmpeg types inside adapters. Media open discovers/prepares video and audio decoders but does not start the demux pump. Execution explicitly creates an immutable routing generation containing only streams with active consumers. The current product path selects video only; `AudioDecodeWorker` and the decoded `AudioFrame` model are prepared for the next combined generation. Video then flows Decode -> Process -> Scheduler -> Render under the authoritative playback clock.
 
-Blu-ray navigation, active audio workers, libswresample/device-format processing, WASAPI and audio-clock discipline, concrete D3D11/DXGI presentation, GPU decode/processing, full color/HDR metadata, subtitles, AI taps, FFmpeg interrupt callbacks for blocking sources, and public-C-ABI delegation to `PlaybackExecution` remain deliberately outside this slice.
+Blu-ray navigation, active audio processing/sink integration, libswresample/device-format processing, WASAPI and audio-clock discipline, concrete D3D11/DXGI presentation, GPU decode/processing, full color/HDR metadata, subtitles, AI taps, FFmpeg interrupt callbacks for blocking sources, and public-C-ABI delegation to `PlaybackExecution` remain deliberately outside this slice.

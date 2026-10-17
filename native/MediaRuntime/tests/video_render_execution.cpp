@@ -144,6 +144,7 @@ int main() {
         clock,
         std::make_unique<RecordingPresenter>(probe));
 
+    CHECK(media.start_decode_generation(MediaDecodeSelection{true, false}));
     auto decoded = decoder.start(PlaybackEpoch{7});
     auto presentation = scheduler.start(decoded);
     renderer.start(presentation);
@@ -152,6 +153,7 @@ int main() {
     renderer.stop();
     scheduler.stop();
     decoder.stop();
+    media.stop_decode_generation();
 
     CHECK(renderer.state() == VideoRenderWorkerState::Drained);
     auto render_stats = renderer.stats();
@@ -177,12 +179,14 @@ int main() {
     CHECK(media.seek(MediaTime{}));
     const auto stale_source_now = SteadyClockSource::now();
     CHECK(clock.rebase(PlaybackEpoch{8}, MediaTime{}, stale_source_now));
+    CHECK(media.start_decode_generation(MediaDecodeSelection{true, false}));
 
     auto stale_decoded = decoder.start(PlaybackEpoch{8});
     auto stale_presentation = scheduler.start(stale_decoded);
     CHECK(wait_for_scheduler_completion(scheduler));
     scheduler.stop();
     decoder.stop();
+    media.stop_decode_generation();
 
     const auto newer_now = SteadyClockSource::now();
     CHECK(clock.rebase(PlaybackEpoch{9}, MediaTime{}, newer_now));
@@ -205,6 +209,7 @@ int main() {
     CHECK(clock.rebase(PlaybackEpoch{10}, MediaTime{}, failure_now));
     probe->reset_records();
     probe->present_status = VideoPresentStatus::DeviceLost;
+    CHECK(media.start_decode_generation(MediaDecodeSelection{true, false}));
 
     auto failure_decoded = decoder.start(PlaybackEpoch{10});
     auto failure_presentation = scheduler.start(failure_decoded);
@@ -213,6 +218,7 @@ int main() {
     renderer.stop();
     scheduler.stop();
     decoder.stop();
+    media.stop_decode_generation();
 
     CHECK(renderer.state() == VideoRenderWorkerState::PresenterUnavailable);
     render_stats = renderer.stats();
