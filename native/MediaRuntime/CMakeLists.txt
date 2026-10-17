@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(LapisMediaRuntime VERSION 0.4.0 LANGUAGES C CXX)
+project(LapisMediaRuntime VERSION 0.5.0 LANGUAGES C CXX)
 
 find_package(FFMPEG REQUIRED)
 find_package(Threads REQUIRED)
@@ -21,6 +21,7 @@ add_library(Lapis.MediaRuntime.Core STATIC
     src/demux/ffmpeg/ffmpeg_demuxer.cpp
     src/decode/ffmpeg/ffmpeg_video_decoder.cpp
     src/execution/video_decode_worker.cpp
+    src/execution/video_scheduler_worker.cpp
     src/session/playback_media_session.cpp
     src/video/video_scheduler.cpp
 )
@@ -57,6 +58,10 @@ lapis_enable_strict_warnings(Lapis.MediaRuntime)
 include(CTest)
 if(BUILD_TESTING)
     set(LAPIS_TEST_MEDIA_PATH "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/test.y4m")
+    set(
+        LAPIS_TEST_MULTI_FRAME_MEDIA_PATH
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/test_two_frames.y4m"
+    )
 
     add_executable(Lapis.MediaRuntime.CAbiHeaderTests tests/c_abi_header.c)
     target_compile_features(Lapis.MediaRuntime.CAbiHeaderTests PRIVATE c_std_17)
@@ -123,5 +128,27 @@ if(BUILD_TESTING)
     add_test(
         NAME playback_clock_scheduler_smoke
         COMMAND Lapis.MediaRuntime.ClockSchedulerTests
+    )
+
+    add_executable(
+        Lapis.MediaRuntime.VideoSchedulerExecutionTests
+        tests/video_scheduler_execution.cpp
+    )
+    target_compile_features(
+        Lapis.MediaRuntime.VideoSchedulerExecutionTests
+        PRIVATE cxx_std_20
+    )
+    target_compile_definitions(
+        Lapis.MediaRuntime.VideoSchedulerExecutionTests
+        PRIVATE LAPIS_TEST_MULTI_FRAME_MEDIA_PATH="${LAPIS_TEST_MULTI_FRAME_MEDIA_PATH}"
+    )
+    target_link_libraries(
+        Lapis.MediaRuntime.VideoSchedulerExecutionTests
+        PRIVATE Lapis.MediaRuntime.Core
+    )
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.VideoSchedulerExecutionTests)
+    add_test(
+        NAME video_scheduler_execution_smoke
+        COMMAND Lapis.MediaRuntime.VideoSchedulerExecutionTests
     )
 endif()

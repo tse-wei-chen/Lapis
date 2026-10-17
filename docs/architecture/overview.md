@@ -17,9 +17,10 @@ Application control plane
 Native MediaRuntime
   - immutable GraphPlan / GraphBuilder
   - source / demux / decode adapters
-  - bounded execution streams / workers
-  - authoritative playback clock / scheduling policy
-  - video / audio / subtitle hot paths
+  - bounded decode execution streams / workers
+  - authoritative playback clock
+  - video scheduler worker -> bounded presentation stream
+  - future render / audio / subtitle hot paths
         |
         +---- media taps ----> AIHost (future, non-blocking)
 ```
@@ -40,10 +41,13 @@ Native MediaRuntime
 12. Potentially blocking media I/O never holds the authoritative session-state mutex; work is committed only if its epoch is still current.
 13. Every cross-thread media queue is bounded; no playback stage may grow an unbounded backlog.
 14. Every cross-thread timed sample carries `PlaybackEpoch` plus canonical `MediaTime`.
-15. Each execution epoch owns a closeable stream/queue generation; a queue is never reopened for a later timeline.
-16. `PlaybackClock` is the single authoritative playback-time model; video, subtitles, UI, and later AI align to it rather than maintaining independent clocks.
+15. Each execution epoch owns closeable stream/queue generations; a queue is never reopened for a later timeline.
+16. `PlaybackClock` is the single authoritative playback-time model; its snapshot binds clock state, `PlaybackEpoch`, `MediaTime`, and revision atomically.
 17. Video scheduling policy is separate from waiting/rendering mechanics and always rejects stale epochs before timing decisions.
+18. Clock mutations notify scheduler waiters; paused/stopped playback must not be implemented as polling.
+19. Video Scheduler and Render Thread remain separate stages connected by a bounded `VideoPresentationStream`.
+20. A frame is revalidated by epoch at every asynchronous boundary, including the future final render/present boundary.
 
 ## Current implementation slice
 
-The current vertical slice establishes a local `FileSource` backed by `IMediaByteStream`, feeds those bytes to FFmpeg through custom AVIO, demuxes and software-decodes one video stream, and converts the result into the Lapis `VideoFrame` surface abstraction. The execution layer adds stop-aware bounded queues, epoch-tagged timed payloads, and a `VideoDecodeWorker` that publishes decoded frames into a dedicated stream generation for each playback epoch. The timing layer now provides a thread-safe authoritative `PlaybackClock` plus a pure `VideoScheduler` decision policy for wait/present/drop classification. Blu-ray navigation, audio output and hardware-clock discipline, render-thread presentation, hardware decode, and AI remain deliberately outside this slice.
+The current vertical slice establishes a local `FileSource` backed by `IMediaByteStream`, feeds those bytes to FFmpeg through custom AVIO, demuxes and software-decodes video, and converts frames into the Lapis `VideoFrame` surface abstraction. The execution layer provides stop-aware bounded queues and a `VideoDecodeWorker` that publishes frames into an epoch-scoped `VideoFrameStream`. `PlaybackClock` now owns epoch, media position, state, and revision in one authoritative snapshot, and exposes stop-aware change notifications. `VideoSchedulerWorker` consumes decoded frames, waits efficiently against the clock, drops stale/late frames, and releases eligible frames into a second bounded `VideoPresentationStream`. Blu-ray navigation, audio output and hardware-clock discipline, actual Render Thread/D3D presentation, hardware decode, subtitles, and AI remain deliberately outside this slice.
