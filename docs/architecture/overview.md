@@ -31,6 +31,7 @@ Native MediaRuntime
       bounded frame  libswresample  partial submit   platform adapter
           stream         adapter       + drain       (WASAPI shared)
                                       + pause/resume
+                                      + clock snapshot
   - authoritative PlaybackClock
         |
         +---- media taps ----> AIHost (future, non-blocking)
@@ -59,6 +60,7 @@ Native MediaRuntime
 19. Audio output adapters do not silently resample, repack, reorder channels, or hide unbounded staging. Device-format policy stays in the processing/orchestration boundary.
 20. Audio target-format negotiation happens before worker startup. A prepared output plan binds the chosen `AudioFormat` and the eventual `IAudioOutput` to the same endpoint identity.
 21. Audio device control executes on the render thread. Pause/Resume only interrupt waits and preserve the current sample cursor/device queue; destructive reset remains reserved for discontinuities.
+22. Audio hardware timing crosses the platform boundary only as a portable media-position + monotonic-correlation snapshot. QPC, COM, and `IAudioClock` never enter execution/core contracts.
 
 ## Current implementation slice
 
@@ -68,8 +70,12 @@ The active product execution path is still video-only and flows Video Decode -> 
 
 Audio output target selection has its own portable `IAudioOutputProvider` boundary. A provider prepares an `AudioOutputPlan` before processing starts, containing the exact `AudioFormat` that the converter should produce plus an unopened output already bound to the same physical/logical endpoint used for negotiation. This prevents default-device changes from splitting format discovery and rendering across different endpoints.
 
-`AudioRenderWorker::pause()` and `resume()` now act as synchronous control-plane acknowledgements rather than direct device calls. A dedicated wait-interrupt source wakes bounded input waits, device backpressure waits, or EOF drain; the render thread then applies `IAudioOutput::pause/resume` and acknowledges the control revision. The wait source is renewed only after the command is observed, so a wakeup cannot be lost in the command-check-to-wait race. A partial frame retains its sample cursor and EOF retains its drain phase across Pause.
+`AudioRenderWorker::pause()` and `resume()` act as synchronous control-plane acknowledgements rather than direct device calls. A dedicated wait-interrupt source wakes bounded input waits, device backpressure waits, or EOF drain; the render thread then applies `IAudioOutput::pause/resume` and acknowledges the control revision. Concurrent public Pause/Resume calls are serialized until the current acknowledgement completes, preventing a later command from overwriting an earlier revision. A partial frame retains its sample cursor and EOF retains its drain phase across Pause.
 
-On Windows, `WasapiSharedAudioOutputProvider` resolves the default multimedia render endpoint, reads its shared engine mix format with `GetMixFormat`, converts that descriptor into the Lapis audio model, verifies the reconstructed format with exact shared-mode `IsFormatSupported`, and returns a `WasapiSharedAudioOutput` bound to the captured endpoint ID. The output maps Pause to `IAudioClient::Stop` and Resume to `Start`, preserving queued endpoint samples and stream position; reset remains Stop + Reset for discontinuities. Its position snapshot is still a queue-based presentation estimate, not yet the audio master clock.
+On Windows, `WasapiSharedAudioOutputProvider` resolves the default multimedia render endpoint, reads its shared engine mix format with `GetMixFormat`, converts that descriptor into the Lapis audio model, verifies the reconstructed format with exact shared-mode `IsFormatSupported`, and returns a `WasapiSharedAudioOutput` bound to the captured endpoint ID. The output maps Pause to `IAudioClient::Stop` and Resume to `Start`, preserving queued endpoint samples and stream position; reset remains Stop + Reset for discontinuities.
 
-Blu-ray navigation, explicit endpoint selection/change notifications, fallback target-format policy for non-representable engine mix formats, `PlaybackExecution` ownership of the audio branch, audio hardware-clock discipline and A/V synchronization, `IAudioClient3` low-latency period policy, exclusive/bitstream output, concrete D3D11/DXGI presentation, GPU decode/processing, full color/HDR metadata, subtitles, AI taps, FFmpeg interrupt callbacks for blocking sources, and public-C-ABI delegation to `PlaybackExecution` remain deliberately outside this slice.
+`WasapiSharedAudioOutput` now also acquires `IAudioClock`. The first successfully released sample prefix maps stream position zero to its canonical media timestamp. Render-thread refreshes combine `IAudioClock::GetPosition` with `GetFrequency`, bridge the returned QPC correlation into the same monotonic domain used by `PlaybackClock`, and publish a coherent `AudioOutputPosition` snapshot through atomics. `position()` never calls COM and can be read from a future synchronization owner without crossing device-thread affinity.
+
+This hardware snapshot is an input to future clock discipline, not yet a second authoritative playback clock. `PlaybackClock` remains the product time model until an explicit A/V master-clock policy defines how hardware samples rebase or discipline it.
+
+Blu-ray navigation, explicit endpoint selection/change notifications, fallback target-format policy for non-representable engine mix formats, `PlaybackExecution` ownership of the audio branch, audio-master clock discipline and A/V synchronization, `IAudioClient3` low-latency period policy, exclusive/bitstream output, concrete D3D11/DXGI presentation, GPU decode/processing, full color/HDR metadata, subtitles, AI taps, FFmpeg interrupt callbacks for blocking sources, and public-C-ABI delegation to `PlaybackExecution` remain deliberately outside this slice.
