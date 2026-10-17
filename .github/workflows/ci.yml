@@ -10,8 +10,8 @@ jobs:
   managed:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
       - name: Restore
@@ -23,10 +23,36 @@ jobs:
 
   native:
     runs-on: windows-latest
+    env:
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}\.vcpkg-cache,readwrite
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('native/MediaRuntime/vcpkg.json', 'native/MediaRuntime/vcpkg-triplets/*.cmake') }}
+      - name: Prepare vcpkg baseline
+        shell: pwsh
+        run: |
+          $vcpkgExe = (Get-Command vcpkg).Source
+          $vcpkgRoot = Split-Path -Parent $vcpkgExe
+          git -C $vcpkgRoot fetch origin a5f736224e85b32e25a8ffc52562333180396642 --depth=1
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Configure
-        run: cmake -S native/MediaRuntime -B build/native -A x64
+        shell: pwsh
+        run: |
+          cmake -S native/MediaRuntime -B build/native -A x64 `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            "-DVCPKG_OVERLAY_TRIPLETS=${{ github.workspace }}/native/MediaRuntime/vcpkg-triplets" `
+            "-DVCPKG_TARGET_TRIPLET=x64-windows-release"
+      - name: Save vcpkg binary cache
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('native/MediaRuntime/vcpkg.json', 'native/MediaRuntime/vcpkg-triplets/*.cmake') }}
       - name: Build
         run: cmake --build build/native --config Release
       - name: Test

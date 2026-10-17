@@ -1,13 +1,15 @@
 # Third-party manifest
 
-No native media dependency is enabled yet.
+Native dependencies are intentionally explicit and pinned.
 
-Every future native dependency must be recorded here with:
+## FFmpeg
 
-- component and version,
-- source URL,
-- license,
-- enabled build options,
-- whether the selected options alter redistribution obligations.
+- Version: 9.0.2 (`Lei`)
+- Source: https://ffmpeg.org/
+- Package source: Microsoft vcpkg, builtin baseline `a5f736224e85b32e25a8ffc52562333180396642`
+- Enabled vcpkg features: `avcodec`, `avformat`
+- Disabled by policy: `gpl`, `nonfree`, `all-gpl`, `all-nonfree`
+- Usage boundary: native FFmpeg adapters only; FFmpeg types must not enter managed contracts or native core contracts
+- Redistribution posture: the selected configuration intentionally avoids GPL/nonfree vcpkg features; any future feature change must be reviewed here before merge
 
-This manifest is intentionally present before FFmpeg, libbluray, libass, codec SDKs, DRM SDKs, or AI runtimes are introduced.
+Every future native dependency must be recorded here with component/version, source, license/build configuration, enabled features, and redistribution impact.

@@ -40,7 +40,7 @@ typedef enum lapis_media_locator_kind {
     LAPIS_LOCATOR_OPTICAL_DISC = 3
 } lapis_media_locator_kind;
 
-// value_utf8 is borrowed only for the duration of lapis_session_open().
+/* value_utf8 is borrowed only for the duration of lapis_session_open(). */
 typedef struct lapis_media_locator {
     lapis_media_locator_kind kind;
     const char* value_utf8;
@@ -81,6 +81,13 @@ typedef struct lapis_playback_snapshot {
     lapis_transport_state transport;
 } lapis_playback_snapshot;
 
+/*
+ * Lifetime contract:
+ * - a runtime must outlive all sessions created from it;
+ * - result-returning session operations may be called concurrently;
+ * - lapis_session_destroy requires that no operation is in flight for that session;
+ * - lapis_runtime_destroy requires that all child sessions have already been destroyed.
+ */
 LAPIS_API uint32_t lapis_runtime_get_abi_version(void);
 
 LAPIS_API lapis_result lapis_runtime_create(lapis_runtime** out_runtime);
