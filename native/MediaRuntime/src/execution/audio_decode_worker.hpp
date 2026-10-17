@@ -17,6 +17,7 @@ namespace lapis::media {
 
 class PlaybackMediaSession;
 class AudioDecodeWorker;
+class AudioProcessWorker;
 
 using TimedAudioFrame = TimedPayload<AudioFrame>;
 
@@ -45,6 +46,7 @@ public:
 
 private:
     friend class AudioDecodeWorker;
+    friend class AudioProcessWorker;
 
     AudioFrameStream(
         PlaybackEpoch epoch,
