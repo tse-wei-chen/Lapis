@@ -84,7 +84,7 @@ void AudioRenderWorker::start(std::shared_ptr<AudioFrameStream> input) {
     submitted_frames_.store(0, std::memory_order_relaxed);
     submitted_sample_frames_.store(0, std::memory_order_relaxed);
     stale_epoch_drops_.store(0, std::memory_order_relaxed);
-    backpressure_waits_.store(0, std::memory_order_relaxed);
+    writable_waits_.store(0, std::memory_order_relaxed);
     output_failures_.store(0, std::memory_order_relaxed);
     last_open_status_.store(AudioOutputOpenStatus::Ready, std::memory_order_release);
     last_submit_status_.store(AudioOutputStatus::Accepted, std::memory_order_release);
@@ -116,7 +116,7 @@ AudioRenderStats AudioRenderWorker::stats() const noexcept {
         submitted_frames_.load(std::memory_order_relaxed),
         submitted_sample_frames_.load(std::memory_order_relaxed),
         stale_epoch_drops_.load(std::memory_order_relaxed),
-        backpressure_waits_.load(std::memory_order_relaxed),
+        writable_waits_.load(std::memory_order_relaxed),
         output_failures_.load(std::memory_order_relaxed)
     };
 }
@@ -187,29 +187,72 @@ void AudioRenderWorker::run(
                 break;
             }
 
-            for (;;) {
+            const auto total_sample_frames = frame.buffer->sample_frame_count();
+            std::uint32_t first_sample_frame{};
+            while (first_sample_frame < total_sample_frames) {
                 if (stop_token.stop_requested()) {
                     finished = true;
                     break;
                 }
 
-                const auto submit_status = output_->try_submit(frame);
-                last_submit_status_.store(submit_status, std::memory_order_release);
-                if (submit_status == AudioOutputStatus::Accepted) {
-                    submitted_frames_.fetch_add(1, std::memory_order_relaxed);
+                const auto submit_result = output_->try_submit(
+                    frame,
+                    first_sample_frame);
+                last_submit_status_.store(
+                    submit_result.status,
+                    std::memory_order_release);
+
+                if (submit_result.status == AudioOutputStatus::Accepted) {
+                    const auto remaining = total_sample_frames - first_sample_frame;
+                    if (submit_result.accepted_sample_frames == 0 ||
+                        submit_result.accepted_sample_frames > remaining) {
+                        output_failures_.fetch_add(1, std::memory_order_relaxed);
+                        final_state = AudioRenderWorkerState::Faulted;
+                        finished = true;
+                        break;
+                    }
+
+                    first_sample_frame += submit_result.accepted_sample_frames;
                     submitted_sample_frames_.fetch_add(
-                        frame.buffer->sample_frame_count(),
+                        submit_result.accepted_sample_frames,
                         std::memory_order_relaxed);
-                    break;
-                }
-                if (submit_status != AudioOutputStatus::Backpressure) {
-                    output_failures_.fetch_add(1, std::memory_order_relaxed);
-                    final_state = state_from_submit_status(submit_status);
+                    if (first_sample_frame == total_sample_frames) {
+                        submitted_frames_.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    }
+
+                    // A partial Accepted result means the output consumed every
+                    // sample it could accept right now. Wait before retrying the
+                    // remaining suffix so this path cannot busy-loop.
+                    writable_waits_.fetch_add(1, std::memory_order_relaxed);
+                    const auto wait_status = output_->wait_until_writable(stop_token);
+                    last_wait_status_.store(wait_status, std::memory_order_release);
+                    if (wait_status == AudioOutputWaitStatus::Ready) {
+                        continue;
+                    }
+
+                    final_state = state_from_wait_status(wait_status);
+                    if (wait_status != AudioOutputWaitStatus::Stopped) {
+                        output_failures_.fetch_add(1, std::memory_order_relaxed);
+                    }
                     finished = true;
                     break;
                 }
 
-                backpressure_waits_.fetch_add(1, std::memory_order_relaxed);
+                if (submit_result.accepted_sample_frames != 0) {
+                    output_failures_.fetch_add(1, std::memory_order_relaxed);
+                    final_state = AudioRenderWorkerState::Faulted;
+                    finished = true;
+                    break;
+                }
+                if (submit_result.status != AudioOutputStatus::Backpressure) {
+                    output_failures_.fetch_add(1, std::memory_order_relaxed);
+                    final_state = state_from_submit_status(submit_result.status);
+                    finished = true;
+                    break;
+                }
+
+                writable_waits_.fetch_add(1, std::memory_order_relaxed);
                 const auto wait_status = output_->wait_until_writable(stop_token);
                 last_wait_status_.store(wait_status, std::memory_order_release);
                 if (wait_status == AudioOutputWaitStatus::Ready) {

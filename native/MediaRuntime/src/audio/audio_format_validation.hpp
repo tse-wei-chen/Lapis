@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 
 namespace lapis::media {
 
@@ -61,6 +62,67 @@ namespace lapis::media {
         }
     }
     return true;
+}
+
+// Returns a byte view for a contiguous sample-frame slice in one plane. Callers
+// validate the whole buffer once with valid_audio_buffer() before using this in
+// the hot path. Interleaved slices include every channel for each sample frame;
+// planar slices include only the selected channel plane.
+[[nodiscard]] inline std::optional<AudioPlaneView> audio_plane_slice(
+    const IAudioBuffer& buffer,
+    std::uint32_t plane_index,
+    std::uint32_t first_sample_frame,
+    std::uint32_t sample_frame_count) noexcept {
+    const auto total_frames = buffer.sample_frame_count();
+    if (sample_frame_count == 0 || first_sample_frame >= total_frames ||
+        sample_frame_count > total_frames - first_sample_frame) {
+        return std::nullopt;
+    }
+
+    const auto& format = buffer.format();
+    const auto channel_count = format.channels.size();
+    const auto bytes_per_sample = static_cast<std::size_t>(buffer.bytes_per_sample());
+    if (channel_count == 0 || bytes_per_sample == 0) {
+        return std::nullopt;
+    }
+
+    std::size_t channel_factor{};
+    if (format.packing == AudioPacking::Planar) {
+        if (plane_index >= channel_count) {
+            return std::nullopt;
+        }
+        channel_factor = 1;
+    } else if (format.packing == AudioPacking::Interleaved) {
+        if (plane_index != 0) {
+            return std::nullopt;
+        }
+        channel_factor = channel_count;
+    } else {
+        return std::nullopt;
+    }
+
+    if (channel_factor > std::numeric_limits<std::size_t>::max() / bytes_per_sample) {
+        return std::nullopt;
+    }
+    const auto bytes_per_frame = bytes_per_sample * channel_factor;
+    const auto first = static_cast<std::size_t>(first_sample_frame);
+    const auto count = static_cast<std::size_t>(sample_frame_count);
+    if (first > std::numeric_limits<std::size_t>::max() / bytes_per_frame ||
+        count > std::numeric_limits<std::size_t>::max() / bytes_per_frame) {
+        return std::nullopt;
+    }
+
+    const auto offset_bytes = first * bytes_per_frame;
+    const auto slice_bytes = count * bytes_per_frame;
+    if (offset_bytes > std::numeric_limits<std::size_t>::max() - slice_bytes) {
+        return std::nullopt;
+    }
+
+    const auto plane = buffer.plane(plane_index);
+    if (plane.data == nullptr || plane.size_bytes < offset_bytes + slice_bytes) {
+        return std::nullopt;
+    }
+    return AudioPlaneView{plane.data + offset_bytes, slice_bytes};
 }
 
 } // namespace lapis::media

@@ -33,6 +33,11 @@ enum class AudioOutputStatus : std::uint8_t {
     Faulted
 };
 
+struct AudioOutputSubmitResult final {
+    AudioOutputStatus status{AudioOutputStatus::Faulted};
+    std::uint32_t accepted_sample_frames{};
+};
+
 enum class AudioOutputWaitStatus : std::uint8_t {
     Ready,
     Stopped,
@@ -50,14 +55,20 @@ public:
     [[nodiscard]] virtual AudioOutputOpenStatus open(
         const AudioFormat& format) = 0;
 
-    // Non-blocking submission. Caller retains ownership on non-Accepted results.
-    // On Accepted, the implementation must retain any sample memory it needs.
-    [[nodiscard]] virtual AudioOutputStatus try_submit(
-        const AudioFrame& frame) = 0;
+    // Non-blocking prefix submission. first_sample_frame identifies the first
+    // not-yet-submitted sample in frame. Accepted must consume a positive prefix
+    // no larger than the remaining sample count. If only a partial prefix fits,
+    // the adapter reports Accepted for that prefix and the caller waits for
+    // writability before retrying the remainder. Backpressure and error results
+    // consume zero samples. Implementations must copy or otherwise retain any
+    // accepted sample content before returning.
+    [[nodiscard]] virtual AudioOutputSubmitResult try_submit(
+        const AudioFrame& frame,
+        std::uint32_t first_sample_frame) = 0;
 
-    // A Backpressure result is followed by this stop-aware wait. Concrete
-    // adapters should map it to their native readiness primitive (for example,
-    // an event-driven audio client) rather than polling.
+    // Backpressure or a partial accepted prefix is followed by this stop-aware
+    // wait. Concrete adapters should map it to their native readiness primitive
+    // (for example, an event-driven audio client) rather than polling.
     [[nodiscard]] virtual AudioOutputWaitStatus wait_until_writable(
         std::stop_token stop_token) = 0;
 
