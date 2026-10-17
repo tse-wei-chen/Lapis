@@ -56,7 +56,8 @@ int main() {
     CHECK(surface->plane_count() == 1);
     const auto plane = surface->plane(0);
     CHECK(plane.data != nullptr);
-    CHECK(plane.stride == 8);
+    CHECK(plane.stride >= 8);
+    CHECK((plane.stride % 4) == 0);
 
     processor.stop();
     decoder.stop();

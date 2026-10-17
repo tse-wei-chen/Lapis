@@ -1,6 +1,8 @@
 #include "process/ffmpeg/ffmpeg_video_frame_converter.hpp"
 
 extern "C" {
+#include <libavutil/imgutils.h>
+#include <libavutil/mem.h>
 #include <libavutil/pixfmt.h>
 #include <libswscale/swscale.h>
 }
@@ -12,7 +14,6 @@ extern "C" {
 #include <memory>
 #include <new>
 #include <utility>
-#include <vector>
 
 namespace lapis::media::ffmpeg {
 namespace {
@@ -49,12 +50,17 @@ public:
     ConvertedBgraSurface(
         std::uint32_t width,
         std::uint32_t height,
-        std::size_t stride,
-        std::vector<std::byte> data)
+        std::array<std::uint8_t*, 4> planes,
+        std::array<int, 4> strides) noexcept
         : width_(width),
           height_(height),
-          stride_(stride),
-          data_(std::move(data)) {}
+          planes_(planes),
+          strides_(strides) {}
+
+    ~ConvertedBgraSurface() override {
+        av_free(planes_[0]);
+        planes_[0] = nullptr;
+    }
 
     [[nodiscard]] VideoPixelFormat pixel_format() const noexcept override {
         return VideoPixelFormat::Bgra8;
@@ -73,20 +79,20 @@ public:
     }
 
     [[nodiscard]] VideoPlaneView plane(std::uint32_t index) const noexcept override {
-        if (index != 0 || data_.empty()) {
+        if (index != 0 || planes_[0] == nullptr || strides_[0] <= 0) {
             return {};
         }
         return {
-            data_.data(),
-            static_cast<std::ptrdiff_t>(stride_)
+            reinterpret_cast<const std::byte*>(planes_[0]),
+            static_cast<std::ptrdiff_t>(strides_[0])
         };
     }
 
 private:
     std::uint32_t width_{};
     std::uint32_t height_{};
-    std::size_t stride_{};
-    std::vector<std::byte> data_;
+    std::array<std::uint8_t*, 4> planes_{};
+    std::array<int, 4> strides_{};
 };
 
 } // namespace
@@ -115,7 +121,7 @@ public:
         }
 
         if (source->width() > static_cast<std::uint32_t>(
-                std::numeric_limits<int>::max() / 4) ||
+                std::numeric_limits<int>::max()) ||
             source->height() > static_cast<std::uint32_t>(
                 std::numeric_limits<int>::max())) {
             return {VideoProcessStatus::UnsupportedInput, std::nullopt};
@@ -123,19 +129,6 @@ public:
 
         const auto width = static_cast<int>(source->width());
         const auto height = static_cast<int>(source->height());
-        const auto stride = static_cast<std::size_t>(source->width()) * 4U;
-        if (stride > std::numeric_limits<std::size_t>::max() /
-                static_cast<std::size_t>(source->height())) {
-            return {VideoProcessStatus::Failed, std::nullopt};
-        }
-
-        std::vector<std::byte> destination_data;
-        try {
-            destination_data.resize(
-                stride * static_cast<std::size_t>(source->height()));
-        } catch (const std::bad_alloc&) {
-            return {VideoProcessStatus::Failed, std::nullopt};
-        }
 
         context_ = sws_getCachedContext(
             context_,
@@ -173,9 +166,16 @@ public:
 
         std::array<std::uint8_t*, 4> destination_planes{};
         std::array<int, 4> destination_strides{};
-        destination_planes[0] = reinterpret_cast<std::uint8_t*>(
-            destination_data.data());
-        destination_strides[0] = static_cast<int>(stride);
+        const auto allocation_size = av_image_alloc(
+            destination_planes.data(),
+            destination_strides.data(),
+            width,
+            height,
+            AV_PIX_FMT_BGRA,
+            32);
+        if (allocation_size < 0 || destination_planes[0] == nullptr) {
+            return {VideoProcessStatus::Failed, std::nullopt};
+        }
 
         const auto converted_height = sws_scale(
             context_,
@@ -186,6 +186,7 @@ public:
             destination_planes.data(),
             destination_strides.data());
         if (converted_height != height) {
+            av_free(destination_planes[0]);
             return {VideoProcessStatus::Failed, std::nullopt};
         }
 
@@ -193,8 +194,8 @@ public:
             auto surface = std::make_shared<ConvertedBgraSurface>(
                 source->width(),
                 source->height(),
-                stride,
-                std::move(destination_data));
+                destination_planes,
+                destination_strides);
 
             VideoFrame converted{
                 std::move(surface),
@@ -206,6 +207,7 @@ public:
                 std::move(converted)
             };
         } catch (const std::bad_alloc&) {
+            av_free(destination_planes[0]);
             return {VideoProcessStatus::Failed, std::nullopt};
         }
     }
