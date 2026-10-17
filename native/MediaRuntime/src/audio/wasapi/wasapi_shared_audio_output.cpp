@@ -60,6 +60,12 @@ AudioOutputWaitStatus wait_status_from_hresult(HRESULT result) noexcept {
         : AudioOutputWaitStatus::Faulted;
 }
 
+AudioOutputControlStatus control_status_from_hresult(HRESULT result) noexcept {
+    return device_unavailable(result)
+        ? AudioOutputControlStatus::DeviceLost
+        : AudioOutputControlStatus::Faulted;
+}
+
 std::int64_t sample_frames_to_nanoseconds(
     std::uint64_t sample_frames,
     std::uint32_t sample_rate) noexcept {
@@ -211,7 +217,9 @@ public:
         active_format_ = std::move(format_copy);
         sample_rate_ = active_format_.sample_rate;
         submitted_until_ns_ = 0;
-        started_ = false;
+        has_started_ = false;
+        running_ = false;
+        paused_ = false;
         opened_ = true;
         presented_until_ns_.store(0, std::memory_order_release);
         revision_.fetch_add(1, std::memory_order_acq_rel);
@@ -221,7 +229,7 @@ public:
     [[nodiscard]] AudioOutputSubmitResult try_submit(
         const AudioFrame& frame,
         std::uint32_t first_sample_frame) {
-        if (!opened_ ||
+        if (!opened_ || paused_ ||
             audio_client_.Get() == nullptr ||
             render_client_.Get() == nullptr ||
             frame.buffer == nullptr ||
@@ -286,12 +294,20 @@ public:
                 submitted_frame_index,
                 sample_rate_));
 
-        if (!started_) {
+        if (!has_started_) {
             result = audio_client_->Start();
             if (FAILED(result)) {
+                // ReleaseBuffer already transferred the prefix to the endpoint.
+                // Reset it before reporting a zero-consumption error so the
+                // IAudioOutput partial-submission contract remains truthful.
+                (void)audio_client_->Stop();
+                (void)audio_client_->Reset();
+                submitted_until_ns_ = 0;
+                presented_until_ns_.store(0, std::memory_order_release);
                 return {submit_status_from_hresult(result), 0};
             }
-            started_ = true;
+            has_started_ = true;
+            running_ = true;
         }
 
         refresh_position_cache();
@@ -303,10 +319,10 @@ public:
         if (!opened_ || audio_event_ == nullptr || stop_event_ == nullptr) {
             return AudioOutputWaitStatus::Faulted;
         }
-        if (stop_token.stop_requested()) {
+        if (stop_token.stop_requested() || paused_) {
             return AudioOutputWaitStatus::Stopped;
         }
-        if (!started_) {
+        if (!running_) {
             return AudioOutputWaitStatus::Ready;
         }
         if (ResetEvent(stop_event_) == FALSE) {
@@ -350,7 +366,7 @@ public:
         }
 
         for (;;) {
-            if (stop_token.stop_requested()) {
+            if (stop_token.stop_requested() || paused_) {
                 return AudioOutputWaitStatus::Stopped;
             }
 
@@ -371,15 +387,58 @@ public:
         }
     }
 
+    [[nodiscard]] AudioOutputControlStatus pause() {
+        if (!opened_ || audio_client_.Get() == nullptr) {
+            return AudioOutputControlStatus::Faulted;
+        }
+        if (paused_) {
+            return AudioOutputControlStatus::Ready;
+        }
+
+        if (running_) {
+            const auto result = audio_client_->Stop();
+            if (FAILED(result)) {
+                return control_status_from_hresult(result);
+            }
+            running_ = false;
+            refresh_position_cache();
+        }
+
+        paused_ = true;
+        return AudioOutputControlStatus::Ready;
+    }
+
+    [[nodiscard]] AudioOutputControlStatus resume() {
+        if (!opened_ || audio_client_.Get() == nullptr) {
+            return AudioOutputControlStatus::Faulted;
+        }
+        if (!paused_) {
+            return AudioOutputControlStatus::Ready;
+        }
+
+        if (has_started_ && !running_) {
+            const auto result = audio_client_->Start();
+            if (FAILED(result)) {
+                return control_status_from_hresult(result);
+            }
+            running_ = true;
+        }
+
+        paused_ = false;
+        return AudioOutputControlStatus::Ready;
+    }
+
     void reset() noexcept {
         if (audio_client_.Get() != nullptr) {
-            if (started_) {
+            if (running_) {
                 (void)audio_client_->Stop();
             }
             (void)audio_client_->Reset();
         }
 
-        started_ = false;
+        has_started_ = false;
+        running_ = false;
+        paused_ = false;
         submitted_until_ns_ = 0;
         presented_until_ns_.store(0, std::memory_order_release);
         revision_.fetch_add(1, std::memory_order_acq_rel);
@@ -395,7 +454,7 @@ public:
     }
 
     void close() noexcept {
-        if (audio_client_.Get() != nullptr && started_) {
+        if (audio_client_.Get() != nullptr && running_) {
             (void)audio_client_->Stop();
         }
 
@@ -414,7 +473,9 @@ public:
         }
 
         opened_ = false;
-        started_ = false;
+        has_started_ = false;
+        running_ = false;
+        paused_ = false;
         buffer_frame_count_ = 0;
         sample_rate_ = 0;
         submitted_until_ns_ = 0;
@@ -455,7 +516,9 @@ private:
     std::wstring endpoint_id_;
     bool com_initialized_{};
     bool opened_{};
-    bool started_{};
+    bool has_started_{};
+    bool running_{};
+    bool paused_{};
     UINT32 buffer_frame_count_{};
     std::uint32_t sample_rate_{};
     AudioFormat active_format_{};
@@ -499,6 +562,14 @@ AudioOutputWaitStatus WasapiSharedAudioOutput::wait_until_writable(
 AudioOutputWaitStatus WasapiSharedAudioOutput::wait_until_drained(
     std::stop_token stop_token) {
     return impl_->wait_until_drained(stop_token);
+}
+
+AudioOutputControlStatus WasapiSharedAudioOutput::pause() {
+    return impl_->pause();
+}
+
+AudioOutputControlStatus WasapiSharedAudioOutput::resume() {
+    return impl_->resume();
 }
 
 void WasapiSharedAudioOutput::reset() noexcept {

@@ -28,6 +28,8 @@ public:
         std::stop_token stop_token) override;
     [[nodiscard]] AudioOutputWaitStatus wait_until_drained(
         std::stop_token stop_token) override;
+    [[nodiscard]] AudioOutputControlStatus pause() override;
+    [[nodiscard]] AudioOutputControlStatus resume() override;
     void reset() noexcept override;
     [[nodiscard]] AudioOutputPosition position() const noexcept override;
     void close() noexcept override;

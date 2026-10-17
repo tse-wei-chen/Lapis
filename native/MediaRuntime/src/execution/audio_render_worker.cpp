@@ -16,6 +16,19 @@ bool same_audio_format(const AudioFormat& left, const AudioFormat& right) {
         left.channels == right.channels;
 }
 
+bool active_state(AudioRenderWorkerState state) noexcept {
+    return state == AudioRenderWorkerState::Running ||
+        state == AudioRenderWorkerState::Paused;
+}
+
+bool terminal_state(AudioRenderWorkerState state) noexcept {
+    return state == AudioRenderWorkerState::Drained ||
+        state == AudioRenderWorkerState::Stopped ||
+        state == AudioRenderWorkerState::UnsupportedFormat ||
+        state == AudioRenderWorkerState::OutputUnavailable ||
+        state == AudioRenderWorkerState::Faulted;
+}
+
 AudioRenderWorkerState state_from_open_status(AudioOutputOpenStatus status) {
     switch (status) {
         case AudioOutputOpenStatus::UnsupportedFormat:
@@ -59,13 +72,30 @@ AudioRenderWorkerState state_from_wait_status(AudioOutputWaitStatus status) {
     }
 }
 
+AudioRenderWorkerState state_from_control_status(AudioOutputControlStatus status) {
+    switch (status) {
+        case AudioOutputControlStatus::DeviceLost:
+            return AudioRenderWorkerState::OutputUnavailable;
+        case AudioOutputControlStatus::Faulted:
+            return AudioRenderWorkerState::Faulted;
+        case AudioOutputControlStatus::Ready:
+        default:
+            return AudioRenderWorkerState::Running;
+    }
+}
+
 } // namespace
 
 AudioRenderWorker::AudioRenderWorker(std::unique_ptr<IAudioOutput> output)
-    : output_(std::move(output)) {
+    : output_(std::move(output)),
+      wait_interrupt_source_(std::make_shared<std::stop_source>()) {
     if (output_ == nullptr) {
         throw std::invalid_argument("AudioRenderWorker requires an output.");
     }
+}
+
+AudioRenderWorker::~AudioRenderWorker() {
+    stop();
 }
 
 void AudioRenderWorker::start(std::shared_ptr<AudioFrameStream> input) {
@@ -73,9 +103,9 @@ void AudioRenderWorker::start(std::shared_ptr<AudioFrameStream> input) {
         throw std::invalid_argument("AudioRenderWorker requires an input stream.");
     }
 
-    std::scoped_lock lock(control_mutex_);
-    if (state_.load(std::memory_order_acquire) == AudioRenderWorkerState::Running) {
-        throw std::logic_error("AudioRenderWorker is already running.");
+    std::scoped_lock lifecycle_lock(lifecycle_mutex_);
+    if (active_state(state_.load(std::memory_order_acquire))) {
+        throw std::logic_error("AudioRenderWorker is already active.");
     }
     if (worker_.joinable()) {
         worker_.join();
@@ -89,6 +119,19 @@ void AudioRenderWorker::start(std::shared_ptr<AudioFrameStream> input) {
     last_open_status_.store(AudioOutputOpenStatus::Ready, std::memory_order_release);
     last_submit_status_.store(AudioOutputStatus::Accepted, std::memory_order_release);
     last_wait_status_.store(AudioOutputWaitStatus::Ready, std::memory_order_release);
+    last_control_status_.store(
+        AudioOutputControlStatus::Ready,
+        std::memory_order_release);
+
+    {
+        std::scoped_lock command_lock(command_mutex_);
+        pause_requested_ = false;
+        applied_pause_state_ = false;
+        applied_control_succeeded_ = true;
+        requested_control_revision_ = 0;
+        applied_control_revision_ = 0;
+        wait_interrupt_source_ = std::make_shared<std::stop_source>();
+    }
     state_.store(AudioRenderWorkerState::Running, std::memory_order_release);
 
     try {
@@ -97,17 +140,28 @@ void AudioRenderWorker::start(std::shared_ptr<AudioFrameStream> input) {
                 run(stop_token, input);
             });
     } catch (...) {
-        state_.store(AudioRenderWorkerState::Faulted, std::memory_order_release);
+        publish_terminal_state(AudioRenderWorkerState::Faulted);
         throw;
     }
 }
 
+bool AudioRenderWorker::pause() {
+    return request_pause_state(true);
+}
+
+bool AudioRenderWorker::resume() {
+    return request_pause_state(false);
+}
+
 void AudioRenderWorker::stop() {
-    std::scoped_lock lock(control_mutex_);
+    std::scoped_lock lifecycle_lock(lifecycle_mutex_);
     if (!worker_.joinable()) {
         return;
     }
+
     worker_.request_stop();
+    interrupt_waits();
+    command_changed_.notify_all();
     worker_.join();
 }
 
@@ -121,37 +175,191 @@ AudioRenderStats AudioRenderWorker::stats() const noexcept {
     };
 }
 
+bool AudioRenderWorker::request_pause_state(bool paused) {
+    std::unique_lock lock(command_mutex_);
+    const auto current_state = state_.load(std::memory_order_acquire);
+    if (paused && current_state == AudioRenderWorkerState::Paused &&
+        pause_requested_) {
+        return true;
+    }
+    if (!paused && current_state == AudioRenderWorkerState::Running &&
+        !pause_requested_ &&
+        applied_control_revision_ == requested_control_revision_) {
+        return true;
+    }
+    if (!active_state(current_state)) {
+        return false;
+    }
+
+    pause_requested_ = paused;
+    const auto revision = ++requested_control_revision_;
+    if (wait_interrupt_source_ != nullptr) {
+        wait_interrupt_source_->request_stop();
+    }
+    command_changed_.notify_all();
+
+    command_changed_.wait(lock, [this, revision] {
+        return applied_control_revision_ >= revision ||
+            terminal_state(state_.load(std::memory_order_acquire));
+    });
+
+    return applied_control_revision_ >= revision &&
+        applied_control_succeeded_ &&
+        applied_pause_state_ == paused;
+}
+
+bool AudioRenderWorker::apply_requested_control(
+    std::stop_token stop_token,
+    bool output_opened,
+    AudioRenderWorkerState& final_state) {
+    for (;;) {
+        if (stop_token.stop_requested()) {
+            final_state = AudioRenderWorkerState::Stopped;
+            return false;
+        }
+
+        bool requested_pause{};
+        std::uint64_t requested_revision{};
+        {
+            std::scoped_lock lock(command_mutex_);
+            requested_pause = pause_requested_;
+            requested_revision = requested_control_revision_;
+        }
+
+        const auto current_state = state_.load(std::memory_order_acquire);
+        const bool currently_paused = current_state == AudioRenderWorkerState::Paused;
+        if (requested_pause != currently_paused) {
+            if (output_opened) {
+                const auto control_status = requested_pause
+                    ? output_->pause()
+                    : output_->resume();
+                last_control_status_.store(
+                    control_status,
+                    std::memory_order_release);
+                if (control_status != AudioOutputControlStatus::Ready) {
+                    output_failures_.fetch_add(1, std::memory_order_relaxed);
+                    final_state = state_from_control_status(control_status);
+                    state_.store(final_state, std::memory_order_release);
+                    {
+                        std::scoped_lock lock(command_mutex_);
+                        applied_control_revision_ = requested_revision;
+                        applied_pause_state_ = requested_pause;
+                        applied_control_succeeded_ = false;
+                    }
+                    command_changed_.notify_all();
+                    return false;
+                }
+            }
+
+            state_.store(
+                requested_pause
+                    ? AudioRenderWorkerState::Paused
+                    : AudioRenderWorkerState::Running,
+                std::memory_order_release);
+        }
+
+        {
+            std::unique_lock lock(command_mutex_);
+            if (requested_revision > applied_control_revision_) {
+                applied_control_revision_ = requested_revision;
+                applied_pause_state_ = requested_pause;
+                applied_control_succeeded_ = true;
+            }
+            if (wait_interrupt_source_ == nullptr ||
+                wait_interrupt_source_->stop_requested()) {
+                wait_interrupt_source_ = std::make_shared<std::stop_source>();
+            }
+            command_changed_.notify_all();
+
+            if (!pause_requested_) {
+                return true;
+            }
+
+            (void)command_changed_.wait(
+                lock,
+                stop_token,
+                [this] {
+                    return !pause_requested_ ||
+                        requested_control_revision_ > applied_control_revision_;
+                });
+        }
+    }
+}
+
+std::stop_token AudioRenderWorker::current_wait_token() {
+    std::scoped_lock lock(command_mutex_);
+    if (wait_interrupt_source_ == nullptr) {
+        wait_interrupt_source_ = std::make_shared<std::stop_source>();
+    }
+    // A stopped source is intentionally not replaced here. A control request may
+    // have raced between apply_requested_control() and this call. Returning that
+    // stopped token forces the pending wait to wake immediately; only the worker
+    // may renew the source after it has applied and acknowledged the command.
+    return wait_interrupt_source_->get_token();
+}
+
+void AudioRenderWorker::interrupt_waits() {
+    std::scoped_lock lock(command_mutex_);
+    if (wait_interrupt_source_ != nullptr) {
+        wait_interrupt_source_->request_stop();
+    }
+}
+
+void AudioRenderWorker::publish_terminal_state(
+    AudioRenderWorkerState state) noexcept {
+    state_.store(state, std::memory_order_release);
+    command_changed_.notify_all();
+}
+
 void AudioRenderWorker::run(
     std::stop_token stop_token,
     const std::shared_ptr<AudioFrameStream>& input) noexcept {
     auto final_state = AudioRenderWorkerState::Stopped;
     bool output_opened = false;
+    bool input_closed = false;
     std::optional<AudioFormat> active_format;
 
     try {
         bool finished = false;
         while (!finished && !stop_token.stop_requested()) {
-            auto read_result = input->pop(stop_token);
-            if (read_result.status == QueueReadStatus::Stopped) {
+            if (!apply_requested_control(stop_token, output_opened, final_state)) {
                 break;
+            }
+
+            if (input_closed) {
+                const auto wait_status = output_->wait_until_drained(
+                    current_wait_token());
+                last_wait_status_.store(wait_status, std::memory_order_release);
+                if (wait_status == AudioOutputWaitStatus::Ready) {
+                    final_state = AudioRenderWorkerState::Drained;
+                    break;
+                }
+                if (wait_status == AudioOutputWaitStatus::Stopped &&
+                    !stop_token.stop_requested()) {
+                    continue;
+                }
+
+                final_state = state_from_wait_status(wait_status);
+                if (wait_status != AudioOutputWaitStatus::Stopped) {
+                    output_failures_.fetch_add(1, std::memory_order_relaxed);
+                }
+                break;
+            }
+
+            auto read_result = input->pop(current_wait_token());
+            if (read_result.status == QueueReadStatus::Stopped) {
+                if (stop_token.stop_requested()) {
+                    break;
+                }
+                continue;
             }
             if (read_result.status == QueueReadStatus::Closed) {
                 if (!output_opened) {
                     final_state = AudioRenderWorkerState::Drained;
                     break;
                 }
-
-                const auto wait_status = output_->wait_until_drained(stop_token);
-                last_wait_status_.store(wait_status, std::memory_order_release);
-                if (wait_status == AudioOutputWaitStatus::Ready) {
-                    final_state = AudioRenderWorkerState::Drained;
-                } else {
-                    final_state = state_from_wait_status(wait_status);
-                    if (wait_status != AudioOutputWaitStatus::Stopped) {
-                        output_failures_.fetch_add(1, std::memory_order_relaxed);
-                    }
-                }
-                break;
+                input_closed = true;
+                continue;
             }
             if (!read_result.has_item()) {
                 continue;
@@ -181,6 +389,16 @@ void AudioRenderWorker::run(
                 }
                 output_opened = true;
                 active_format = format;
+
+                // A pause request can race with output open. Apply it before any
+                // sample prefix is submitted so logical pause is acknowledged at
+                // a precise device boundary.
+                if (!apply_requested_control(
+                        stop_token,
+                        output_opened,
+                        final_state)) {
+                    break;
+                }
             } else if (!same_audio_format(*active_format, format)) {
                 output_failures_.fetch_add(1, std::memory_order_relaxed);
                 final_state = AudioRenderWorkerState::UnsupportedFormat;
@@ -190,7 +408,10 @@ void AudioRenderWorker::run(
             const auto total_sample_frames = frame.buffer->sample_frame_count();
             std::uint32_t first_sample_frame{};
             while (first_sample_frame < total_sample_frames) {
-                if (stop_token.stop_requested()) {
+                if (!apply_requested_control(
+                        stop_token,
+                        output_opened,
+                        final_state)) {
                     finished = true;
                     break;
                 }
@@ -221,13 +442,15 @@ void AudioRenderWorker::run(
                         break;
                     }
 
-                    // A partial Accepted result means the output consumed every
-                    // sample it could accept right now. Wait before retrying the
-                    // remaining suffix so this path cannot busy-loop.
                     writable_waits_.fetch_add(1, std::memory_order_relaxed);
-                    const auto wait_status = output_->wait_until_writable(stop_token);
+                    const auto wait_status = output_->wait_until_writable(
+                        current_wait_token());
                     last_wait_status_.store(wait_status, std::memory_order_release);
                     if (wait_status == AudioOutputWaitStatus::Ready) {
+                        continue;
+                    }
+                    if (wait_status == AudioOutputWaitStatus::Stopped &&
+                        !stop_token.stop_requested()) {
                         continue;
                     }
 
@@ -253,9 +476,14 @@ void AudioRenderWorker::run(
                 }
 
                 writable_waits_.fetch_add(1, std::memory_order_relaxed);
-                const auto wait_status = output_->wait_until_writable(stop_token);
+                const auto wait_status = output_->wait_until_writable(
+                    current_wait_token());
                 last_wait_status_.store(wait_status, std::memory_order_release);
                 if (wait_status == AudioOutputWaitStatus::Ready) {
+                    continue;
+                }
+                if (wait_status == AudioOutputWaitStatus::Stopped &&
+                    !stop_token.stop_requested()) {
                     continue;
                 }
 
@@ -279,7 +507,7 @@ void AudioRenderWorker::run(
         output_->close();
     }
 
-    state_.store(final_state, std::memory_order_release);
+    publish_terminal_state(final_state);
 }
 
 } // namespace lapis::media
