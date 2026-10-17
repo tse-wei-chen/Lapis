@@ -24,6 +24,14 @@ struct FfmpegVideoStreamInfo final {
     const AVCodecParameters* codec_parameters{};
 };
 
+struct FfmpegAudioStreamInfo final {
+    int index{-1};
+    int sample_rate{};
+    int channel_count{};
+    AVRational time_base{0, 1};
+    const AVCodecParameters* codec_parameters{};
+};
+
 class FfmpegDemuxer final : public IFfmpegPacketSource {
 public:
     FfmpegDemuxer();
@@ -35,6 +43,7 @@ public:
     [[nodiscard]] bool open(IMediaByteStream& stream, std::string_view demux_hint);
     [[nodiscard]] std::optional<MediaTime> duration() const noexcept;
     [[nodiscard]] std::optional<FfmpegVideoStreamInfo> best_video_stream() const noexcept;
+    [[nodiscard]] std::optional<FfmpegAudioStreamInfo> best_audio_stream() const noexcept;
     int read_packet(AVPacket& packet) override;
     [[nodiscard]] bool seek(MediaTime target, int stream_index);
 
