@@ -4,9 +4,11 @@
 #include "core/playback_clock.hpp"
 #include "core/playback_epoch.hpp"
 #include "execution/video_decode_worker.hpp"
+#include "execution/video_process_worker.hpp"
 #include "execution/video_render_worker.hpp"
 #include "execution/video_scheduler_worker.hpp"
 #include "video/video_presenter.hpp"
+#include "video/video_processor.hpp"
 #include "video/video_scheduler.hpp"
 
 #include <cstddef>
@@ -47,6 +49,7 @@ struct PlaybackExecutionResult final {
 
 struct PlaybackExecutionConfig final {
     std::size_t decode_queue_capacity{8};
+    std::size_t process_queue_capacity{4};
     std::size_t presentation_queue_capacity{2};
     VideoSchedulerConfig scheduler{};
 };
@@ -55,6 +58,8 @@ struct PlaybackExecutionSnapshot final {
     PlaybackExecutionState state{PlaybackExecutionState::Stopped};
     PlaybackClockSnapshot clock{};
     VideoDecodeWorkerState decode_state{VideoDecodeWorkerState::Idle};
+    VideoProcessWorkerState process_state{VideoProcessWorkerState::Idle};
+    VideoProcessStatus process_status{VideoProcessStatus::Processed};
     VideoSchedulerWorkerState scheduler_state{VideoSchedulerWorkerState::Idle};
     VideoRenderWorkerState render_state{VideoRenderWorkerState::Idle};
     VideoSchedulingStats scheduling{};
@@ -65,6 +70,7 @@ class PlaybackExecution final {
 public:
     PlaybackExecution(
         PlaybackMediaSession& media,
+        std::unique_ptr<IVideoFrameProcessor> processor,
         std::unique_ptr<IVideoPresenter> presenter,
         PlaybackExecutionConfig config = {});
     ~PlaybackExecution();
@@ -94,6 +100,7 @@ private:
     PlaybackMediaSession& media_;
     mutable PlaybackClock clock_;
     VideoDecodeWorker decoder_;
+    VideoProcessWorker processor_;
     VideoSchedulerWorker scheduler_;
     VideoRenderWorker renderer_;
     mutable std::mutex control_mutex_;

@@ -9,10 +9,12 @@ namespace lapis::media {
 
 PlaybackExecution::PlaybackExecution(
     PlaybackMediaSession& media,
+    std::unique_ptr<IVideoFrameProcessor> processor,
     std::unique_ptr<IVideoPresenter> presenter,
     PlaybackExecutionConfig config)
     : media_(media),
       decoder_(media_, config.decode_queue_capacity),
+      processor_(std::move(processor), config.process_queue_capacity),
       scheduler_(
           clock_,
           config.scheduler,
@@ -29,9 +31,7 @@ PlaybackExecution::~PlaybackExecution() {
         }
         stop_generation_unlocked();
     } catch (...) {
-        // Destructors must not surface thread-shutdown failures. Public ABI
-        // owners perform explicit close before destruction and can report the
-        // corresponding lifecycle error there.
+        // Public owners perform explicit close and can surface lifecycle errors.
     }
 }
 
@@ -144,8 +144,8 @@ PlaybackExecutionResult PlaybackExecution::seek(
         return {PlaybackExecutionError::ClockFailure};
     }
 
-    // Stop downstream first. Each upstream producer may be blocked on the
-    // bounded queue owned by the stage below it.
+    // Stop downstream first. Upstream stages may be blocked on the bounded
+    // queue owned by the next stage.
     stop_generation_unlocked();
 
     if (!media_.seek(position)) {
@@ -213,6 +213,8 @@ PlaybackExecutionSnapshot PlaybackExecution::snapshot() const {
         state,
         clock_.snapshot(SteadyClockSource::now()),
         decoder_.state(),
+        processor_.state(),
+        processor_.last_status(),
         scheduler_.state(),
         renderer_.state(),
         scheduler_.stats(),
@@ -227,10 +229,13 @@ bool PlaybackExecution::epoch_advances_unlocked(PlaybackEpoch epoch) const {
 
 bool PlaybackExecution::workers_failed_unlocked() const noexcept {
     const auto decode_state = decoder_.state();
+    const auto process_state = processor_.state();
     const auto scheduler_state = scheduler_.state();
     const auto render_state = renderer_.state();
 
     return decode_state == VideoDecodeWorkerState::Faulted ||
+        process_state == VideoProcessWorkerState::UnsupportedInput ||
+        process_state == VideoProcessWorkerState::Faulted ||
         scheduler_state == VideoSchedulerWorkerState::Faulted ||
         render_state == VideoRenderWorkerState::PresenterUnavailable ||
         render_state == VideoRenderWorkerState::Faulted;
@@ -238,6 +243,7 @@ bool PlaybackExecution::workers_failed_unlocked() const noexcept {
 
 bool PlaybackExecution::workers_drained_unlocked() const noexcept {
     return decoder_.state() == VideoDecodeWorkerState::Drained &&
+        processor_.state() == VideoProcessWorkerState::Drained &&
         scheduler_.state() == VideoSchedulerWorkerState::Drained &&
         renderer_.state() == VideoRenderWorkerState::Drained;
 }
@@ -245,7 +251,8 @@ bool PlaybackExecution::workers_drained_unlocked() const noexcept {
 bool PlaybackExecution::start_generation_unlocked(PlaybackEpoch epoch) {
     try {
         auto decoded = decoder_.start(epoch);
-        auto presentation = scheduler_.start(std::move(decoded));
+        auto processed = processor_.start(std::move(decoded));
+        auto presentation = scheduler_.start(std::move(processed));
         renderer_.start(std::move(presentation));
         return true;
     } catch (...) {
@@ -261,6 +268,7 @@ bool PlaybackExecution::start_generation_unlocked(PlaybackEpoch epoch) {
 void PlaybackExecution::stop_generation_unlocked() {
     renderer_.stop();
     scheduler_.stop();
+    processor_.stop();
     decoder_.stop();
 }
 

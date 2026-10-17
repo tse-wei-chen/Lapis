@@ -1,4 +1,5 @@
 #include "execution/playback_execution.hpp"
+#include "process/ffmpeg/ffmpeg_video_frame_converter.hpp"
 #include "session/playback_media_session.hpp"
 #include "video/video_presenter.hpp"
 
@@ -25,6 +26,7 @@ struct PresenterProbe final {
     std::uint64_t end_count{};
     std::vector<std::uint64_t> begun_epochs;
     std::vector<std::uint64_t> presented_epochs;
+    std::vector<lapis::media::VideoPixelFormat> pixel_formats;
 
     void reset_records() {
         begin_count = 0;
@@ -32,6 +34,7 @@ struct PresenterProbe final {
         end_count = 0;
         begun_epochs.clear();
         presented_epochs.clear();
+        pixel_formats.clear();
     }
 };
 
@@ -48,10 +51,14 @@ public:
     }
 
     lapis::media::VideoPresentStatus present(
-        const lapis::media::VideoFrame&,
+        const lapis::media::VideoFrame& frame,
         const lapis::media::VideoPresentContext& context) override {
         ++probe_->present_count;
         probe_->presented_epochs.push_back(context.epoch.value());
+        probe_->pixel_formats.push_back(
+            frame.surface != nullptr
+                ? frame.surface->pixel_format()
+                : lapis::media::VideoPixelFormat::Unknown);
         return lapis::media::VideoPresentStatus::Presented;
     }
 
@@ -93,8 +100,10 @@ int main() {
     auto probe = std::make_shared<PresenterProbe>();
     PlaybackExecution execution(
         media,
+        std::make_unique<ffmpeg::FfmpegVideoFrameConverter>(),
         std::make_unique<RecordingPresenter>(probe),
         PlaybackExecutionConfig{
+            1,
             1,
             1,
             VideoSchedulerConfig{
@@ -118,9 +127,10 @@ int main() {
     CHECK(snapshot.clock.state == PlaybackClockState::Paused);
     CHECK(snapshot.clock.epoch.value() == 1);
 
-    // With both queues at capacity 1, a paused clock leaves the scheduler
-    // waiting and quickly backpressures the decoder. seek() must still return:
-    // Render -> Scheduler -> Decode stop ordering wakes every blocked stage.
+    // All three inter-stage queues have capacity 1. Pausing intentionally
+    // creates backpressure through scheduler -> process -> decode. seek()
+    // must still return because shutdown runs Render -> Scheduler -> Process
+    // -> Decode and every bounded wait is stop-aware.
     std::this_thread::sleep_for(20ms);
     CHECK(execution.seek(PlaybackEpoch{2}, MediaTime{}).ok());
 
@@ -139,6 +149,8 @@ int main() {
 
     snapshot = execution.snapshot();
     CHECK(snapshot.clock.epoch.value() == 2);
+    CHECK(snapshot.process_state == VideoProcessWorkerState::Drained);
+    CHECK(snapshot.process_status == VideoProcessStatus::Processed);
     CHECK(snapshot.rendering.presenter_failures == 0);
     CHECK(snapshot.rendering.stale_epoch_drops == 0);
     CHECK(snapshot.scheduling.stale_epoch_drops == 0);
@@ -148,8 +160,10 @@ int main() {
     CHECK(probe->begun_epochs.size() == 1);
     CHECK(probe->begun_epochs[0] == 2);
     CHECK(probe->presented_epochs.size() == 16);
-    for (const auto epoch : probe->presented_epochs) {
-        CHECK(epoch == 2);
+    CHECK(probe->pixel_formats.size() == 16);
+    for (std::size_t index = 0; index < probe->presented_epochs.size(); ++index) {
+        CHECK(probe->presented_epochs[index] == 2);
+        CHECK(probe->pixel_formats[index] == VideoPixelFormat::Bgra8);
     }
 
     CHECK(
@@ -175,6 +189,7 @@ int main() {
     CHECK(snapshot.state == PlaybackExecutionState::Stopped);
     CHECK(snapshot.clock.epoch.value() == 4);
     CHECK(snapshot.decode_state != VideoDecodeWorkerState::Running);
+    CHECK(snapshot.process_state != VideoProcessWorkerState::Running);
     CHECK(snapshot.scheduler_state != VideoSchedulerWorkerState::Running);
     CHECK(snapshot.render_state != VideoRenderWorkerState::Running);
 

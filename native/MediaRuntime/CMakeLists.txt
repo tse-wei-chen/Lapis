@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(LapisMediaRuntime VERSION 0.7.0 LANGUAGES C CXX)
+project(LapisMediaRuntime VERSION 0.8.0 LANGUAGES C CXX)
 
 find_package(FFMPEG REQUIRED)
 find_package(Threads REQUIRED)
@@ -20,7 +20,9 @@ add_library(Lapis.MediaRuntime.Core STATIC
     src/demux/ffmpeg/ffmpeg_io.cpp
     src/demux/ffmpeg/ffmpeg_demuxer.cpp
     src/decode/ffmpeg/ffmpeg_video_decoder.cpp
+    src/process/ffmpeg/ffmpeg_video_frame_converter.cpp
     src/execution/video_decode_worker.cpp
+    src/execution/video_process_worker.cpp
     src/execution/video_scheduler_worker.cpp
     src/execution/video_render_worker.cpp
     src/execution/playback_execution.cpp
@@ -110,6 +112,16 @@ if(BUILD_TESTING)
     target_link_libraries(Lapis.MediaRuntime.FfmpegTests PRIVATE Lapis.MediaRuntime.Core)
     lapis_enable_strict_warnings(Lapis.MediaRuntime.FfmpegTests)
     add_test(NAME ffmpeg_decode_smoke COMMAND Lapis.MediaRuntime.FfmpegTests)
+
+    add_executable(Lapis.MediaRuntime.VideoProcessingTests tests/video_processing.cpp)
+    target_compile_features(Lapis.MediaRuntime.VideoProcessingTests PRIVATE cxx_std_20)
+    target_compile_definitions(
+        Lapis.MediaRuntime.VideoProcessingTests
+        PRIVATE LAPIS_TEST_MEDIA_PATH="${LAPIS_TEST_MEDIA_PATH}"
+    )
+    target_link_libraries(Lapis.MediaRuntime.VideoProcessingTests PRIVATE Lapis.MediaRuntime.Core)
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.VideoProcessingTests)
+    add_test(NAME video_processing_smoke COMMAND Lapis.MediaRuntime.VideoProcessingTests)
 
     add_executable(Lapis.MediaRuntime.ExecutionTests tests/execution_pipeline.cpp)
     target_compile_features(Lapis.MediaRuntime.ExecutionTests PRIVATE cxx_std_20)
@@ -201,4 +213,10 @@ if(BUILD_TESTING)
         NAME playback_execution_smoke
         COMMAND Lapis.MediaRuntime.PlaybackExecutionTests
     )
+
+    add_executable(Lapis.MediaRuntime.BoundedQueueTests tests/bounded_queue.cpp)
+    target_compile_features(Lapis.MediaRuntime.BoundedQueueTests PRIVATE cxx_std_20)
+    target_link_libraries(Lapis.MediaRuntime.BoundedQueueTests PRIVATE Lapis.MediaRuntime.Core)
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.BoundedQueueTests)
+    add_test(NAME bounded_queue_concurrency COMMAND Lapis.MediaRuntime.BoundedQueueTests)
 endif()

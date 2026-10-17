@@ -17,6 +17,7 @@ namespace lapis::media {
 
 class PlaybackMediaSession;
 class VideoDecodeWorker;
+class VideoProcessWorker;
 
 using TimedVideoFrame = TimedPayload<VideoFrame>;
 
@@ -45,6 +46,7 @@ public:
 
 private:
     friend class VideoDecodeWorker;
+    friend class VideoProcessWorker;
 
     VideoFrameStream(
         PlaybackEpoch epoch,
