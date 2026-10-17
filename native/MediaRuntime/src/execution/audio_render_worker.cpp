@@ -146,10 +146,12 @@ void AudioRenderWorker::start(std::shared_ptr<AudioFrameStream> input) {
 }
 
 bool AudioRenderWorker::pause() {
+    std::scoped_lock request_lock(control_request_mutex_);
     return request_pause_state(true);
 }
 
 bool AudioRenderWorker::resume() {
+    std::scoped_lock request_lock(control_request_mutex_);
     return request_pause_state(false);
 }
 

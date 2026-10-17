@@ -15,19 +15,21 @@ WASAPI `IAudioClient::Stop` freezes the stream and its audio clock at the curren
 
 1. `IAudioOutput` gains explicit `pause()` and `resume()` control operations returning `AudioOutputControlStatus`. They preserve queued samples and stream position. `reset()` remains the destructive discontinuity operation.
 2. Only `AudioRenderWorker` invokes output pause/resume. Public worker control methods communicate desired state to the render thread and synchronously wait until that thread applies or rejects the command.
-3. The render worker maintains a control revision and a replaceable `std::stop_source` used only to interrupt the current blocking queue/device wait. Generation shutdown still uses the `std::jthread` stop token.
-4. A control interrupt returning `Stopped` from a queue/output wait is not itself terminal. The worker first checks generation stop, then applies pending control and resumes the exact interrupted phase.
-5. The wait-interrupt source is renewed only after the render thread has observed and acknowledged the corresponding command. A caller may stop the source in the race between the worker's command check and its next blocking wait; that stopped token must reach the wait rather than being silently replaced.
-6. Pause while a partial `AudioFrame` is in progress preserves `first_sample_frame`. Resume continues with the unsent suffix; already accepted prefixes are never duplicated.
-7. Pause during EOF drain preserves the drain phase. Resume continues waiting for endpoint padding to reach zero rather than returning to the closed input stream.
-8. Pause before the device stream has started is valid. The worker may enter logical `Paused` without invoking output control until an output has actually been opened.
-9. WASAPI maps Pause to `IAudioClient::Stop` and Resume to `IAudioClient::Start`. Pending endpoint data is retained. Seek/close-style worker stop still performs output `reset()` before close.
-10. If the first WASAPI `Start` fails after a prefix was copied and released to the endpoint, the adapter immediately stops/resets the stream before returning a zero-consumption error so the partial-submission contract remains truthful.
+3. Concurrent public Pause/Resume calls are serialized until the current synchronous acknowledgement completes. A later caller cannot overwrite an earlier caller's revision or cause the render worker to renew its wait-interrupt source before the earlier command has been observed.
+4. The render worker maintains a control revision and a replaceable `std::stop_source` used only to interrupt the current blocking queue/device wait. Generation shutdown still uses the `std::jthread` stop token.
+5. A control interrupt returning `Stopped` from a queue/output wait is not itself terminal. The worker first checks generation stop, then applies pending control and resumes the exact interrupted phase.
+6. The wait-interrupt source is renewed only after the render thread has observed and acknowledged the corresponding command. A caller may stop the source in the race between the worker's command check and its next blocking wait; that stopped token must reach the wait rather than being silently replaced.
+7. Pause while a partial `AudioFrame` is in progress preserves `first_sample_frame`. Resume continues with the unsent suffix; already accepted prefixes are never duplicated.
+8. Pause during EOF drain preserves the drain phase. Resume continues waiting for endpoint padding to reach zero rather than returning to the closed input stream.
+9. Pause before the device stream has started is valid. The worker may enter logical `Paused` without invoking output control until an output has actually been opened.
+10. WASAPI maps Pause to `IAudioClient::Stop` and Resume to `IAudioClient::Start`. Pending endpoint data is retained. Seek/close-style worker stop still performs output `reset()` before close.
+11. If the first WASAPI `Start` fails after a prefix was copied and released to the endpoint, the adapter immediately stops/resets the stream before returning a zero-consumption error so the partial-submission contract remains truthful.
 
 ## Consequences
 
 - `PlaybackExecution::pause()` can eventually wait for the audio device to be frozen before committing the logical playback-clock transition.
 - Control-plane threads never need COM apartment affinity or direct access to WASAPI objects.
+- Synchronous Pause/Resume results are attributable to the caller's own command even when multiple control-plane threads call concurrently.
 - Pause can wake bounded queue waits, device backpressure waits, and EOF drain without polling.
 - The current sample cursor and endpoint queue survive Pause/Resume, while seek/close remain clean discontinuities.
 - Worker state now distinguishes `Paused` from terminal `Stopped`.

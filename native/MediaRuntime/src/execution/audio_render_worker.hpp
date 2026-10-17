@@ -102,6 +102,10 @@ private:
     std::atomic<std::uint64_t> output_failures_{};
 
     mutable std::mutex lifecycle_mutex_;
+    // pause()/resume() are synchronous acknowledgements. Serialize public
+    // callers so a later command cannot overwrite an earlier revision before
+    // that earlier caller has observed its own result.
+    std::mutex control_request_mutex_;
     mutable std::mutex command_mutex_;
     std::condition_variable_any command_changed_;
     bool pause_requested_{};

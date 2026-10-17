@@ -30,6 +30,7 @@ enum class OutputMode {
     BlockUntilStopped,
     PauseBetweenChunks,
     PauseDuringDrain,
+    SerializedControls,
     DeviceLost
 };
 
@@ -53,7 +54,8 @@ public:
         if (mode_ == OutputMode::DeviceLost) {
             return {lapis::media::AudioOutputStatus::DeviceLost, 0};
         }
-        if (mode_ == OutputMode::BlockUntilStopped) {
+        if (mode_ == OutputMode::BlockUntilStopped ||
+            mode_ == OutputMode::SerializedControls) {
             return {lapis::media::AudioOutputStatus::Backpressure, 0};
         }
         if (mode_ == OutputMode::BackpressureOnce &&
@@ -83,7 +85,8 @@ public:
         std::stop_token stop_token) override {
         writable_waits.fetch_add(1, std::memory_order_relaxed);
         if (mode_ != OutputMode::BlockUntilStopped &&
-            mode_ != OutputMode::PauseBetweenChunks) {
+            mode_ != OutputMode::PauseBetweenChunks &&
+            mode_ != OutputMode::SerializedControls) {
             return lapis::media::AudioOutputWaitStatus::Ready;
         }
 
@@ -120,6 +123,14 @@ public:
 
     lapis::media::AudioOutputControlStatus pause() override {
         pause_count.fetch_add(1, std::memory_order_relaxed);
+        if (mode_ == OutputMode::SerializedControls) {
+            pause_started.store(true, std::memory_order_release);
+            std::unique_lock lock(control_mutex_);
+            (void)control_cv_.wait_for(
+                lock,
+                std::chrono::seconds(4),
+                [this] { return allow_pause_; });
+        }
         return lapis::media::AudioOutputControlStatus::Ready;
     }
 
@@ -136,6 +147,14 @@ public:
         }
         wait_cv_.notify_all();
         return lapis::media::AudioOutputControlStatus::Ready;
+    }
+
+    void release_pause_control() {
+        {
+            std::scoped_lock lock(control_mutex_);
+            allow_pause_ = true;
+        }
+        control_cv_.notify_all();
     }
 
     void reset() noexcept override {
@@ -162,6 +181,7 @@ public:
     std::atomic<std::uint64_t> close_count{};
     std::atomic<bool> wait_started{};
     std::atomic<bool> drain_started{};
+    std::atomic<bool> pause_started{};
     std::atomic<bool> saw_nonzero_offset{};
 
 private:
@@ -171,6 +191,9 @@ private:
     std::condition_variable_any wait_cv_;
     bool writable_{};
     bool drain_ready_{};
+    std::mutex control_mutex_;
+    std::condition_variable control_cv_;
+    bool allow_pause_{};
 };
 
 bool wait_for_state(
@@ -310,13 +333,74 @@ int main() {
         CHECK(probe->close_count.load() == 1);
     }
 
+    // Concurrent synchronous controls must be ordered. A Resume issued while
+    // Pause is still being applied cannot supersede the Pause revision or lose
+    // the wakeup that Resume needs after Pause has acknowledged.
+    {
+        PlaybackMediaSession media;
+        CHECK(open_audio_media(media));
+        AudioDecodeWorker decoder(media, 1);
+        auto stream = decoder.start(PlaybackEpoch{24});
+
+        auto output = std::make_unique<RecordingAudioOutput>(
+            OutputMode::SerializedControls);
+        auto* probe = output.get();
+        AudioRenderWorker renderer(std::move(output));
+        renderer.start(stream);
+
+        CHECK(wait_for_flag(probe->wait_started));
+
+        std::atomic<bool> pause_result{};
+        std::atomic<bool> pause_done{};
+        std::jthread pause_thread([&] {
+            pause_result.store(renderer.pause(), std::memory_order_release);
+            pause_done.store(true, std::memory_order_release);
+        });
+        CHECK(wait_for_flag(probe->pause_started));
+
+        std::atomic<bool> resume_started{};
+        std::atomic<bool> resume_result{};
+        std::atomic<bool> resume_done{};
+        std::jthread resume_thread([&] {
+            resume_started.store(true, std::memory_order_release);
+            resume_result.store(renderer.resume(), std::memory_order_release);
+            resume_done.store(true, std::memory_order_release);
+        });
+        CHECK(wait_for_flag(resume_started));
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        CHECK(!resume_done.load(std::memory_order_acquire));
+
+        probe->release_pause_control();
+        const bool pause_completed = wait_for_flag(pause_done);
+        const bool resume_completed = wait_for_flag(resume_done);
+        if (!pause_completed || !resume_completed) {
+            renderer.stop();
+        }
+        pause_thread.join();
+        resume_thread.join();
+
+        CHECK(pause_completed);
+        CHECK(resume_completed);
+        CHECK(pause_result.load(std::memory_order_acquire));
+        CHECK(resume_result.load(std::memory_order_acquire));
+        CHECK(renderer.state() == AudioRenderWorkerState::Running);
+        CHECK(probe->pause_count.load() == 1);
+        CHECK(probe->resume_count.load() == 1);
+
+        renderer.stop();
+        decoder.stop();
+        media.stop_decode_generation();
+        CHECK(probe->reset_count.load() == 1);
+        CHECK(probe->close_count.load() == 1);
+    }
+
     // A pause that interrupts the wait between partial prefixes must preserve
     // the current frame cursor. Resume submits only the remaining suffix.
     {
         PlaybackMediaSession media;
         CHECK(open_audio_media(media));
         AudioDecodeWorker decoder(media, 1);
-        auto stream = decoder.start(PlaybackEpoch{24});
+        auto stream = decoder.start(PlaybackEpoch{25});
 
         auto output = std::make_unique<RecordingAudioOutput>(
             OutputMode::PauseBetweenChunks);
@@ -350,7 +434,7 @@ int main() {
         PlaybackMediaSession media;
         CHECK(open_audio_media(media));
         AudioDecodeWorker decoder(media, 1);
-        auto stream = decoder.start(PlaybackEpoch{25});
+        auto stream = decoder.start(PlaybackEpoch{26});
 
         auto output = std::make_unique<RecordingAudioOutput>(
             OutputMode::PauseDuringDrain);
@@ -382,7 +466,7 @@ int main() {
         PlaybackMediaSession media;
         CHECK(open_audio_media(media));
         AudioDecodeWorker decoder(media, 1);
-        auto stream = decoder.start(PlaybackEpoch{26});
+        auto stream = decoder.start(PlaybackEpoch{27});
 
         auto output = std::make_unique<RecordingAudioOutput>(
             OutputMode::BlockUntilStopped);
@@ -408,7 +492,7 @@ int main() {
         PlaybackMediaSession media;
         CHECK(open_audio_media(media));
         AudioDecodeWorker decoder(media, 1);
-        auto stream = decoder.start(PlaybackEpoch{27});
+        auto stream = decoder.start(PlaybackEpoch{28});
 
         auto output = std::make_unique<RecordingAudioOutput>(
             OutputMode::DeviceLost);
