@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <stop_token>
 
 namespace lapis::media {
 
@@ -17,7 +18,8 @@ enum class MediaOpenError : std::uint8_t {
     UnsupportedSource,
     SourceOpenFailed,
     DemuxFailed,
-    DecoderFailed
+    DecoderFailed,
+    PacketRoutingFailed
 };
 
 struct MediaOpenInfo final {
@@ -39,7 +41,8 @@ public:
     PlaybackMediaSession& operator=(const PlaybackMediaSession&) = delete;
 
     [[nodiscard]] MediaOpenInfo open(const MediaLocator& locator);
-    [[nodiscard]] std::optional<VideoFrame> decode_next_video_frame();
+    [[nodiscard]] std::optional<VideoFrame> decode_next_video_frame(
+        std::stop_token stop_token = {});
     [[nodiscard]] bool seek(MediaTime target);
     [[nodiscard]] const GraphPlan* graph_plan() const noexcept;
 

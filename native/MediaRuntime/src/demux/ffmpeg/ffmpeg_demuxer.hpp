@@ -1,10 +1,10 @@
 #pragma once
 
 #include "core/media_time.hpp"
+#include "demux/ffmpeg/ffmpeg_packet_router.hpp"
 #include "source/media_source.hpp"
 
 extern "C" {
-#include <libavcodec/packet.h>
 #include <libavformat/avformat.h>
 }
 
@@ -24,10 +24,10 @@ struct FfmpegVideoStreamInfo final {
     const AVCodecParameters* codec_parameters{};
 };
 
-class FfmpegDemuxer final {
+class FfmpegDemuxer final : public IFfmpegPacketSource {
 public:
     FfmpegDemuxer();
-    ~FfmpegDemuxer();
+    ~FfmpegDemuxer() override;
 
     FfmpegDemuxer(const FfmpegDemuxer&) = delete;
     FfmpegDemuxer& operator=(const FfmpegDemuxer&) = delete;
@@ -35,7 +35,7 @@ public:
     [[nodiscard]] bool open(IMediaByteStream& stream, std::string_view demux_hint);
     [[nodiscard]] std::optional<MediaTime> duration() const noexcept;
     [[nodiscard]] std::optional<FfmpegVideoStreamInfo> best_video_stream() const noexcept;
-    int read_packet(AVPacket& packet);
+    int read_packet(AVPacket& packet) override;
     [[nodiscard]] bool seek(MediaTime target, int stream_index);
 
 private:

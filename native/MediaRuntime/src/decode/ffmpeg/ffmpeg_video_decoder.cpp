@@ -121,7 +121,6 @@ std::optional<VideoFrame> make_video_frame(AVFrame& frame, AVRational time_base)
 } // namespace
 
 FfmpegVideoDecoder::~FfmpegVideoDecoder() {
-    av_packet_free(&packet_);
     av_frame_free(&frame_);
     avcodec_free_context(&context_);
 }
@@ -148,29 +147,31 @@ bool FfmpegVideoDecoder::open(const FfmpegVideoStreamInfo& stream_info) {
     }
 
     auto* frame = av_frame_alloc();
-    auto* packet = av_packet_alloc();
-    if (frame == nullptr || packet == nullptr) {
-        av_frame_free(&frame);
-        av_packet_free(&packet);
+    if (frame == nullptr) {
         avcodec_free_context(&context);
         return false;
     }
 
     context_ = context;
     frame_ = frame;
-    packet_ = packet;
     stream_index_ = stream_info.index;
     time_base_ = stream_info.time_base;
     draining_ = false;
     return true;
 }
 
-std::optional<VideoFrame> FfmpegVideoDecoder::decode_next(FfmpegDemuxer& demuxer) {
-    if (context_ == nullptr || frame_ == nullptr || packet_ == nullptr) {
+std::optional<VideoFrame> FfmpegVideoDecoder::decode_next(
+    FfmpegPacketRouter& packet_router,
+    std::stop_token stop_token) {
+    if (context_ == nullptr || frame_ == nullptr) {
         return std::nullopt;
     }
 
     for (;;) {
+        if (stop_token.stop_requested()) {
+            return std::nullopt;
+        }
+
         const int receive_result = avcodec_receive_frame(context_, frame_);
         if (receive_result == 0) {
             auto result = make_video_frame(*frame_, time_base_);
@@ -190,29 +191,24 @@ std::optional<VideoFrame> FfmpegVideoDecoder::decode_next(FfmpegDemuxer& demuxer
             return std::nullopt;
         }
 
-        int read_result{};
-        do {
-            av_packet_unref(packet_);
-            read_result = demuxer.read_packet(*packet_);
-            if (read_result < 0) {
-                break;
-            }
-        } while (packet_->stream_index != stream_index_);
-
-        if (read_result == AVERROR_EOF) {
+        auto packet_result = packet_router.read(stream_index_, stop_token);
+        if (packet_result.status == FfmpegPacketReadStatus::Stopped) {
+            return std::nullopt;
+        }
+        if (packet_result.status == FfmpegPacketReadStatus::Drained) {
             draining_ = true;
             if (avcodec_send_packet(context_, nullptr) < 0) {
                 return std::nullopt;
             }
             continue;
         }
-
-        if (read_result < 0) {
+        if (!packet_result.has_packet()) {
             return std::nullopt;
         }
 
-        const int send_result = avcodec_send_packet(context_, packet_);
-        av_packet_unref(packet_);
+        const int send_result = avcodec_send_packet(
+            context_,
+            &packet_result.packet->get());
         if (send_result < 0) {
             return std::nullopt;
         }
@@ -225,9 +221,6 @@ void FfmpegVideoDecoder::flush() noexcept {
     }
     if (frame_ != nullptr) {
         av_frame_unref(frame_);
-    }
-    if (packet_ != nullptr) {
-        av_packet_unref(packet_);
     }
     draining_ = false;
 }

@@ -13,7 +13,8 @@ Application control plane
         v
 Native MediaRuntime
   - immutable GraphPlan / GraphBuilder
-  - source / demux / decode adapters
+  - source / demux adapters
+      DemuxPump -> bounded selected-stream packet queues -> decoders
   - PlaybackExecution generation owner
       DecodeWorker -> ProcessWorker -> SchedulerWorker -> RenderWorker
            |              |                |               |
@@ -40,10 +41,12 @@ Native MediaRuntime
 11. `PlaybackExecution` is the sole owner of video worker-generation lifecycle.
 12. Generation startup is Decode -> Process -> Scheduler -> Render; shutdown is Render -> Scheduler -> Process -> Decode.
 13. Pause keeps the generation alive and relies on bounded backpressure; seek/close tear it down before media mutation.
-14. AI observes playback and never sits in the blocking playback path.
+14. `av_read_frame` has one owner. Selected demux streams fan out through independent bounded packet queues; decoders never compete for the demuxer.
+15. Packet-routing generations are stopped and replaced across seek; packet queues are never reopened across a discontinuity.
+16. AI observes playback and never sits in the blocking playback path.
 
 ## Current implementation slice
 
-The current slice opens local files through `IMediaByteStream`, feeds FFmpeg via custom AVIO, demuxes/software-decodes video, and keeps FFmpeg types inside adapters. `VideoProcessWorker` now normalizes software-decoded system-memory frames through the isolated libswscale adapter into BGRA8 before scheduling, so presentation backends no longer need to own generic YUV/RGB conversion. `PlaybackExecution` owns Decode -> Process -> Scheduler -> Render, the authoritative clock, bounded stream generations, epoch validation, and discontinuity stop ordering.
+The current slice opens local files through `IMediaByteStream`, feeds FFmpeg via custom AVIO, and keeps FFmpeg types inside adapters. `FfmpegPacketRouter` now owns sequential demux reads and fans selected streams into bounded queues, removing decoder ownership of `av_read_frame` before audio is introduced. Video decode consumes its routed stream, then `VideoProcessWorker` normalizes software-decoded system-memory frames through the isolated libswscale adapter into BGRA8 before scheduling. `PlaybackExecution` owns Decode -> Process -> Scheduler -> Render, the authoritative clock, bounded stream generations, epoch validation, and discontinuity stop ordering.
 
-Blu-ray navigation, audio/WASAPI and audio-clock discipline, concrete D3D11/DXGI presentation, GPU decode/processing, full color/HDR metadata, subtitles, AI taps, and public-C-ABI delegation to `PlaybackExecution` remain deliberately outside this slice.
+Blu-ray navigation, audio/WASAPI and audio-clock discipline, concrete D3D11/DXGI presentation, GPU decode/processing, full color/HDR metadata, subtitles, AI taps, FFmpeg interrupt callbacks for blocking sources, and public-C-ABI delegation to `PlaybackExecution` remain deliberately outside this slice.

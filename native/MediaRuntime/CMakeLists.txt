@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(LapisMediaRuntime VERSION 0.8.0 LANGUAGES C CXX)
+project(LapisMediaRuntime VERSION 0.9.0 LANGUAGES C CXX)
 
 find_package(FFMPEG REQUIRED)
 find_package(Threads REQUIRED)
@@ -19,6 +19,7 @@ add_library(Lapis.MediaRuntime.Core STATIC
     src/source/file/file_source.cpp
     src/demux/ffmpeg/ffmpeg_io.cpp
     src/demux/ffmpeg/ffmpeg_demuxer.cpp
+    src/demux/ffmpeg/ffmpeg_packet_router.cpp
     src/decode/ffmpeg/ffmpeg_video_decoder.cpp
     src/process/ffmpeg/ffmpeg_video_frame_converter.cpp
     src/execution/video_decode_worker.cpp
@@ -112,6 +113,16 @@ if(BUILD_TESTING)
     target_link_libraries(Lapis.MediaRuntime.FfmpegTests PRIVATE Lapis.MediaRuntime.Core)
     lapis_enable_strict_warnings(Lapis.MediaRuntime.FfmpegTests)
     add_test(NAME ffmpeg_decode_smoke COMMAND Lapis.MediaRuntime.FfmpegTests)
+
+    add_executable(Lapis.MediaRuntime.PacketRouterTests tests/ffmpeg_packet_router.cpp)
+    target_compile_features(Lapis.MediaRuntime.PacketRouterTests PRIVATE cxx_std_20)
+    target_include_directories(
+        Lapis.MediaRuntime.PacketRouterTests
+        SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS}
+    )
+    target_link_libraries(Lapis.MediaRuntime.PacketRouterTests PRIVATE Lapis.MediaRuntime.Core)
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.PacketRouterTests)
+    add_test(NAME ffmpeg_packet_router_smoke COMMAND Lapis.MediaRuntime.PacketRouterTests)
 
     add_executable(Lapis.MediaRuntime.VideoProcessingTests tests/video_processing.cpp)
     target_compile_features(Lapis.MediaRuntime.VideoProcessingTests PRIVATE cxx_std_20)

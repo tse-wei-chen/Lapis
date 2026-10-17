@@ -97,6 +97,7 @@ lapis_result map_open_error(lapis::media::MediaOpenError error) noexcept {
         case MediaOpenError::SourceOpenFailed:
         case MediaOpenError::DemuxFailed:
         case MediaOpenError::DecoderFailed:
+        case MediaOpenError::PacketRoutingFailed:
             return LAPIS_E_INTERNAL;
     }
 
