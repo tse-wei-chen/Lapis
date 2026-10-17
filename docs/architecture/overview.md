@@ -18,7 +18,7 @@ Native MediaRuntime
   - immutable GraphPlan / GraphBuilder
   - source / demux / decode adapters
   - bounded execution streams / workers
-  - clock and scheduler
+  - authoritative playback clock / scheduling policy
   - video / audio / subtitle hot paths
         |
         +---- media taps ----> AIHost (future, non-blocking)
@@ -41,7 +41,9 @@ Native MediaRuntime
 13. Every cross-thread media queue is bounded; no playback stage may grow an unbounded backlog.
 14. Every cross-thread timed sample carries `PlaybackEpoch` plus canonical `MediaTime`.
 15. Each execution epoch owns a closeable stream/queue generation; a queue is never reopened for a later timeline.
+16. `PlaybackClock` is the single authoritative playback-time model; video, subtitles, UI, and later AI align to it rather than maintaining independent clocks.
+17. Video scheduling policy is separate from waiting/rendering mechanics and always rejects stale epochs before timing decisions.
 
 ## Current implementation slice
 
-The current vertical slice establishes a local `FileSource` backed by `IMediaByteStream`, feeds those bytes to FFmpeg through custom AVIO, demuxes and software-decodes one video stream, and converts the result into the Lapis `VideoFrame` surface abstraction. The first execution-layer slice adds stop-aware bounded queues, epoch-tagged timed payloads, and a `VideoDecodeWorker` that publishes decoded frames into a dedicated stream generation for each playback epoch. Blu-ray navigation, audio output, scheduling/render timing, hardware decode, and AI remain deliberately outside this slice.
+The current vertical slice establishes a local `FileSource` backed by `IMediaByteStream`, feeds those bytes to FFmpeg through custom AVIO, demuxes and software-decodes one video stream, and converts the result into the Lapis `VideoFrame` surface abstraction. The execution layer adds stop-aware bounded queues, epoch-tagged timed payloads, and a `VideoDecodeWorker` that publishes decoded frames into a dedicated stream generation for each playback epoch. The timing layer now provides a thread-safe authoritative `PlaybackClock` plus a pure `VideoScheduler` decision policy for wait/present/drop classification. Blu-ray navigation, audio output and hardware-clock discipline, render-thread presentation, hardware decode, and AI remain deliberately outside this slice.

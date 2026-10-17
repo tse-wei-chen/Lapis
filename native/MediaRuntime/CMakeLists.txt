@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(LapisMediaRuntime VERSION 0.3.0 LANGUAGES C CXX)
+project(LapisMediaRuntime VERSION 0.4.0 LANGUAGES C CXX)
 
 find_package(FFMPEG REQUIRED)
 find_package(Threads REQUIRED)
@@ -14,6 +14,7 @@ endfunction()
 
 add_library(Lapis.MediaRuntime.Core STATIC
     src/core/graph_builder.cpp
+    src/core/playback_clock.cpp
     src/source/media_source_registry.cpp
     src/source/file/file_source.cpp
     src/demux/ffmpeg/ffmpeg_io.cpp
@@ -21,6 +22,7 @@ add_library(Lapis.MediaRuntime.Core STATIC
     src/decode/ffmpeg/ffmpeg_video_decoder.cpp
     src/execution/video_decode_worker.cpp
     src/session/playback_media_session.cpp
+    src/video/video_scheduler.cpp
 )
 
 target_compile_features(Lapis.MediaRuntime.Core PUBLIC cxx_std_20)
@@ -107,4 +109,19 @@ if(BUILD_TESTING)
     target_link_libraries(Lapis.MediaRuntime.ExecutionTests PRIVATE Lapis.MediaRuntime.Core)
     lapis_enable_strict_warnings(Lapis.MediaRuntime.ExecutionTests)
     add_test(NAME execution_pipeline_smoke COMMAND Lapis.MediaRuntime.ExecutionTests)
+
+    add_executable(
+        Lapis.MediaRuntime.ClockSchedulerTests
+        tests/playback_clock_scheduler.cpp
+    )
+    target_compile_features(Lapis.MediaRuntime.ClockSchedulerTests PRIVATE cxx_std_20)
+    target_link_libraries(
+        Lapis.MediaRuntime.ClockSchedulerTests
+        PRIVATE Lapis.MediaRuntime.Core
+    )
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.ClockSchedulerTests)
+    add_test(
+        NAME playback_clock_scheduler_smoke
+        COMMAND Lapis.MediaRuntime.ClockSchedulerTests
+    )
 endif()
