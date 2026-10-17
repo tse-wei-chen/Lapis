@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(LapisMediaRuntime VERSION 0.11.0 LANGUAGES C CXX)
+project(LapisMediaRuntime VERSION 0.12.0 LANGUAGES C CXX)
 
 find_package(FFMPEG REQUIRED)
 find_package(Threads REQUIRED)
@@ -25,6 +25,7 @@ add_library(Lapis.MediaRuntime.Core STATIC
     src/process/ffmpeg/ffmpeg_video_frame_converter.cpp
     src/execution/video_decode_worker.cpp
     src/execution/audio_decode_worker.cpp
+    src/execution/audio_render_worker.cpp
     src/execution/video_process_worker.cpp
     src/execution/video_scheduler_worker.cpp
     src/execution/video_render_worker.cpp
@@ -151,6 +152,16 @@ if(BUILD_TESTING)
     lapis_enable_strict_warnings(Lapis.MediaRuntime.AudioExecutionTests)
     add_test(NAME audio_decode_execution_smoke COMMAND Lapis.MediaRuntime.AudioExecutionTests)
 
+    add_executable(Lapis.MediaRuntime.AudioRenderTests tests/audio_render_execution.cpp)
+    target_compile_features(Lapis.MediaRuntime.AudioRenderTests PRIVATE cxx_std_20)
+    target_compile_definitions(
+        Lapis.MediaRuntime.AudioRenderTests
+        PRIVATE LAPIS_TEST_AUDIO_PATH="${LAPIS_TEST_AUDIO_PATH}"
+    )
+    target_link_libraries(Lapis.MediaRuntime.AudioRenderTests PRIVATE Lapis.MediaRuntime.Core)
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.AudioRenderTests)
+    add_test(NAME audio_render_execution_smoke COMMAND Lapis.MediaRuntime.AudioRenderTests)
+
     add_executable(Lapis.MediaRuntime.VideoProcessingTests tests/video_processing.cpp)
     target_compile_features(Lapis.MediaRuntime.VideoProcessingTests PRIVATE cxx_std_20)
     target_compile_definitions(
@@ -191,8 +202,7 @@ if(BUILD_TESTING)
         tests/video_scheduler_execution.cpp
     )
     target_compile_features(
-        Lapis.MediaRuntime.VideoSchedulerExecutionTests
-        PRIVATE cxx_std_20
+        Lapis.MediaRuntime.VideoSchedulerExecutionTests PRIVATE cxx_std_20
     )
     target_compile_definitions(
         Lapis.MediaRuntime.VideoSchedulerExecutionTests
@@ -213,8 +223,7 @@ if(BUILD_TESTING)
         tests/video_render_execution.cpp
     )
     target_compile_features(
-        Lapis.MediaRuntime.VideoRenderExecutionTests
-        PRIVATE cxx_std_20
+        Lapis.MediaRuntime.VideoRenderExecutionTests PRIVATE cxx_std_20
     )
     target_compile_definitions(
         Lapis.MediaRuntime.VideoRenderExecutionTests
@@ -235,8 +244,7 @@ if(BUILD_TESTING)
         tests/playback_execution.cpp
     )
     target_compile_features(
-        Lapis.MediaRuntime.PlaybackExecutionTests
-        PRIVATE cxx_std_20
+        Lapis.MediaRuntime.PlaybackExecutionTests PRIVATE cxx_std_20
     )
     target_compile_definitions(
         Lapis.MediaRuntime.PlaybackExecutionTests
@@ -257,10 +265,10 @@ if(BUILD_TESTING)
     target_link_libraries(Lapis.MediaRuntime.BoundedQueueTests PRIVATE Lapis.MediaRuntime.Core)
     lapis_enable_strict_warnings(Lapis.MediaRuntime.BoundedQueueTests)
     add_test(NAME bounded_queue_concurrency COMMAND Lapis.MediaRuntime.BoundedQueueTests)
+
     add_executable(Lapis.MediaRuntime.AudioOutputContractTests tests/audio_output_contract.cpp)
     target_compile_features(Lapis.MediaRuntime.AudioOutputContractTests PRIVATE cxx_std_20)
     target_link_libraries(Lapis.MediaRuntime.AudioOutputContractTests PRIVATE Lapis.MediaRuntime.Core)
     lapis_enable_strict_warnings(Lapis.MediaRuntime.AudioOutputContractTests)
     add_test(NAME audio_output_contract COMMAND Lapis.MediaRuntime.AudioOutputContractTests)
-
 endif()
