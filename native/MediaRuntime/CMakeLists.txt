@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(LapisMediaRuntime VERSION 0.13.0 LANGUAGES C CXX)
+project(LapisMediaRuntime VERSION 0.14.0 LANGUAGES C CXX)
 
 find_package(FFMPEG REQUIRED)
 find_package(Threads REQUIRED)
@@ -36,6 +36,13 @@ add_library(Lapis.MediaRuntime.Core STATIC
     src/video/video_scheduler.cpp
 )
 
+if(WIN32)
+    target_sources(Lapis.MediaRuntime.Core PRIVATE
+        src/audio/wasapi/wasapi_format.cpp
+        src/audio/wasapi/wasapi_shared_audio_output.cpp
+    )
+endif()
+
 target_compile_features(Lapis.MediaRuntime.Core PUBLIC cxx_std_20)
 set_target_properties(Lapis.MediaRuntime.Core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(Lapis.MediaRuntime.Core
@@ -48,6 +55,9 @@ target_link_libraries(Lapis.MediaRuntime.Core
     PUBLIC Threads::Threads
     PRIVATE ${FFMPEG_LIBRARIES}
 )
+if(WIN32)
+    target_link_libraries(Lapis.MediaRuntime.Core PRIVATE ole32)
+endif()
 lapis_enable_strict_warnings(Lapis.MediaRuntime.Core)
 
 add_library(Lapis.MediaRuntime SHARED
@@ -173,6 +183,25 @@ if(BUILD_TESTING)
     target_link_libraries(Lapis.MediaRuntime.AudioRenderTests PRIVATE Lapis.MediaRuntime.Core)
     lapis_enable_strict_warnings(Lapis.MediaRuntime.AudioRenderTests)
     add_test(NAME audio_render_execution_smoke COMMAND Lapis.MediaRuntime.AudioRenderTests)
+
+    if(WIN32)
+        add_executable(
+            Lapis.MediaRuntime.WasapiFormatTests
+            tests/wasapi_audio_output.cpp
+        )
+        target_compile_features(
+            Lapis.MediaRuntime.WasapiFormatTests PRIVATE cxx_std_20
+        )
+        target_link_libraries(
+            Lapis.MediaRuntime.WasapiFormatTests
+            PRIVATE Lapis.MediaRuntime.Core
+        )
+        lapis_enable_strict_warnings(Lapis.MediaRuntime.WasapiFormatTests)
+        add_test(
+            NAME wasapi_audio_format_contract
+            COMMAND Lapis.MediaRuntime.WasapiFormatTests
+        )
+    endif()
 
     add_executable(Lapis.MediaRuntime.VideoProcessingTests tests/video_processing.cpp)
     target_compile_features(Lapis.MediaRuntime.VideoProcessingTests PRIVATE cxx_std_20)
