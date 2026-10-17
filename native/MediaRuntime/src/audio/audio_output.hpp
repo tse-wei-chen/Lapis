@@ -45,6 +45,12 @@ enum class AudioOutputWaitStatus : std::uint8_t {
     Faulted
 };
 
+enum class AudioOutputControlStatus : std::uint8_t {
+    Ready,
+    DeviceLost,
+    Faulted
+};
+
 class IAudioOutput {
 public:
     virtual ~IAudioOutput() = default;
@@ -67,15 +73,21 @@ public:
         std::uint32_t first_sample_frame) = 0;
 
     // Backpressure or a partial accepted prefix is followed by this stop-aware
-    // wait. Concrete adapters should map it to their native readiness primitive
-    // (for example, an event-driven audio client) rather than polling.
+    // wait. The token may represent generation shutdown or a render-thread
+    // control interruption; callers decide which after the wait returns Stopped.
     [[nodiscard]] virtual AudioOutputWaitStatus wait_until_writable(
         std::stop_token stop_token) = 0;
 
     // End-of-input is not end-of-presentation. This wait completes only after
-    // all accepted samples have left the device queue, or shutdown interrupts it.
+    // all accepted samples have left the device queue, or its wait is interrupted.
     [[nodiscard]] virtual AudioOutputWaitStatus wait_until_drained(
         std::stop_token stop_token) = 0;
+
+    // Pause/resume preserve queued samples and device stream position. These are
+    // called by the render worker on the same execution thread that owns stream
+    // submission; control-plane callers never invoke device APIs directly.
+    [[nodiscard]] virtual AudioOutputControlStatus pause() = 0;
+    [[nodiscard]] virtual AudioOutputControlStatus resume() = 0;
 
     // Called for discontinuities; invalidates buffered samples and clock revision.
     virtual void reset() noexcept = 0;

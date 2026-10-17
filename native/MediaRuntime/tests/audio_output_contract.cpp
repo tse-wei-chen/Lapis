@@ -57,6 +57,14 @@ public:
         return lapis::media::AudioOutputWaitStatus::Ready;
     }
 
+    [[nodiscard]] lapis::media::AudioOutputControlStatus pause() override {
+        return lapis::media::AudioOutputControlStatus::Ready;
+    }
+
+    [[nodiscard]] lapis::media::AudioOutputControlStatus resume() override {
+        return lapis::media::AudioOutputControlStatus::Ready;
+    }
+
     void reset() noexcept override {}
 
     [[nodiscard]] lapis::media::AudioOutputPosition position() const noexcept override {
