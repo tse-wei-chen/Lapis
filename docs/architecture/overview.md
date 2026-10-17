@@ -17,6 +17,7 @@ Application control plane
 Native MediaRuntime
   - immutable GraphPlan / GraphBuilder
   - source / demux / decode adapters
+  - bounded execution streams / workers
   - clock and scheduler
   - video / audio / subtitle hot paths
         |
@@ -37,7 +38,10 @@ Native MediaRuntime
 10. Extension decisions are capability-based, not concrete-player-type checks.
 11. Native ABI types are plain C-compatible values; C++ implementation details never cross the boundary.
 12. Potentially blocking media I/O never holds the authoritative session-state mutex; work is committed only if its epoch is still current.
+13. Every cross-thread media queue is bounded; no playback stage may grow an unbounded backlog.
+14. Every cross-thread timed sample carries `PlaybackEpoch` plus canonical `MediaTime`.
+15. Each execution epoch owns a closeable stream/queue generation; a queue is never reopened for a later timeline.
 
 ## Current implementation slice
 
-The current vertical slice establishes a local `FileSource` backed by `IMediaByteStream`, feeds those bytes to FFmpeg through custom AVIO, demuxes and software-decodes one video stream, and converts the result into the Lapis `VideoFrame` surface abstraction. Blu-ray navigation, audio output, rendering, and AI remain deliberately outside this slice.
+The current vertical slice establishes a local `FileSource` backed by `IMediaByteStream`, feeds those bytes to FFmpeg through custom AVIO, demuxes and software-decodes one video stream, and converts the result into the Lapis `VideoFrame` surface abstraction. The first execution-layer slice adds stop-aware bounded queues, epoch-tagged timed payloads, and a `VideoDecodeWorker` that publishes decoded frames into a dedicated stream generation for each playback epoch. Blu-ray navigation, audio output, scheduling/render timing, hardware decode, and AI remain deliberately outside this slice.
