@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+    branches: [develop, master]
+  pull_request:
+    branches: [develop, master]
+
+jobs:
+  managed:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore
+        run: dotnet restore Lapis.slnx
+      - name: Build
+        run: dotnet build Lapis.slnx -c Release --no-restore
+      - name: Test
+        run: dotnet test Lapis.slnx -c Release --no-build --logger "trx;LogFileName=managed.trx"
+
+  native:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S native/MediaRuntime -B build/native -A x64
+      - name: Build
+        run: cmake --build build/native --config Release
+      - name: Test
+        run: ctest --test-dir build/native -C Release --output-on-failure

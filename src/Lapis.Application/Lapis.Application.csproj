@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Lapis.Application</AssemblyName>
+    <RootNamespace>Lapis.Application</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Lapis.Contracts/Lapis.Contracts.csproj" />
+  </ItemGroup>
+</Project>

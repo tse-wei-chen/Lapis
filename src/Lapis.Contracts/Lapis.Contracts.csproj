@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Lapis.Contracts</AssemblyName>
+    <RootNamespace>Lapis.Contracts</RootNamespace>
+  </PropertyGroup>
+</Project>
