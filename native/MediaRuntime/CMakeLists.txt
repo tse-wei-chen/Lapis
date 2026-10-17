@@ -213,4 +213,10 @@ if(BUILD_TESTING)
         NAME playback_execution_smoke
         COMMAND Lapis.MediaRuntime.PlaybackExecutionTests
     )
+
+    add_executable(Lapis.MediaRuntime.BoundedQueueTests tests/bounded_queue.cpp)
+    target_compile_features(Lapis.MediaRuntime.BoundedQueueTests PRIVATE cxx_std_20)
+    target_link_libraries(Lapis.MediaRuntime.BoundedQueueTests PRIVATE Lapis.MediaRuntime.Core)
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.BoundedQueueTests)
+    add_test(NAME bounded_queue_concurrency COMMAND Lapis.MediaRuntime.BoundedQueueTests)
 endif()
