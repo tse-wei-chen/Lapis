@@ -28,6 +28,26 @@ public sealed class ArchitectureBoundaryTests
     }
 
     [Fact]
+    public void NativeRuntimeAdapterOnlyReferencesApplicationAndContracts()
+    {
+        var project = LoadProject("src/Lapis.Runtime.Native/Lapis.Runtime.Native.csproj");
+        var references = project
+            .Descendants("ProjectReference")
+            .Select(element => element.Attribute("Include")?.Value.Replace('\\', '/'))
+            .Where(value => value is not null)
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(
+            new[]
+            {
+                "../Lapis.Application/Lapis.Application.csproj",
+                "../Lapis.Contracts/Lapis.Contracts.csproj"
+            },
+            references);
+    }
+
+    [Fact]
     public void ContractsDoNotLeakThirdPartyMediaTypes()
     {
         var forbidden = new[]
