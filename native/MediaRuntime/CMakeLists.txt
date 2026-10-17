@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(LapisMediaRuntime VERSION 0.14.0 LANGUAGES C CXX)
+project(LapisMediaRuntime VERSION 0.15.0 LANGUAGES C CXX)
 
 find_package(FFMPEG REQUIRED)
 find_package(Threads REQUIRED)
@@ -40,6 +40,7 @@ if(WIN32)
     target_sources(Lapis.MediaRuntime.Core PRIVATE
         src/audio/wasapi/wasapi_format.cpp
         src/audio/wasapi/wasapi_shared_audio_output.cpp
+        src/audio/wasapi/wasapi_shared_audio_output_provider.cpp
     )
 endif()
 

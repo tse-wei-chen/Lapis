@@ -1,10 +1,13 @@
 #include "audio/audio_format_validation.hpp"
 #include "audio/audio_output.hpp"
+#include "audio/audio_output_provider.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <memory>
+#include <stop_token>
 #include <vector>
 
 #define CHECK(x) do { if (!(x)) { std::cerr << "CHECK failed: " #x << " line " << __LINE__ << '\n'; return 1; } } while (false)
@@ -29,6 +32,38 @@ public:
     [[nodiscard]] lapis::media::AudioPlaneView plane(std::uint32_t i) const noexcept override {
         return i < views.size() ? views[i] : lapis::media::AudioPlaneView{};
     }
+};
+
+class NullAudioOutput final : public lapis::media::IAudioOutput {
+public:
+    [[nodiscard]] lapis::media::AudioOutputOpenStatus open(
+        const lapis::media::AudioFormat&) override {
+        return lapis::media::AudioOutputOpenStatus::Ready;
+    }
+
+    [[nodiscard]] lapis::media::AudioOutputSubmitResult try_submit(
+        const lapis::media::AudioFrame&,
+        std::uint32_t) override {
+        return {lapis::media::AudioOutputStatus::Accepted, 1};
+    }
+
+    [[nodiscard]] lapis::media::AudioOutputWaitStatus wait_until_writable(
+        std::stop_token) override {
+        return lapis::media::AudioOutputWaitStatus::Ready;
+    }
+
+    [[nodiscard]] lapis::media::AudioOutputWaitStatus wait_until_drained(
+        std::stop_token) override {
+        return lapis::media::AudioOutputWaitStatus::Ready;
+    }
+
+    void reset() noexcept override {}
+
+    [[nodiscard]] lapis::media::AudioOutputPosition position() const noexcept override {
+        return {};
+    }
+
+    void close() noexcept override {}
 };
 }
 
@@ -80,6 +115,37 @@ int main() {
     buffer.spec.channels = {AudioChannel::FrontLeft, AudioChannel::FrontRight};
     buffer.spec.sample_format = AudioSampleFormat::Unknown;
     CHECK(!valid_audio_buffer(buffer));
+
+    const AudioFormat target{
+        AudioSampleFormat::F32,
+        AudioPacking::Interleaved,
+        48'000,
+        {AudioChannel::FrontLeft, AudioChannel::FrontRight},
+        false
+    };
+    AudioOutputPlan ready_plan;
+    ready_plan.status = AudioOutputPrepareStatus::Ready;
+    ready_plan.target_format = target;
+    ready_plan.output = std::make_unique<NullAudioOutput>();
+    CHECK(ready_plan.ok());
+
+    AudioOutputPlan missing_output;
+    missing_output.status = AudioOutputPrepareStatus::Ready;
+    missing_output.target_format = target;
+    CHECK(!missing_output.ok());
+
+    AudioOutputPlan unsupported;
+    unsupported.status = AudioOutputPrepareStatus::UnsupportedFormat;
+    unsupported.target_format = target;
+    unsupported.output = std::make_unique<NullAudioOutput>();
+    CHECK(!unsupported.ok());
+
+    AudioOutputPlan missing_rate;
+    missing_rate.status = AudioOutputPrepareStatus::Ready;
+    missing_rate.target_format = target;
+    missing_rate.target_format.sample_rate = 0;
+    missing_rate.output = std::make_unique<NullAudioOutput>();
+    CHECK(!missing_rate.ok());
 
     return 0;
 }

@@ -15,6 +15,7 @@
 #include <cstring>
 #include <limits>
 #include <stop_token>
+#include <string>
 #include <utility>
 
 namespace lapis::media::wasapi {
@@ -91,6 +92,9 @@ std::int64_t saturating_add(std::int64_t left, std::int64_t right) noexcept {
 
 class WasapiSharedAudioOutput::Impl final {
 public:
+    explicit Impl(std::wstring endpoint_id)
+        : endpoint_id_(std::move(endpoint_id)) {}
+
     ~Impl() {
         close();
     }
@@ -106,10 +110,10 @@ public:
         AudioFormat format_copy = format;
 
         const auto com_result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        if (FAILED(com_result)) {
+        if (FAILED(com_result) && com_result != RPC_E_CHANGED_MODE) {
             return AudioOutputOpenStatus::Faulted;
         }
-        com_initialized_ = true;
+        com_initialized_ = SUCCEEDED(com_result);
 
         auto fail = [this](AudioOutputOpenStatus status) {
             close();
@@ -126,10 +130,16 @@ public:
             return fail(AudioOutputOpenStatus::Faulted);
         }
 
-        result = enumerator_->GetDefaultAudioEndpoint(
-            eRender,
-            eMultimedia,
-            device_.GetAddressOf());
+        if (endpoint_id_.empty()) {
+            result = enumerator_->GetDefaultAudioEndpoint(
+                eRender,
+                eMultimedia,
+                device_.GetAddressOf());
+        } else {
+            result = enumerator_->GetDevice(
+                endpoint_id_.c_str(),
+                device_.GetAddressOf());
+        }
         if (FAILED(result)) {
             return fail(AudioOutputOpenStatus::DeviceLost);
         }
@@ -442,6 +452,7 @@ private:
         presented_until_ns_.store(presented, std::memory_order_release);
     }
 
+    std::wstring endpoint_id_;
     bool com_initialized_{};
     bool opened_{};
     bool started_{};
@@ -462,7 +473,10 @@ private:
 };
 
 WasapiSharedAudioOutput::WasapiSharedAudioOutput()
-    : impl_(std::make_unique<Impl>()) {}
+    : impl_(std::make_unique<Impl>(std::wstring{})) {}
+
+WasapiSharedAudioOutput::WasapiSharedAudioOutput(std::wstring endpoint_id)
+    : impl_(std::make_unique<Impl>(std::move(endpoint_id))) {}
 
 WasapiSharedAudioOutput::~WasapiSharedAudioOutput() = default;
 
