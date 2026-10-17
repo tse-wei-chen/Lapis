@@ -2,20 +2,30 @@
 
 #include "audio/audio_frame.hpp"
 #include "core/media_time.hpp"
+#include "core/monotonic_time.hpp"
 
 #include <cstdint>
 #include <stop_token>
 
 namespace lapis::media {
 
-// Device-side state is scoped to one playback generation. No FFmpeg, WASAPI,
-// or OS-specific handles cross this interface.
+enum class AudioOutputPositionSource : std::uint8_t {
+    Unavailable,
+    Estimated,
+    HardwareClock
+};
+
+// Thread-safe output-clock snapshot scoped to one playback generation. The
+// sampled_at value shares the same monotonic domain used by PlaybackClock, so a
+// future clock-discipline layer can age/extrapolate a sample without receiving
+// WASAPI/QPC or other platform-specific values.
 struct AudioOutputPosition final {
-    // Estimated presentation time of the next sample reaching the speaker.
-    // Not equivalent to the timestamp of the last buffer submitted.
+    // Media-timeline position being presented at sampled_at.
     MediaTime presented_until{};
-    // Monotonic revision to invalidate cached positions on reset/seek.
+    MonotonicTime sampled_at{};
+    // Monotonic revision invalidates cached samples across reset/seek.
     std::uint64_t revision{};
+    AudioOutputPositionSource source{AudioOutputPositionSource::Unavailable};
 };
 
 enum class AudioOutputOpenStatus : std::uint8_t {
@@ -92,8 +102,8 @@ public:
     // Called for discontinuities; invalidates buffered samples and clock revision.
     virtual void reset() noexcept = 0;
 
-    // Implementations must make this a thread-safe snapshot. Future clock
-    // discipline may query it outside the device submission thread.
+    // Implementations publish this as an atomic/thread-safe snapshot. Device APIs
+    // remain owned by the render thread; readers never cross COM/device affinity.
     [[nodiscard]] virtual AudioOutputPosition position() const noexcept = 0;
 
     virtual void close() noexcept = 0;

@@ -1,10 +1,13 @@
+#include "audio/wasapi/wasapi_clock.hpp"
 #include "audio/wasapi/wasapi_format.hpp"
 #include "audio/wasapi/wasapi_shared_audio_output.hpp"
 #include "audio/wasapi/wasapi_shared_audio_output_provider.hpp"
 
 #if defined(_WIN32)
 
+#include <cstdint>
 #include <iostream>
+#include <limits>
 
 #define CHECK(condition) \
     do { \
@@ -94,6 +97,36 @@ int main() {
     CHECK(parsed_legacy->channels[1] == AudioChannel::FrontRight);
     CHECK(parsed_legacy->channel_layout_inferred);
 
+    // IAudioClock position units are only meaningful with GetFrequency. The
+    // translation into the media timeline must not assume sample frames.
+    CHECK(scale_clock_units(48'000, 48'000, 1'000'000'000ULL) ==
+        1'000'000'000ULL);
+    CHECK(scale_clock_units(24'000, 48'000, 1'000'000'000ULL) ==
+        500'000'000ULL);
+    CHECK(scale_clock_units(1, 0, 1'000'000'000ULL) == 0);
+
+    const auto clock_media = media_time_from_audio_clock(
+        MediaTime{5'000'000'000LL},
+        24'000,
+        48'000);
+    CHECK(clock_media.nanoseconds == 5'500'000'000LL);
+
+    const auto correlated = correlate_qpc_100ns_to_monotonic(
+        9'999'000,
+        10'000'000,
+        MonotonicTime{2'000'000'000ULL});
+    CHECK(correlated.nanoseconds == 1'999'900'000ULL);
+    const auto future_correlated = correlate_qpc_100ns_to_monotonic(
+        10'001'000,
+        10'000'000,
+        MonotonicTime{2'000'000'000ULL});
+    CHECK(future_correlated.nanoseconds == 2'000'100'000ULL);
+    const auto clamped = correlate_qpc_100ns_to_monotonic(
+        0,
+        std::numeric_limits<std::uint64_t>::max(),
+        MonotonicTime{500});
+    CHECK(clamped.nanoseconds == 0);
+
     AudioFormat planar = stereo_float;
     planar.packing = AudioPacking::Planar;
     CHECK(!build_wave_format(planar).has_value());
@@ -105,8 +138,11 @@ int main() {
     WasapiSharedAudioOutputProvider provider;
     (void)provider;
     CHECK(output.position().revision == 0);
+    CHECK(output.position().source == AudioOutputPositionSource::Unavailable);
+    CHECK(output.position().sampled_at.nanoseconds == 0);
     CHECK(output.open(planar) == AudioOutputOpenStatus::UnsupportedFormat);
     CHECK(output.position().revision == 0);
+    CHECK(output.position().source == AudioOutputPositionSource::Unavailable);
     output.close();
 
     const AudioFormat reversed_stereo{
