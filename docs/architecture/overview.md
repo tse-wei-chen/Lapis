@@ -17,10 +17,12 @@ Application control plane
 Native MediaRuntime
   - immutable GraphPlan / GraphBuilder
   - source / demux / decode adapters
-  - bounded decode execution streams / workers
+  - PlaybackExecution generation owner
+      DecodeWorker -> SchedulerWorker -> RenderWorker
+           |               |                |
+      bounded frame   bounded present   IVideoPresenter
+          stream           stream           adapter
   - authoritative playback clock
-  - video scheduler worker -> bounded presentation stream
-  - video render worker -> IVideoPresenter adapter
   - future audio / subtitle hot paths
         |
         +---- media taps ----> AIHost (future, non-blocking)
@@ -50,7 +52,11 @@ Native MediaRuntime
 20. A frame is revalidated by epoch at every asynchronous boundary, including immediately before the presenter adapter.
 21. Graphics APIs are presenter adapters; decode/scheduler/core code never depends on D3D/DXGI types.
 22. Presenter lifecycle callbacks are Render Worker thread-affine, and stale-only streams do not initialize graphics state.
+23. `PlaybackExecution` is the sole owner of video worker-generation lifecycle; higher layers do not stop individual workers.
+24. Generation startup flows upstream-to-downstream (Decode -> Scheduler -> Render); shutdown flows downstream-to-upstream (Render -> Scheduler -> Decode).
+25. Pause keeps the generation alive and relies on bounded backpressure; seek/close tear down the generation before mutating media state.
+26. `PlaybackExecution` rejects non-advancing epochs before performing a discontinuity.
 
 ## Current implementation slice
 
-The current vertical slice establishes a local `FileSource` backed by `IMediaByteStream`, feeds those bytes to FFmpeg through custom AVIO, demuxes and software-decodes video, and converts frames into the Lapis `VideoFrame` surface abstraction. The execution layer provides stop-aware bounded queues and a `VideoDecodeWorker` that publishes frames into an epoch-scoped `VideoFrameStream`. `PlaybackClock` owns epoch, media position, state, and revision in one authoritative snapshot, while `VideoSchedulerWorker` waits efficiently against that clock, drops stale/late frames, and releases eligible frames into a second bounded `VideoPresentationStream`. `VideoRenderWorker` now consumes that stream, performs a final clock/epoch gate, and calls a thread-affine `IVideoPresenter` adapter with explicit device-loss/failure results. Blu-ray navigation, audio output and hardware-clock discipline, actual D3D11/DXGI presentation, hardware decode, subtitles, and AI remain deliberately outside this slice.
+The current vertical slice establishes a local `FileSource` backed by `IMediaByteStream`, feeds those bytes to FFmpeg through custom AVIO, demuxes and software-decodes video, and converts frames into the Lapis `VideoFrame` surface abstraction. `PlaybackExecution` now owns the authoritative `PlaybackClock` and the full video execution generation: `VideoDecodeWorker` publishes epoch-scoped decoded frames, `VideoSchedulerWorker` waits efficiently against the clock and emits eligible frames into a second bounded stream, and `VideoRenderWorker` performs a final epoch gate before calling a thread-affine `IVideoPresenter`. Pause leaves workers alive and bounded; seek and close enforce downstream-to-upstream shutdown before media mutation. Blu-ray navigation, audio output and hardware-clock discipline, actual D3D11/DXGI presentation, hardware decode, subtitles, AI, and public-C-ABI delegation to `PlaybackExecution` remain deliberately outside this slice.

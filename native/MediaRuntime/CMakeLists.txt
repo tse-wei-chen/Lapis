@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(LapisMediaRuntime VERSION 0.6.0 LANGUAGES C CXX)
+project(LapisMediaRuntime VERSION 0.7.0 LANGUAGES C CXX)
 
 find_package(FFMPEG REQUIRED)
 find_package(Threads REQUIRED)
@@ -23,6 +23,7 @@ add_library(Lapis.MediaRuntime.Core STATIC
     src/execution/video_decode_worker.cpp
     src/execution/video_scheduler_worker.cpp
     src/execution/video_render_worker.cpp
+    src/execution/playback_execution.cpp
     src/session/playback_media_session.cpp
     src/video/video_scheduler.cpp
 )
@@ -62,6 +63,10 @@ if(BUILD_TESTING)
     set(
         LAPIS_TEST_MULTI_FRAME_MEDIA_PATH
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/test_two_frames.y4m"
+    )
+    set(
+        LAPIS_TEST_PIPELINE_MEDIA_PATH
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/test_pipeline.y4m"
     )
 
     add_executable(Lapis.MediaRuntime.CAbiHeaderTests tests/c_abi_header.c)
@@ -173,5 +178,27 @@ if(BUILD_TESTING)
     add_test(
         NAME video_render_execution_smoke
         COMMAND Lapis.MediaRuntime.VideoRenderExecutionTests
+    )
+
+    add_executable(
+        Lapis.MediaRuntime.PlaybackExecutionTests
+        tests/playback_execution.cpp
+    )
+    target_compile_features(
+        Lapis.MediaRuntime.PlaybackExecutionTests
+        PRIVATE cxx_std_20
+    )
+    target_compile_definitions(
+        Lapis.MediaRuntime.PlaybackExecutionTests
+        PRIVATE LAPIS_TEST_PIPELINE_MEDIA_PATH="${LAPIS_TEST_PIPELINE_MEDIA_PATH}"
+    )
+    target_link_libraries(
+        Lapis.MediaRuntime.PlaybackExecutionTests
+        PRIVATE Lapis.MediaRuntime.Core
+    )
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.PlaybackExecutionTests)
+    add_test(
+        NAME playback_execution_smoke
+        COMMAND Lapis.MediaRuntime.PlaybackExecutionTests
     )
 endif()
