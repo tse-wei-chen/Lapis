@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(LapisMediaRuntime VERSION 0.9.0 LANGUAGES C CXX)
+project(LapisMediaRuntime VERSION 0.10.0 LANGUAGES C CXX)
 
 find_package(FFMPEG REQUIRED)
 find_package(Threads REQUIRED)
@@ -21,6 +21,7 @@ add_library(Lapis.MediaRuntime.Core STATIC
     src/demux/ffmpeg/ffmpeg_demuxer.cpp
     src/demux/ffmpeg/ffmpeg_packet_router.cpp
     src/decode/ffmpeg/ffmpeg_video_decoder.cpp
+    src/decode/ffmpeg/ffmpeg_audio_decoder.cpp
     src/process/ffmpeg/ffmpeg_video_frame_converter.cpp
     src/execution/video_decode_worker.cpp
     src/execution/video_process_worker.cpp
@@ -71,6 +72,7 @@ if(BUILD_TESTING)
         LAPIS_TEST_PIPELINE_MEDIA_PATH
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/test_pipeline.y4m"
     )
+    set(LAPIS_TEST_AUDIO_PATH "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/test_audio.wav")
 
     add_executable(Lapis.MediaRuntime.CAbiHeaderTests tests/c_abi_header.c)
     target_compile_features(Lapis.MediaRuntime.CAbiHeaderTests PRIVATE c_std_17)
@@ -123,6 +125,20 @@ if(BUILD_TESTING)
     target_link_libraries(Lapis.MediaRuntime.PacketRouterTests PRIVATE Lapis.MediaRuntime.Core)
     lapis_enable_strict_warnings(Lapis.MediaRuntime.PacketRouterTests)
     add_test(NAME ffmpeg_packet_router_smoke COMMAND Lapis.MediaRuntime.PacketRouterTests)
+
+    add_executable(Lapis.MediaRuntime.AudioDecodeTests tests/ffmpeg_audio_decode.cpp)
+    target_compile_features(Lapis.MediaRuntime.AudioDecodeTests PRIVATE cxx_std_20)
+    target_compile_definitions(
+        Lapis.MediaRuntime.AudioDecodeTests
+        PRIVATE LAPIS_TEST_AUDIO_PATH="${LAPIS_TEST_AUDIO_PATH}"
+    )
+    target_include_directories(
+        Lapis.MediaRuntime.AudioDecodeTests
+        SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS}
+    )
+    target_link_libraries(Lapis.MediaRuntime.AudioDecodeTests PRIVATE Lapis.MediaRuntime.Core)
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.AudioDecodeTests)
+    add_test(NAME ffmpeg_audio_decode_smoke COMMAND Lapis.MediaRuntime.AudioDecodeTests)
 
     add_executable(Lapis.MediaRuntime.VideoProcessingTests tests/video_processing.cpp)
     target_compile_features(Lapis.MediaRuntime.VideoProcessingTests PRIVATE cxx_std_20)

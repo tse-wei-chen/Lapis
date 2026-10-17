@@ -100,6 +100,36 @@ std::optional<FfmpegVideoStreamInfo> FfmpegDemuxer::best_video_stream() const no
     };
 }
 
+std::optional<FfmpegAudioStreamInfo> FfmpegDemuxer::best_audio_stream() const noexcept {
+    if (format_ == nullptr) {
+        return std::nullopt;
+    }
+
+    const int index = av_find_best_stream(
+        format_,
+        AVMEDIA_TYPE_AUDIO,
+        -1,
+        -1,
+        nullptr,
+        0);
+    if (index < 0) {
+        return std::nullopt;
+    }
+
+    const auto* stream = format_->streams[index];
+    if (stream == nullptr || stream->codecpar == nullptr) {
+        return std::nullopt;
+    }
+
+    return FfmpegAudioStreamInfo{
+        index,
+        stream->codecpar->sample_rate,
+        stream->codecpar->ch_layout.nb_channels,
+        stream->time_base,
+        stream->codecpar
+    };
+}
+
 int FfmpegDemuxer::read_packet(AVPacket& packet) {
     if (format_ == nullptr) {
         return AVERROR(EINVAL);
