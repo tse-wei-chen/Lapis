@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.25)
-project(LapisMediaRuntime VERSION 0.2.0 LANGUAGES C CXX)
+project(LapisMediaRuntime VERSION 0.3.0 LANGUAGES C CXX)
 
 find_package(FFMPEG REQUIRED)
+find_package(Threads REQUIRED)
 
 function(lapis_enable_strict_warnings target)
     if(MSVC)
@@ -18,6 +19,7 @@ add_library(Lapis.MediaRuntime.Core STATIC
     src/demux/ffmpeg/ffmpeg_io.cpp
     src/demux/ffmpeg/ffmpeg_demuxer.cpp
     src/decode/ffmpeg/ffmpeg_video_decoder.cpp
+    src/execution/video_decode_worker.cpp
     src/session/playback_media_session.cpp
 )
 
@@ -29,7 +31,10 @@ target_include_directories(Lapis.MediaRuntime.Core
 )
 target_include_directories(Lapis.MediaRuntime.Core SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
 target_link_directories(Lapis.MediaRuntime.Core PRIVATE ${FFMPEG_LIBRARY_DIRS})
-target_link_libraries(Lapis.MediaRuntime.Core PRIVATE ${FFMPEG_LIBRARIES})
+target_link_libraries(Lapis.MediaRuntime.Core
+    PUBLIC Threads::Threads
+    PRIVATE ${FFMPEG_LIBRARIES}
+)
 lapis_enable_strict_warnings(Lapis.MediaRuntime.Core)
 
 add_library(Lapis.MediaRuntime SHARED
@@ -92,4 +97,14 @@ if(BUILD_TESTING)
     target_link_libraries(Lapis.MediaRuntime.FfmpegTests PRIVATE Lapis.MediaRuntime.Core)
     lapis_enable_strict_warnings(Lapis.MediaRuntime.FfmpegTests)
     add_test(NAME ffmpeg_decode_smoke COMMAND Lapis.MediaRuntime.FfmpegTests)
+
+    add_executable(Lapis.MediaRuntime.ExecutionTests tests/execution_pipeline.cpp)
+    target_compile_features(Lapis.MediaRuntime.ExecutionTests PRIVATE cxx_std_20)
+    target_compile_definitions(
+        Lapis.MediaRuntime.ExecutionTests
+        PRIVATE LAPIS_TEST_MEDIA_PATH="${LAPIS_TEST_MEDIA_PATH}"
+    )
+    target_link_libraries(Lapis.MediaRuntime.ExecutionTests PRIVATE Lapis.MediaRuntime.Core)
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.ExecutionTests)
+    add_test(NAME execution_pipeline_smoke COMMAND Lapis.MediaRuntime.ExecutionTests)
 endif()
