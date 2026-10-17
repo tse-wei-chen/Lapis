@@ -5,6 +5,7 @@
 #include "core/media_time.hpp"
 #include "core/playback_clock.hpp"
 #include "core/playback_epoch.hpp"
+#include "execution/audio_clock_sync_worker.hpp"
 #include "execution/audio_decode_worker.hpp"
 #include "execution/audio_process_worker.hpp"
 #include "execution/audio_render_worker.hpp"
@@ -63,6 +64,7 @@ struct PlaybackExecutionConfig final {
     VideoSchedulerConfig scheduler{};
     std::size_t audio_decode_queue_capacity{16};
     std::size_t audio_process_queue_capacity{8};
+    AudioClockSyncConfig audio_clock_sync{};
 };
 
 struct PlaybackExecutionSnapshot final {
@@ -83,6 +85,10 @@ struct PlaybackExecutionSnapshot final {
     AudioRenderWorkerState audio_render_state{AudioRenderWorkerState::Idle};
     AudioRenderStats audio_rendering{};
     AudioOutputPosition audio_position{};
+    AudioClockSyncWorkerState audio_clock_sync_state{
+        AudioClockSyncWorkerState::Idle
+    };
+    AudioClockSyncStats audio_clock_sync{};
 };
 
 class PlaybackExecution final {
@@ -127,6 +133,7 @@ private:
     [[nodiscard]] bool start_generation_unlocked(PlaybackEpoch epoch);
     [[nodiscard]] bool pause_audio_unlocked();
     [[nodiscard]] bool resume_audio_unlocked();
+    [[nodiscard]] bool start_audio_clock_sync_unlocked();
     void stop_generation_unlocked();
 
     PlaybackMediaSession& media_;
@@ -139,8 +146,10 @@ private:
     std::unique_ptr<IAudioOutputProvider> audio_output_provider_;
     AudioFrameProcessorFactory audio_processor_factory_;
     const std::size_t audio_process_queue_capacity_;
+    const AudioClockSyncConfig audio_clock_sync_config_;
     std::unique_ptr<AudioProcessWorker> audio_processor_;
     std::unique_ptr<AudioRenderWorker> audio_renderer_;
+    std::unique_ptr<AudioClockSyncWorker> audio_clock_sync_;
     std::shared_ptr<AudioFrameStream> pending_audio_render_stream_;
     bool video_generation_active_{};
     bool audio_generation_active_{};

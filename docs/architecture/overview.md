@@ -18,12 +18,12 @@ Native MediaRuntime
         DemuxPump -> bounded selected-stream packet queues -> decoders
   - decoded media contracts
       VideoFrame / AudioFrame (third-party-independent lifetime + metadata)
-  - PlaybackExecution video generation owner
+  - PlaybackExecution generation owner
       VideoDecode -> VideoProcess -> VideoScheduler -> VideoRender
            |              |                |               |
       bounded frame  bounded frame    bounded present  IVideoPresenter
           stream          stream           stream          adapter
-  - prepared audio execution branch
+
       IAudioOutputProvider -> target AudioFormat + bound IAudioOutput
                                   |
       AudioDecode -> AudioProcess -> AudioRender -> IAudioOutput
@@ -34,10 +34,19 @@ Native MediaRuntime
                                       + clock snapshot
                                              |
                                              v
+                                  AudioClockSyncWorker
+                                  (sample only while running)
+                                             |
+                                             v
                                   AudioClockDiscipline
                                   (ignore/maintain/rebase)
                                              |
+                                             v
+                         PlaybackClock::try_rebase(expected snapshot)
+                                             |
   - authoritative PlaybackClock <-------------+
+        |
+        +---- video scheduler timing
         |
         +---- media taps ----> AIHost (future, non-blocking)
 ```
@@ -46,12 +55,12 @@ Native MediaRuntime
 
 1. UI does not decode or render media; managed code does not manipulate packet/frame/GPU hot-path objects.
 2. Third-party libraries remain adapters at the edge; their types do not enter core/managed contracts.
-3. `MediaTime` is canonical and every discontinuity advances `PlaybackEpoch`.
+3. `MediaTime` is canonical and every media discontinuity advances `PlaybackEpoch`.
 4. Playback commands have one logical owner; executable graph ownership stays native.
 5. Every cross-thread media queue is bounded and stop-aware; no stage may create an unbounded backlog.
 6. Every timed sample carries `PlaybackEpoch` + canonical `MediaTime`, and stale epochs are revalidated at asynchronous boundaries.
 7. `PlaybackClock` is the single authoritative playback-time model and atomically binds state, epoch, time, and revision.
-8. Decode, processing, scheduling, and render/presenter responsibilities remain separate stages.
+8. Decode, processing, scheduling, render/presenter, and synchronization responsibilities remain separate stages.
 9. Pixel/color conversion is a Video Processor responsibility, not a presenter responsibility.
 10. Graphics APIs live behind presenter adapters; decode/process/scheduler core does not depend on D3D/DXGI types.
 11. `PlaybackExecution` owns active product worker-generation lifecycle. Active packet routing exists only for streams with active consumers.
@@ -67,23 +76,30 @@ Native MediaRuntime
 21. Audio device control executes on the render thread. Pause/Resume only interrupt waits and preserve the current sample cursor/device queue; destructive reset remains reserved for discontinuities.
 22. Audio hardware timing crosses the platform boundary only as a portable media-position + monotonic-correlation snapshot. QPC, COM, and `IAudioClock` never enter execution/core contracts.
 23. Hardware-clock observations are filtered by a platform-independent discipline policy before they may change `PlaybackClock`; ordinary device sampling must not itself create playback-clock revisions or scheduler wakeups.
+24. `PlaybackExecution` activates only media branches that have both a selected track and a configured consumer. Audio-only playback is valid, and a paused seek may fill bounded Audio Decode/Process queues but may not open the replacement endpoint until Resume.
+25. Asynchronous audio-clock corrections are compare-applied against the exact `PlaybackClock` state + epoch + revision that produced them. A concurrent Pause/Resume/Seek invalidates the correction instead of being overwritten.
+26. Clock synchronization reads hardware timing only while the audio render worker is actively Running. Paused, drained, unavailable, or faulted render state never becomes a master-clock source.
 
 ## Current implementation slice
 
-The current slice opens local files through `IMediaByteStream`, feeds FFmpeg via custom AVIO, and keeps FFmpeg types inside adapters. Media open discovers/prepares video and audio decoders but does not start the demux pump. Execution explicitly creates an immutable routing generation containing only streams with active consumers.
+The current slice opens local files through `IMediaByteStream`, feeds FFmpeg via custom AVIO, and keeps FFmpeg types inside adapters. Media open discovers/prepares video and audio decoders but does not start the demux pump. `PlaybackExecution` creates an immutable routing generation containing only streams with active consumers and now owns both video and optional audio lifecycle under one `PlaybackEpoch`.
 
-The active product execution path is still video-only and flows Video Decode -> Process -> Scheduler -> Render under the authoritative playback clock. In parallel, the audio branch now has independently tested Decode -> Process -> Render stages: `AudioDecodeWorker` produces Lapis-owned `AudioFrame` values, `FfmpegAudioFrameConverter` performs drainable libswresample conversion behind `IAudioFrameProcessor`, and `AudioRenderWorker` drives an `IAudioOutput` through bounded partial submission, stop-aware readiness waits, drain, reset, and synchronous render-thread-owned Pause/Resume control.
+Video flows Video Decode -> Process -> Scheduler -> Render under the authoritative playback clock. The audio branch flows Audio Decode -> Process -> Render: `AudioDecodeWorker` produces Lapis-owned `AudioFrame` values, `FfmpegAudioFrameConverter` performs drainable libswresample conversion behind `IAudioFrameProcessor`, and `AudioRenderWorker` drives an `IAudioOutput` through bounded partial submission, stop-aware readiness waits, drain, reset, and synchronous render-thread-owned Pause/Resume control. Video-only and audio-only generations are both valid.
 
-Audio output target selection has its own portable `IAudioOutputProvider` boundary. A provider prepares an `AudioOutputPlan` before processing starts, containing the exact `AudioFormat` that the converter should produce plus an unopened output already bound to the same physical/logical endpoint used for negotiation. This prevents default-device changes from splitting format discovery and rendering across different endpoints.
+Audio output target selection has its own portable `IAudioOutputProvider` boundary. A provider prepares an `AudioOutputPlan` for each playback generation, containing the exact `AudioFormat` that the converter should produce plus an unopened output already bound to the same physical/logical endpoint used for negotiation. Seek therefore naturally renegotiates the output target without allowing default-device changes to split discovery and rendering across endpoints.
 
-`AudioRenderWorker::pause()` and `resume()` act as synchronous control-plane acknowledgements rather than direct device calls. A dedicated wait-interrupt source wakes bounded input waits, device backpressure waits, or EOF drain; the render thread then applies `IAudioOutput::pause/resume` and acknowledges the control revision. Concurrent public Pause/Resume calls are serialized until the current acknowledgement completes, preventing a later command from overwriting an earlier revision. A partial frame retains its sample cursor and EOF retains its drain phase across Pause.
+A newly prepared audio generation starts Decode and Process immediately, but its processed stream remains bounded and pending until the authoritative clock is Running. Initial Start and running Seek start Audio Render only after the clock transition. A Seek performed while Paused may fill bounded decode/process queues, but the replacement endpoint is not opened until Resume. Pause freezes an active audio endpoint before pausing logical time; Resume makes logical time Running before resuming or starting hardware presentation.
+
+`AudioRenderWorker::pause()` and `resume()` are synchronous control-plane acknowledgements rather than direct device calls. A dedicated wait-interrupt source wakes bounded input waits, device backpressure waits, or EOF drain; the render thread then applies `IAudioOutput::pause/resume` and acknowledges the control revision. A partial frame retains its sample cursor and EOF retains its drain phase across Pause.
 
 On Windows, `WasapiSharedAudioOutputProvider` resolves the default multimedia render endpoint, reads its shared engine mix format with `GetMixFormat`, converts that descriptor into the Lapis audio model, verifies the reconstructed format with exact shared-mode `IsFormatSupported`, and returns a `WasapiSharedAudioOutput` bound to the captured endpoint ID. The output maps Pause to `IAudioClient::Stop` and Resume to `Start`, preserving queued endpoint samples and stream position; reset remains Stop + Reset for discontinuities.
 
 `WasapiSharedAudioOutput` acquires `IAudioClock`. The first successfully released sample prefix maps stream position zero to its canonical media timestamp. Render-thread refreshes combine `IAudioClock::GetPosition` with `GetFrequency`, bridge the returned QPC correlation into the same monotonic domain used by `PlaybackClock`, and publish a coherent `AudioOutputPosition` snapshot through atomics. `position()` never calls COM and can be read by synchronization code without crossing device-thread affinity.
 
-`AudioClockDiscipline` is the portable policy between that snapshot and the authoritative clock. It ignores non-hardware, stale, implausibly future, paused, and stopped observations; extrapolates a valid device sample to the caller's monotonic `now`; computes signed drift against the same-time `PlaybackClockSnapshot`; and suppresses corrections inside a configurable deadband. Drift beyond the threshold yields a `Rebase` recommendation with the output revision, but the policy never mutates `PlaybackClock` itself.
+`AudioClockDiscipline` is the portable policy between that snapshot and the authoritative clock. It ignores non-hardware, stale, implausibly future, paused, and stopped observations; extrapolates a valid device sample to the caller's monotonic `now`; computes signed drift against the same-time `PlaybackClockSnapshot`; and suppresses corrections inside a configurable deadband.
 
-This preserves one authoritative playback-time model while preventing normal hardware observation cadence from becoming `PlaybackClock` revision cadence. The eventual `PlaybackExecution` audio owner will decide when and how a `Rebase` recommendation is applied.
+`AudioClockSyncWorker` is the generation-scoped application layer. While playback is Running it samples at a configurable cadence (20 ms by default), evaluates the discipline decision, revalidates the output revision, and compare-applies only Rebase decisions through `PlaybackClock::try_rebase`. The compare step requires state, epoch, and revision to still match the snapshot used for evaluation, so Pause/Resume/Seek races reject stale corrections. When the logical clock is Paused or Stopped, the worker blocks on a clock-revision wait instead of polling. `PlaybackExecution` exposes synchronization diagnostics but keeps WASAPI and FFmpeg types outside this layer.
 
-Blu-ray navigation, explicit endpoint selection/change notifications, fallback target-format policy for non-representable engine mix formats, `PlaybackExecution` ownership of the audio branch, application of audio clock discipline and full A/V synchronization, long-term drift/rate correction, `IAudioClient3` low-latency period policy, exclusive/bitstream output, concrete D3D11/DXGI presentation, GPU decode/processing, full color/HDR metadata, subtitles, AI taps, FFmpeg interrupt callbacks for blocking sources, and public-C-ABI delegation to `PlaybackExecution` remain deliberately outside this slice.
+The audio hardware clock can therefore discipline the single authoritative `PlaybackClock` without becoming a second product clock. Corrections inside one playback epoch wake video timing only when drift actually exceeds policy, while media discontinuities still use the explicit epoch mechanism.
+
+Blu-ray navigation, explicit endpoint selection/change notifications, fallback target-format policy for non-representable engine mix formats, long-term frequency/rate correction, additional hysteresis/rate limiting based on real-device measurements, external/video-master policies, `IAudioClient3` low-latency period policy, exclusive/bitstream output, concrete D3D11/DXGI presentation, GPU decode/processing, full color/HDR metadata, subtitles, AI taps, FFmpeg interrupt callbacks for blocking sources, public-C-ABI delegation to `PlaybackExecution`, and full Blu-ray navigation remain deliberately outside this slice.

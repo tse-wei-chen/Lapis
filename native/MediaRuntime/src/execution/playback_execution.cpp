@@ -49,7 +49,8 @@ PlaybackExecution::PlaybackExecution(
       audio_decoder_(media_, config.audio_decode_queue_capacity),
       audio_output_provider_(std::move(audio_output_provider)),
       audio_processor_factory_(std::move(audio_processor_factory)),
-      audio_process_queue_capacity_(config.audio_process_queue_capacity) {
+      audio_process_queue_capacity_(config.audio_process_queue_capacity),
+      audio_clock_sync_config_(config.audio_clock_sync) {
     const bool has_provider = audio_output_provider_ != nullptr;
     const bool has_factory = static_cast<bool>(audio_processor_factory_);
     if (has_provider != has_factory) {
@@ -60,6 +61,13 @@ PlaybackExecution::PlaybackExecution(
         throw std::invalid_argument(
             "PlaybackExecution audio process queue capacity must be greater than zero.");
     }
+    if (audio_clock_sync_config_.sample_interval.nanoseconds <= 0) {
+        throw std::invalid_argument(
+            "PlaybackExecution audio clock sample interval must be greater than zero.");
+    }
+    // Validate discipline tolerances at composition time rather than failing
+    // asynchronously when a playback generation is started.
+    (void)AudioClockDiscipline(audio_clock_sync_config_.discipline);
 }
 
 PlaybackExecution::~PlaybackExecution() {
@@ -131,7 +139,9 @@ PlaybackExecutionResult PlaybackExecution::pause() {
     }
 
     // Freeze the device before freezing logical time so no queued hardware
-    // presentation can advance after PlaybackClock enters Paused.
+    // presentation can advance after PlaybackClock enters Paused. The clock sync
+    // worker can race with this transition, but its compare-and-apply rebase is
+    // rejected if Pause changes the clock revision first.
     if (!pause_audio_unlocked()) {
         return fault_unlocked(PlaybackExecutionError::WorkerFailed);
     }
@@ -154,8 +164,9 @@ PlaybackExecutionResult PlaybackExecution::resume() {
     }
 
     // Resume logical time before allowing the output worker to start or resume
-    // hardware presentation. This prevents audio from running against a paused
-    // authoritative clock; hardware-clock discipline may correct residual skew.
+    // hardware presentation. While the renderer is still Paused, its position
+    // reader reports Unavailable, so the sync worker cannot steer from a frozen
+    // device sample in this short transition window.
     if (!clock_.resume(SteadyClockSource::now())) {
         return fault_unlocked(PlaybackExecutionError::ClockFailure);
     }
@@ -287,6 +298,10 @@ PlaybackExecutionSnapshot PlaybackExecution::snapshot() const {
         result.audio_rendering = audio_renderer_->stats();
         result.audio_position = audio_renderer_->position();
     }
+    if (audio_clock_sync_ != nullptr) {
+        result.audio_clock_sync_state = audio_clock_sync_->state();
+        result.audio_clock_sync = audio_clock_sync_->stats();
+    }
     return result;
 }
 
@@ -336,7 +351,9 @@ bool PlaybackExecution::workers_failed_unlocked() const noexcept {
             process_state == AudioProcessWorkerState::Faulted ||
             render_state == AudioRenderWorkerState::UnsupportedFormat ||
             render_state == AudioRenderWorkerState::OutputUnavailable ||
-            render_state == AudioRenderWorkerState::Faulted) {
+            render_state == AudioRenderWorkerState::Faulted ||
+            (audio_clock_sync_ != nullptr &&
+             audio_clock_sync_->state() == AudioClockSyncWorkerState::Faulted)) {
             return true;
         }
     }
@@ -483,7 +500,7 @@ bool PlaybackExecution::resume_audio_unlocked() {
         try {
             audio_renderer_->start(pending_audio_render_stream_);
             pending_audio_render_stream_.reset();
-            return true;
+            return start_audio_clock_sync_unlocked();
         } catch (...) {
             return false;
         }
@@ -491,16 +508,55 @@ bool PlaybackExecution::resume_audio_unlocked() {
 
     switch (audio_renderer_->state()) {
         case AudioRenderWorkerState::Running:
+            return start_audio_clock_sync_unlocked();
         case AudioRenderWorkerState::Drained:
             return true;
         case AudioRenderWorkerState::Paused:
-            return audio_renderer_->resume();
+            if (!audio_renderer_->resume()) {
+                return false;
+            }
+            return start_audio_clock_sync_unlocked();
         default:
             return false;
     }
 }
 
+bool PlaybackExecution::start_audio_clock_sync_unlocked() {
+    if (!audio_generation_active_ || audio_renderer_ == nullptr) {
+        return false;
+    }
+    if (audio_clock_sync_ != nullptr) {
+        return audio_clock_sync_->state() == AudioClockSyncWorkerState::Running;
+    }
+
+    try {
+        auto* renderer = audio_renderer_.get();
+        auto sync = std::make_unique<AudioClockSyncWorker>(
+            clock_,
+            [renderer]() -> AudioOutputPosition {
+                // During Pause/Resume transitions the logical clock and device
+                // deliberately change state in separate ordered operations. A
+                // paused/drained renderer must never provide a steering sample.
+                if (renderer->state() != AudioRenderWorkerState::Running) {
+                    return {};
+                }
+                return renderer->position();
+            },
+            audio_clock_sync_config_);
+        sync->start();
+        audio_clock_sync_ = std::move(sync);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 void PlaybackExecution::stop_generation_unlocked() {
+    // Clock synchronization holds a non-owning reader for audio_renderer_. Stop
+    // and join it before changing the renderer/output lifetime.
+    if (audio_clock_sync_ != nullptr) {
+        audio_clock_sync_->stop();
+    }
     if (audio_renderer_ != nullptr) {
         audio_renderer_->stop();
     }
@@ -515,6 +571,7 @@ void PlaybackExecution::stop_generation_unlocked() {
     media_.stop_decode_generation();
 
     pending_audio_render_stream_.reset();
+    audio_clock_sync_.reset();
     audio_renderer_.reset();
     audio_processor_.reset();
     audio_generation_active_ = false;
