@@ -11,7 +11,13 @@ Application control plane
         |
         | stable C ABI / adapter boundary
         v
-Native MediaRuntime
+Native MediaRuntime composition root
+  - C ABI session -> PlaybackExecution
+  - headless video presenter until a surface adapter is bound
+  - Windows default audio -> WASAPI shared provider
+        |
+        v
+Native MediaRuntime core
   - immutable GraphPlan / GraphBuilder
   - source / demux adapters
       active DecodeGeneration
@@ -79,12 +85,20 @@ Native MediaRuntime
 24. `PlaybackExecution` activates only media branches that have both a selected track and a configured consumer. Audio-only playback is valid, and a paused seek may fill bounded Audio Decode/Process queues but may not open the replacement endpoint until Resume.
 25. Asynchronous audio-clock corrections are compare-applied against the exact `PlaybackClock` state + epoch + revision that produced them. A concurrent Pause/Resume/Seek invalidates the correction instead of being overwritten.
 26. Clock synchronization reads hardware timing only while the audio render worker is actively Running. Paused, drained, unavailable, or faulted render state never becomes a master-clock source.
+27. Public C ABI transport commands are serialized per session and delegate to one `PlaybackExecution`; the ABI does not directly seek demux state or synthesize Play/Pause by mutating transport enums.
+28. A seek while execution is Stopped may prepare a new epoch without starting workers. Starting that exact prepared epoch + position is allowed because starting presentation is not a second media discontinuity.
 
 ## Current implementation slice
 
-The current slice opens local files through `IMediaByteStream`, feeds FFmpeg via custom AVIO, and keeps FFmpeg types inside adapters. Media open discovers/prepares video and audio decoders but does not start the demux pump. `PlaybackExecution` creates an immutable routing generation containing only streams with active consumers and now owns both video and optional audio lifecycle under one `PlaybackEpoch`.
+The current slice opens local files through `IMediaByteStream`, feeds FFmpeg via custom AVIO, and keeps FFmpeg types inside adapters. Media open discovers/prepares video and audio decoders but does not start the demux pump. `PlaybackExecution` creates an immutable routing generation containing only streams with active consumers and owns both video and optional audio lifecycle under one `PlaybackEpoch`.
 
-Video flows Video Decode -> Process -> Scheduler -> Render under the authoritative playback clock. The audio branch flows Audio Decode -> Process -> Render: `AudioDecodeWorker` produces Lapis-owned `AudioFrame` values, `FfmpegAudioFrameConverter` performs drainable libswresample conversion behind `IAudioFrameProcessor`, and `AudioRenderWorker` drives an `IAudioOutput` through bounded partial submission, stop-aware readiness waits, drain, reset, and synchronous render-thread-owned Pause/Resume control. Video-only and audio-only generations are both valid.
+The public C ABI now owns a composition-level pipeline containing `PlaybackMediaSession` plus `PlaybackExecution`. `lapis_session_play`, `pause`, `seek`, and `close` call that execution owner rather than maintaining a parallel fake transport state machine. Per-session command serialization keeps concurrent result-returning calls ordered while the short-lived session mutex remains available to snapshots. Snapshot publication derives active time and natural Ended/Faulted state from `PlaybackExecutionSnapshot`.
+
+The C ABI currently supplies a headless `IVideoPresenter` so the real decode/process/schedule/render lifecycle can run before the native surface-binding contract exists. This adapter intentionally discards presented video frames and is a composition fallback, not the final desktop presenter. The execution/core boundary remains unchanged so a future D3D11/DXGI presenter can replace it without touching demux, decode, scheduler, audio, or playback-command semantics.
+
+On Windows the same composition root supplies `WasapiSharedAudioOutputProvider` and creates `FfmpegAudioFrameConverter` instances through the portable processor factory. Thus media with audio reaches the existing real shared-mode audio branch when playback starts; non-Windows audio output composition remains a future backend concern.
+
+Video flows Video Decode -> Process -> Scheduler -> Render under the authoritative playback clock. The audio branch flows Audio Decode -> Process -> Render: `AudioDecodeWorker` produces Lapis-owned `AudioFrame` values, `FfmpegAudioFrameConverter` performs drainable libswresample conversion behind `IAudioFrameProcessor`, and `AudioRenderWorker` drives an `IAudioOutput` through bounded partial submission, stop-aware readiness waits, drain, reset, and synchronous render-thread-owned Pause/Resume control. Video-only and audio-only generations are both valid when the required consumers are configured.
 
 Audio output target selection has its own portable `IAudioOutputProvider` boundary. A provider prepares an `AudioOutputPlan` for each playback generation, containing the exact `AudioFormat` that the converter should produce plus an unopened output already bound to the same physical/logical endpoint used for negotiation. Seek therefore naturally renegotiates the output target without allowing default-device changes to split discovery and rendering across endpoints.
 
@@ -102,4 +116,4 @@ On Windows, `WasapiSharedAudioOutputProvider` resolves the default multimedia re
 
 The audio hardware clock can therefore discipline the single authoritative `PlaybackClock` without becoming a second product clock. Corrections inside one playback epoch wake video timing only when drift actually exceeds policy, while media discontinuities still use the explicit epoch mechanism.
 
-Blu-ray navigation, explicit endpoint selection/change notifications, fallback target-format policy for non-representable engine mix formats, long-term frequency/rate correction, additional hysteresis/rate limiting based on real-device measurements, external/video-master policies, `IAudioClient3` low-latency period policy, exclusive/bitstream output, concrete D3D11/DXGI presentation, GPU decode/processing, full color/HDR metadata, subtitles, AI taps, FFmpeg interrupt callbacks for blocking sources, public-C-ABI delegation to `PlaybackExecution`, and full Blu-ray navigation remain deliberately outside this slice.
+Blu-ray navigation, explicit endpoint selection/change notifications, fallback target-format policy for non-representable engine mix formats, long-term frequency/rate correction, additional hysteresis/rate limiting based on real-device measurements, external/video-master policies, `IAudioClient3` low-latency period policy, exclusive/bitstream output, concrete D3D11/DXGI presentation and surface binding, GPU decode/processing, full color/HDR metadata, subtitles, AI taps, FFmpeg interrupt callbacks for blocking sources, cross-platform audio output composition, and full Blu-ray navigation remain deliberately outside this slice.
