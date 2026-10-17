@@ -26,6 +26,7 @@ add_library(Lapis.MediaRuntime.Core STATIC
     src/process/ffmpeg/ffmpeg_video_frame_converter.cpp
     src/execution/video_decode_worker.cpp
     src/execution/audio_clock_discipline.cpp
+    src/execution/audio_clock_sync_worker.cpp
     src/execution/audio_decode_worker.cpp
     src/execution/audio_process_worker.cpp
     src/execution/audio_render_worker.cpp
@@ -201,6 +202,23 @@ if(BUILD_TESTING)
     add_test(
         NAME audio_clock_discipline_contract
         COMMAND Lapis.MediaRuntime.AudioClockDisciplineTests
+    )
+
+    add_executable(
+        Lapis.MediaRuntime.AudioClockSyncTests
+        tests/audio_clock_sync_execution.cpp
+    )
+    target_compile_features(
+        Lapis.MediaRuntime.AudioClockSyncTests PRIVATE cxx_std_20
+    )
+    target_link_libraries(
+        Lapis.MediaRuntime.AudioClockSyncTests
+        PRIVATE Lapis.MediaRuntime.Core
+    )
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.AudioClockSyncTests)
+    add_test(
+        NAME audio_clock_sync_execution
+        COMMAND Lapis.MediaRuntime.AudioClockSyncTests
     )
 
     if(WIN32)

@@ -76,6 +76,30 @@ bool PlaybackClock::rebase(
     return true;
 }
 
+bool PlaybackClock::try_rebase(
+    const PlaybackClockSnapshot& expected,
+    MediaTime position,
+    MonotonicTime now) {
+    if (position.nanoseconds < 0) {
+        return false;
+    }
+
+    {
+        std::scoped_lock lock(mutex_);
+        if (state_ != expected.state ||
+            epoch_.value() != expected.epoch.value() ||
+            revision_ != expected.revision) {
+            return false;
+        }
+
+        anchor_position_ = position;
+        anchor_time_ = now;
+        changed_unlocked();
+    }
+    changed_.notify_all();
+    return true;
+}
+
 bool PlaybackClock::stop(MonotonicTime now) {
     {
         std::scoped_lock lock(mutex_);

@@ -40,6 +40,16 @@ public:
         PlaybackEpoch epoch,
         MediaTime position,
         MonotonicTime now);
+
+    // Compare-and-apply correction for asynchronous clock-discipline owners.
+    // The mutation succeeds only when state, epoch, and revision still match the
+    // snapshot that produced the correction. This prevents a stale hardware
+    // observation from rebasing across Pause/Resume/Seek transitions.
+    [[nodiscard]] bool try_rebase(
+        const PlaybackClockSnapshot& expected,
+        MediaTime position,
+        MonotonicTime now);
+
     [[nodiscard]] bool stop(MonotonicTime now);
     void reset(PlaybackEpoch epoch, MonotonicTime now);
 
