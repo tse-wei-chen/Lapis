@@ -3,10 +3,12 @@
 #include "core/graph_builder.hpp"
 #include "decode/ffmpeg/ffmpeg_video_decoder.hpp"
 #include "demux/ffmpeg/ffmpeg_demuxer.hpp"
+#include "demux/ffmpeg/ffmpeg_packet_router.hpp"
 #include "source/file/file_source.hpp"
 #include "source/media_source_registry.hpp"
 
 #include <memory>
+#include <vector>
 
 namespace lapis::media {
 
@@ -17,6 +19,10 @@ public:
     }
 
     void reset() {
+        if (packet_router != nullptr) {
+            packet_router->stop();
+        }
+        packet_router.reset();
         plan.reset();
         decoder.reset();
         demuxer.reset();
@@ -27,6 +33,7 @@ public:
     MediaSourceRegistry sources;
     std::unique_ptr<MediaSourceSession> source;
     std::unique_ptr<ffmpeg::FfmpegDemuxer> demuxer;
+    std::unique_ptr<ffmpeg::FfmpegPacketRouter> packet_router;
     std::unique_ptr<ffmpeg::FfmpegVideoDecoder> decoder;
     std::unique_ptr<GraphPlan> plan;
     int video_stream_index{-1};
@@ -90,20 +97,38 @@ MediaOpenInfo PlaybackMediaSession::open(const MediaLocator& locator) {
 
     impl_->plan = std::make_unique<GraphPlan>(graph_builder.build());
     impl_->demuxer = std::move(demuxer);
+
+    if (impl_->decoder != nullptr) {
+        try {
+            impl_->packet_router = std::make_unique<ffmpeg::FfmpegPacketRouter>(
+                *impl_->demuxer,
+                std::vector<int>{impl_->video_stream_index});
+            impl_->packet_router->start();
+        } catch (...) {
+            impl_->reset();
+            return {MediaOpenError::PacketRoutingFailed};
+        }
+    }
+
     return result;
 }
 
-std::optional<VideoFrame> PlaybackMediaSession::decode_next_video_frame() {
-    if (impl_->decoder == nullptr || impl_->demuxer == nullptr) {
+std::optional<VideoFrame> PlaybackMediaSession::decode_next_video_frame(
+    std::stop_token stop_token) {
+    if (impl_->decoder == nullptr || impl_->packet_router == nullptr) {
         return std::nullopt;
     }
 
-    return impl_->decoder->decode_next(*impl_->demuxer);
+    return impl_->decoder->decode_next(*impl_->packet_router, stop_token);
 }
 
 bool PlaybackMediaSession::seek(MediaTime target) {
     if (impl_->demuxer == nullptr) {
         return false;
+    }
+
+    if (impl_->packet_router != nullptr) {
+        impl_->packet_router->stop();
     }
 
     if (!impl_->demuxer->seek(target, impl_->video_stream_index)) {
@@ -112,6 +137,14 @@ bool PlaybackMediaSession::seek(MediaTime target) {
 
     if (impl_->decoder != nullptr) {
         impl_->decoder->flush();
+    }
+
+    if (impl_->packet_router != nullptr) {
+        try {
+            impl_->packet_router->start();
+        } catch (...) {
+            return false;
+        }
     }
     return true;
 }

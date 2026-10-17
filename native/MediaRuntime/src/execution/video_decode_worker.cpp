@@ -71,7 +71,7 @@ void VideoDecodeWorker::run(
 
     try {
         while (!stop_token.stop_requested()) {
-            auto frame = media_.decode_next_video_frame();
+            auto frame = media_.decode_next_video_frame(stop_token);
             if (stop_token.stop_requested()) {
                 break;
             }
