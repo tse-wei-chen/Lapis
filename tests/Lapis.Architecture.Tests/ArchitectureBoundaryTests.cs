@@ -72,6 +72,45 @@ public sealed class ArchitectureBoundaryTests
         }
     }
 
+    [Fact]
+    public void NativeNonAdapterCodeDoesNotUseFfmpegTypes()
+    {
+        var nativeRoot = Path.Combine(Root, "native", "MediaRuntime", "src");
+        var forbidden = new[]
+        {
+            "#include <libav",
+            "AVFrame",
+            "AVPacket",
+            "AVCodecContext",
+            "AVCodecParameters",
+            "AVFormatContext",
+            "AVRational",
+            "AVPixelFormat"
+        };
+
+        var files = Directory.EnumerateFiles(nativeRoot, "*.*", SearchOption.AllDirectories)
+            .Where(file =>
+                file.EndsWith(".h", StringComparison.OrdinalIgnoreCase) ||
+                file.EndsWith(".hpp", StringComparison.OrdinalIgnoreCase) ||
+                file.EndsWith(".c", StringComparison.OrdinalIgnoreCase) ||
+                file.EndsWith(".cpp", StringComparison.OrdinalIgnoreCase));
+
+        foreach (var file in files)
+        {
+            var relative = Path.GetRelativePath(nativeRoot, file).Replace('\\', '/');
+            if ($"/{relative}/".Contains("/ffmpeg/", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var source = File.ReadAllText(file);
+            foreach (var token in forbidden)
+            {
+                Assert.DoesNotContain(token, source, StringComparison.Ordinal);
+            }
+        }
+    }
+
     private static XDocument LoadProject(string relativePath) =>
         XDocument.Load(Path.Combine(Root, relativePath.Replace('/', Path.DirectorySeparatorChar)));
 

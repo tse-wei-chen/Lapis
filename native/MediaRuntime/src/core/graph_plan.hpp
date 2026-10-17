@@ -33,17 +33,26 @@ struct GraphEdge final {
     std::string to;
 };
 
+class GraphBuilder;
+
 class GraphPlan final {
 public:
-    GraphPlan(std::vector<GraphNode> nodes, std::vector<GraphEdge> edges)
-        : nodes_(std::move(nodes)), edges_(std::move(edges)) {}
+    GraphPlan(const GraphPlan&) = default;
+    GraphPlan(GraphPlan&&) noexcept = default;
+    GraphPlan& operator=(const GraphPlan&) = delete;
+    GraphPlan& operator=(GraphPlan&&) = delete;
 
     [[nodiscard]] const std::vector<GraphNode>& nodes() const noexcept { return nodes_; }
     [[nodiscard]] const std::vector<GraphEdge>& edges() const noexcept { return edges_; }
 
 private:
-    const std::vector<GraphNode> nodes_;
-    const std::vector<GraphEdge> edges_;
+    friend class GraphBuilder;
+
+    GraphPlan(std::vector<GraphNode> nodes, std::vector<GraphEdge> edges)
+        : nodes_(std::move(nodes)), edges_(std::move(edges)) {}
+
+    std::vector<GraphNode> nodes_;
+    std::vector<GraphEdge> edges_;
 };
 
 } // namespace lapis::media

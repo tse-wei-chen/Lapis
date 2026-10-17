@@ -7,12 +7,12 @@ Lapis is a Windows-first media platform for high-quality local and Blu-ray playb
 Lapis separates the **control plane** from the **media data plane**:
 
 - `src/Lapis.Contracts` contains stable product/domain contracts only.
-- `src/Lapis.Application` owns playback orchestration, serialized commands, state snapshots, epochs, and immutable graph planning.
-- `native/MediaRuntime` owns the hot media path and exposes a stable C ABI.
-- third-party media libraries will be added behind native adapters; their types must not leak into managed contracts.
-- AI will observe media through taps and must never block playback.
+- `src/Lapis.Application` owns product orchestration, serialized playback commands, state snapshots, epochs, and user-facing playback policy.
+- `native/MediaRuntime` owns the hot media path, the executable immutable media graph, clocks/schedulers, and a stable C ABI.
+- third-party media libraries live behind native adapters; their types must not leak into managed contracts or native core contracts.
+- AI observes media through taps and must never block playback.
 
-The first architecture foundation deliberately does **not** add FFmpeg or libbluray yet. The project establishes the time model, epoch invalidation, session boundary, graph-plan model, native ABI, and architecture tests first.
+The executable `GraphPlan` has one owner: native `MediaRuntime/Core`. Managed code expresses intent and policy, not decoder/renderer node implementations.
 
 ## Build
 
@@ -24,10 +24,12 @@ dotnet build Lapis.slnx -c Release --no-restore
 dotnet test Lapis.slnx -c Release --no-build
 ```
 
-Native:
+Native development uses the pinned vcpkg manifest in `native/MediaRuntime`:
 
 ```powershell
-cmake -S native/MediaRuntime -B build/native -A x64
+cmake -S native/MediaRuntime -B build/native -A x64 `
+  -DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake `
+  -DVCPKG_TARGET_TRIPLET=x64-windows
 cmake --build build/native --config Release
 ctest --test-dir build/native -C Release --output-on-failure
 ```
@@ -40,6 +42,10 @@ src/
   Lapis.Application/
 native/
   MediaRuntime/
+    src/core/
+    src/source/
+    src/demux/
+    src/decode/
 tests/
   Lapis.Contracts.Tests/
   Lapis.Application.Tests/
@@ -49,4 +55,4 @@ docs/
   adr/
 ```
 
-Architecture decisions live in `docs/adr`. The dependency rules are executable in `Lapis.Architecture.Tests`.
+Architecture decisions live in `docs/adr`. Dependency rules are executable in `Lapis.Architecture.Tests` and native CTest targets.
