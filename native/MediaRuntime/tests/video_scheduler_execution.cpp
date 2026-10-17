@@ -73,6 +73,7 @@ int main() {
     CHECK(clock.start(MediaTime{}, initial_now));
 
     VideoDecodeWorker decoder(media, 4);
+    CHECK(media.start_decode_generation(MediaDecodeSelection{true, false}));
     auto decoded = decoder.start(PlaybackEpoch{7});
 
     VideoSchedulerWorker scheduler(
@@ -100,6 +101,7 @@ int main() {
     CHECK(scheduler.state() == VideoSchedulerWorkerState::Drained);
     scheduler.stop();
     decoder.stop();
+    media.stop_decode_generation();
 
     auto stats = scheduler.stats();
     CHECK(stats.released_frames == 2);
@@ -109,12 +111,14 @@ int main() {
     CHECK(media.seek(MediaTime{}));
     const auto stale_now = SteadyClockSource::now();
     CHECK(clock.rebase(PlaybackEpoch{9}, MediaTime{}, stale_now));
+    CHECK(media.start_decode_generation(MediaDecodeSelection{true, false}));
 
     auto stale_decoded = decoder.start(PlaybackEpoch{8});
     auto stale_presentation = scheduler.start(stale_decoded);
     CHECK(wait_for_closed(*stale_presentation));
     scheduler.stop();
     decoder.stop();
+    media.stop_decode_generation();
 
     stats = scheduler.stats();
     CHECK(stats.released_frames == 0);
@@ -125,12 +129,14 @@ int main() {
     const auto paused_now = SteadyClockSource::now();
     CHECK(clock.rebase(PlaybackEpoch{10}, MediaTime{}, paused_now));
     CHECK(clock.pause(paused_now));
+    CHECK(media.start_decode_generation(MediaDecodeSelection{true, false}));
 
     auto paused_decoded = decoder.start(PlaybackEpoch{10});
     auto paused_presentation = scheduler.start(paused_decoded);
     std::this_thread::sleep_for(10ms);
     scheduler.stop();
     decoder.stop();
+    media.stop_decode_generation();
 
     CHECK(scheduler.state() == VideoSchedulerWorkerState::Stopped);
     CHECK(paused_presentation->try_pop().status == QueueReadStatus::Closed);

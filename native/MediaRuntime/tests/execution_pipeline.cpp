@@ -27,7 +27,6 @@ lapis::media::QueueReadResult<lapis::media::TimedVideoFrame> wait_for_frame(
         if (result.status != lapis::media::QueueReadStatus::Empty) {
             return result;
         }
-
         if (std::chrono::steady_clock::now() >= deadline) {
             return result;
         }
@@ -49,7 +48,6 @@ bool wait_for_closed(lapis::media::VideoFrameStream& stream) {
         }
         std::this_thread::sleep_for(1ms);
     }
-
     return false;
 }
 
@@ -93,8 +91,10 @@ int main() {
     const auto open_result = media.open(locator);
     CHECK(open_result.ok());
     CHECK(open_result.has_video);
+    CHECK(!media.decode_next_video_frame().has_value());
 
     VideoDecodeWorker worker(media, 1);
+    CHECK(media.start_decode_generation(MediaDecodeSelection{true, false}));
     auto first_stream = worker.start(PlaybackEpoch{7});
     CHECK(first_stream->epoch().value() == 7);
     CHECK(first_stream->capacity() == 1);
@@ -109,8 +109,10 @@ int main() {
     CHECK(wait_for_closed(*first_stream));
     CHECK(worker.state() == VideoDecodeWorkerState::Drained);
     worker.stop();
+    media.stop_decode_generation();
 
     CHECK(media.seek(MediaTime{0}));
+    CHECK(media.start_decode_generation(MediaDecodeSelection{true, false}));
 
     auto second_stream = worker.start(PlaybackEpoch{8});
     CHECK(first_stream->try_pop().status == QueueReadStatus::Closed);
@@ -120,6 +122,7 @@ int main() {
     CHECK(second_frame.item->epoch.value() == 8);
     CHECK(second_frame.item->timestamp == second_frame.item->payload.timestamp);
     worker.stop();
+    media.stop_decode_generation();
 
     return 0;
 }

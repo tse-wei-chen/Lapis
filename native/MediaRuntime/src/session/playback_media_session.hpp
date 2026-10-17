@@ -1,5 +1,6 @@
 #pragma once
 
+#include "audio/audio_frame.hpp"
 #include "core/media_time.hpp"
 #include "source/media_source.hpp"
 #include "video/video_frame.hpp"
@@ -28,8 +29,16 @@ struct MediaOpenInfo final {
     bool has_video{};
     std::uint32_t video_width{};
     std::uint32_t video_height{};
+    bool has_audio{};
+    std::uint32_t audio_sample_rate{};
+    std::uint32_t audio_channel_count{};
 
     [[nodiscard]] bool ok() const noexcept { return error == MediaOpenError::None; }
+};
+
+struct MediaDecodeSelection final {
+    bool video{};
+    bool audio{};
 };
 
 class PlaybackMediaSession final {
@@ -41,8 +50,14 @@ public:
     PlaybackMediaSession& operator=(const PlaybackMediaSession&) = delete;
 
     [[nodiscard]] MediaOpenInfo open(const MediaLocator& locator);
+    [[nodiscard]] bool start_decode_generation(MediaDecodeSelection selection);
+    void stop_decode_generation() noexcept;
+
     [[nodiscard]] std::optional<VideoFrame> decode_next_video_frame(
         std::stop_token stop_token = {});
+    [[nodiscard]] std::optional<AudioFrame> decode_next_audio_frame(
+        std::stop_token stop_token = {});
+
     [[nodiscard]] bool seek(MediaTime target);
     [[nodiscard]] const GraphPlan* graph_plan() const noexcept;
 

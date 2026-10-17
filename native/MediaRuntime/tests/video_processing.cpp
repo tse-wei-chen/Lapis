@@ -22,6 +22,7 @@ int main() {
     PlaybackMediaSession media;
     const MediaLocator locator{MediaLocatorKind::File, LAPIS_TEST_MEDIA_PATH};
     CHECK(media.open(locator).ok());
+    CHECK(media.start_decode_generation(MediaDecodeSelection{true, false}));
 
     VideoDecodeWorker decoder(media, 1);
     VideoProcessWorker processor(
@@ -61,6 +62,7 @@ int main() {
 
     processor.stop();
     decoder.stop();
+    media.stop_decode_generation();
     CHECK(processor.last_status() == VideoProcessStatus::Processed);
     CHECK(processor.state() == VideoProcessWorkerState::Drained ||
           processor.state() == VideoProcessWorkerState::Stopped);

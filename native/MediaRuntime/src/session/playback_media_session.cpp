@@ -1,6 +1,7 @@
 #include "session/playback_media_session.hpp"
 
 #include "core/graph_builder.hpp"
+#include "decode/ffmpeg/ffmpeg_audio_decoder.hpp"
 #include "decode/ffmpeg/ffmpeg_video_decoder.hpp"
 #include "demux/ffmpeg/ffmpeg_demuxer.hpp"
 #include "demux/ffmpeg/ffmpeg_packet_router.hpp"
@@ -18,25 +19,39 @@ public:
         sources.add(std::make_unique<FileSourceProvider>());
     }
 
-    void reset() {
+    void stop_decode_generation() noexcept {
         if (packet_router != nullptr) {
             packet_router->stop();
+            packet_router.reset();
         }
-        packet_router.reset();
+        if (video_decoder != nullptr) {
+            video_decoder->flush();
+        }
+        if (audio_decoder != nullptr) {
+            audio_decoder->flush();
+        }
+    }
+
+    void reset() noexcept {
+        stop_decode_generation();
         plan.reset();
-        decoder.reset();
+        audio_decoder.reset();
+        video_decoder.reset();
         demuxer.reset();
         source.reset();
         video_stream_index = -1;
+        audio_stream_index = -1;
     }
 
     MediaSourceRegistry sources;
     std::unique_ptr<MediaSourceSession> source;
     std::unique_ptr<ffmpeg::FfmpegDemuxer> demuxer;
     std::unique_ptr<ffmpeg::FfmpegPacketRouter> packet_router;
-    std::unique_ptr<ffmpeg::FfmpegVideoDecoder> decoder;
+    std::unique_ptr<ffmpeg::FfmpegVideoDecoder> video_decoder;
+    std::unique_ptr<ffmpeg::FfmpegAudioDecoder> audio_decoder;
     std::unique_ptr<GraphPlan> plan;
     int video_stream_index{-1};
+    int audio_stream_index{-1};
 };
 
 PlaybackMediaSession::PlaybackMediaSession()
@@ -92,34 +107,88 @@ MediaOpenInfo PlaybackMediaSession::open(const MediaLocator& locator) {
             ? static_cast<std::uint32_t>(video_stream->height)
             : 0;
         impl_->video_stream_index = video_stream->index;
-        impl_->decoder = std::move(decoder);
+        impl_->video_decoder = std::move(decoder);
+    }
+
+    const auto audio_stream = demuxer->best_audio_stream();
+    if (audio_stream.has_value()) {
+        auto decoder = std::make_unique<ffmpeg::FfmpegAudioDecoder>();
+        if (!decoder->open(*audio_stream)) {
+            impl_->reset();
+            return {MediaOpenError::DecoderFailed};
+        }
+
+        graph_builder
+            .add_node("audio-decoder", GraphNodeKind::AudioDecoder)
+            .connect("demux", "audio-decoder");
+
+        result.has_audio = true;
+        result.audio_sample_rate = audio_stream->sample_rate > 0
+            ? static_cast<std::uint32_t>(audio_stream->sample_rate)
+            : 0;
+        result.audio_channel_count = audio_stream->channel_count > 0
+            ? static_cast<std::uint32_t>(audio_stream->channel_count)
+            : 0;
+        impl_->audio_stream_index = audio_stream->index;
+        impl_->audio_decoder = std::move(decoder);
     }
 
     impl_->plan = std::make_unique<GraphPlan>(graph_builder.build());
     impl_->demuxer = std::move(demuxer);
+    return result;
+}
 
-    if (impl_->decoder != nullptr) {
-        try {
-            impl_->packet_router = std::make_unique<ffmpeg::FfmpegPacketRouter>(
-                *impl_->demuxer,
-                std::vector<int>{impl_->video_stream_index});
-            impl_->packet_router->start();
-        } catch (...) {
-            impl_->reset();
-            return {MediaOpenError::PacketRoutingFailed};
-        }
+bool PlaybackMediaSession::start_decode_generation(MediaDecodeSelection selection) {
+    if (impl_->demuxer == nullptr || impl_->packet_router != nullptr ||
+        (!selection.video && !selection.audio)) {
+        return false;
     }
 
-    return result;
+    std::vector<int> streams;
+    streams.reserve(2);
+
+    if (selection.video) {
+        if (impl_->video_decoder == nullptr || impl_->video_stream_index < 0) {
+            return false;
+        }
+        streams.push_back(impl_->video_stream_index);
+    }
+
+    if (selection.audio) {
+        if (impl_->audio_decoder == nullptr || impl_->audio_stream_index < 0) {
+            return false;
+        }
+        streams.push_back(impl_->audio_stream_index);
+    }
+
+    auto router = std::make_unique<ffmpeg::FfmpegPacketRouter>(
+        *impl_->demuxer,
+        std::move(streams));
+    router->start();
+    impl_->packet_router = std::move(router);
+    return true;
+}
+
+void PlaybackMediaSession::stop_decode_generation() noexcept {
+    impl_->stop_decode_generation();
 }
 
 std::optional<VideoFrame> PlaybackMediaSession::decode_next_video_frame(
     std::stop_token stop_token) {
-    if (impl_->decoder == nullptr || impl_->packet_router == nullptr) {
+    if (impl_->video_decoder == nullptr || impl_->packet_router == nullptr) {
         return std::nullopt;
     }
 
-    return impl_->decoder->decode_next(*impl_->packet_router, stop_token);
+    return impl_->video_decoder->decode_next(*impl_->packet_router, stop_token);
+}
+
+std::optional<AudioFrame> PlaybackMediaSession::decode_next_audio_frame(
+    std::stop_token stop_token) {
+    if (impl_->audio_decoder == nullptr || impl_->packet_router == nullptr) {
+        return std::nullopt;
+    }
+
+    return impl_->audio_decoder->decode_next(*impl_->packet_router, stop_token);
 }
 
 bool PlaybackMediaSession::seek(MediaTime target) {
@@ -127,25 +196,18 @@ bool PlaybackMediaSession::seek(MediaTime target) {
         return false;
     }
 
-    if (impl_->packet_router != nullptr) {
-        impl_->packet_router->stop();
-    }
+    // A discontinuity always ends the current packet generation. Decoders are
+    // flushed before the demux position changes so no buffered frame can cross
+    // the next PlaybackEpoch.
+    impl_->stop_decode_generation();
 
-    if (!impl_->demuxer->seek(target, impl_->video_stream_index)) {
+    const int reference_stream = impl_->video_stream_index >= 0
+        ? impl_->video_stream_index
+        : impl_->audio_stream_index;
+    if (!impl_->demuxer->seek(target, reference_stream)) {
         return false;
     }
 
-    if (impl_->decoder != nullptr) {
-        impl_->decoder->flush();
-    }
-
-    if (impl_->packet_router != nullptr) {
-        try {
-            impl_->packet_router->start();
-        } catch (...) {
-            return false;
-        }
-    }
     return true;
 }
 

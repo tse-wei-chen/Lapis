@@ -144,8 +144,6 @@ PlaybackExecutionResult PlaybackExecution::seek(
         return {PlaybackExecutionError::ClockFailure};
     }
 
-    // Stop downstream first. Upstream stages may be blocked on the bounded
-    // queue owned by the next stage.
     stop_generation_unlocked();
 
     if (!media_.seek(position)) {
@@ -250,6 +248,9 @@ bool PlaybackExecution::workers_drained_unlocked() const noexcept {
 
 bool PlaybackExecution::start_generation_unlocked(PlaybackEpoch epoch) {
     try {
+        if (!media_.start_decode_generation(MediaDecodeSelection{true, false})) {
+            return false;
+        }
         auto decoded = decoder_.start(epoch);
         auto processed = processor_.start(std::move(decoded));
         auto presentation = scheduler_.start(std::move(processed));
@@ -259,7 +260,6 @@ bool PlaybackExecution::start_generation_unlocked(PlaybackEpoch epoch) {
         try {
             stop_generation_unlocked();
         } catch (...) {
-            // The caller will transition the whole execution to Faulted.
         }
         return false;
     }
@@ -270,6 +270,7 @@ void PlaybackExecution::stop_generation_unlocked() {
     scheduler_.stop();
     processor_.stop();
     decoder_.stop();
+    media_.stop_decode_generation();
 }
 
 } // namespace lapis::media

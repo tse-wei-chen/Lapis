@@ -31,6 +31,11 @@ int main() {
     CHECK(plan->nodes()[1].kind == GraphNodeKind::Demuxer);
     CHECK(plan->nodes()[2].kind == GraphNodeKind::VideoDecoder);
 
+    // Media open prepares decoders only. Routing starts explicitly when a
+    // decode consumer owns the generation.
+    CHECK(!session.decode_next_video_frame().has_value());
+    CHECK(session.start_decode_generation(MediaDecodeSelection{true, false}));
+
     const auto frame = session.decode_next_video_frame();
     CHECK(frame.has_value());
     CHECK(frame->surface != nullptr);
@@ -38,5 +43,6 @@ int main() {
     CHECK(frame->surface->width() == 2);
     CHECK(frame->surface->height() == 2);
 
+    session.stop_decode_generation();
     return 0;
 }
