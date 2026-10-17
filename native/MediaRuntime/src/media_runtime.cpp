@@ -1,7 +1,15 @@
 #include "lapis/media_runtime.h"
 
+#include "execution/playback_execution.hpp"
+#include "process/ffmpeg/ffmpeg_audio_frame_converter.hpp"
+#include "process/ffmpeg/ffmpeg_video_frame_converter.hpp"
 #include "session/playback_media_session.hpp"
 #include "source/media_source.hpp"
+#include "video/video_presenter.hpp"
+
+#if defined(_WIN32)
+#include "audio/wasapi/wasapi_shared_audio_output_provider.hpp"
+#endif
 
 #include <algorithm>
 #include <memory>
@@ -13,14 +21,42 @@
 
 struct lapis_runtime final {};
 
+namespace {
+
+class HeadlessVideoPresenter final : public lapis::media::IVideoPresenter {
+public:
+    [[nodiscard]] lapis::media::VideoPresenterBeginStatus begin(
+        lapis::media::PlaybackEpoch) override {
+        return lapis::media::VideoPresenterBeginStatus::Ready;
+    }
+
+    [[nodiscard]] lapis::media::VideoPresentStatus present(
+        const lapis::media::VideoFrame&,
+        const lapis::media::VideoPresentContext&) override {
+        return lapis::media::VideoPresentStatus::Presented;
+    }
+
+    void end() noexcept override {}
+};
+
+struct RuntimePlaybackPipeline final {
+    std::shared_ptr<lapis::media::PlaybackMediaSession> media;
+    std::unique_ptr<lapis::media::PlaybackExecution> execution;
+};
+
+} // namespace
+
 struct lapis_session final {
     std::mutex mutex;
-    std::mutex media_operation_mutex;
+    // Result-returning control commands are serialized at the C ABI boundary.
+    // PlaybackExecution remains independently synchronized, while snapshots only
+    // take the short-lived state mutex below.
+    std::mutex command_mutex;
     lapis_playback_session_id session_id{};
     uint64_t epoch{0};
     int64_t position_ns{0};
     lapis_transport_state transport{LAPIS_TRANSPORT_CLOSED};
-    std::shared_ptr<lapis::media::PlaybackMediaSession> media;
+    std::shared_ptr<RuntimePlaybackPipeline> pipeline;
 };
 
 namespace {
@@ -104,6 +140,87 @@ lapis_result map_open_error(lapis::media::MediaOpenError error) noexcept {
     return LAPIS_E_INTERNAL;
 }
 
+lapis_result map_execution_error(
+    lapis::media::PlaybackExecutionError error) noexcept {
+    using lapis::media::PlaybackExecutionError;
+    switch (error) {
+        case PlaybackExecutionError::None:
+            return LAPIS_OK;
+        case PlaybackExecutionError::InvalidArgument:
+            return LAPIS_E_INVALID_ARGUMENT;
+        case PlaybackExecutionError::InvalidState:
+            return LAPIS_E_INVALID_STATE;
+        case PlaybackExecutionError::StaleEpoch:
+            return LAPIS_E_STALE_EPOCH;
+        case PlaybackExecutionError::MediaSeekFailed:
+        case PlaybackExecutionError::ClockFailure:
+        case PlaybackExecutionError::WorkerStartFailed:
+        case PlaybackExecutionError::WorkerFailed:
+            return LAPIS_E_INTERNAL;
+    }
+
+    return LAPIS_E_INTERNAL;
+}
+
+std::unique_ptr<lapis::media::PlaybackExecution> create_execution(
+    lapis::media::PlaybackMediaSession& media) {
+    auto video_processor =
+        std::make_unique<lapis::media::ffmpeg::FfmpegVideoFrameConverter>();
+    auto presenter = std::make_unique<HeadlessVideoPresenter>();
+
+#if defined(_WIN32)
+    auto audio_provider = std::make_unique<
+        lapis::media::wasapi::WasapiSharedAudioOutputProvider>();
+    lapis::media::AudioFrameProcessorFactory audio_processor_factory =
+        [](const lapis::media::AudioFormat& target_format)
+            -> std::unique_ptr<lapis::media::IAudioFrameProcessor> {
+            return std::make_unique<
+                lapis::media::ffmpeg::FfmpegAudioFrameConverter>(
+                target_format);
+        };
+
+    return std::make_unique<lapis::media::PlaybackExecution>(
+        media,
+        std::move(video_processor),
+        std::move(presenter),
+        std::move(audio_provider),
+        std::move(audio_processor_factory));
+#else
+    return std::make_unique<lapis::media::PlaybackExecution>(
+        media,
+        std::move(video_processor),
+        std::move(presenter));
+#endif
+}
+
+std::shared_ptr<RuntimePlaybackPipeline> create_pipeline(
+    std::shared_ptr<lapis::media::PlaybackMediaSession> media) {
+    auto pipeline = std::make_shared<RuntimePlaybackPipeline>();
+    pipeline->media = std::move(media);
+    pipeline->execution = create_execution(*pipeline->media);
+    return pipeline;
+}
+
+lapis_transport_state transport_from_execution_state(
+    lapis::media::PlaybackExecutionState state,
+    lapis_transport_state fallback) noexcept {
+    using lapis::media::PlaybackExecutionState;
+    switch (state) {
+        case PlaybackExecutionState::Running:
+            return LAPIS_TRANSPORT_PLAYING;
+        case PlaybackExecutionState::Paused:
+            return LAPIS_TRANSPORT_PAUSED;
+        case PlaybackExecutionState::Ended:
+            return LAPIS_TRANSPORT_ENDED;
+        case PlaybackExecutionState::Faulted:
+            return LAPIS_TRANSPORT_FAULTED;
+        case PlaybackExecutionState::Stopped:
+            return fallback;
+    }
+
+    return fallback;
+}
+
 } // namespace
 
 uint32_t lapis_runtime_get_abi_version(void) {
@@ -165,7 +282,9 @@ lapis_result lapis_session_open(
             return LAPIS_E_INVALID_ARGUMENT;
         }
 
-        std::shared_ptr<lapis::media::PlaybackMediaSession> retired_media;
+        std::scoped_lock command_lock(session->command_mutex);
+
+        std::shared_ptr<RuntimePlaybackPipeline> retired_pipeline;
         {
             std::scoped_lock lock(session->mutex);
             if (!advances_epoch(*session, epoch)) {
@@ -175,12 +294,15 @@ lapis_result lapis_session_open(
             session->epoch = epoch.value;
             session->position_ns = 0;
             session->transport = LAPIS_TRANSPORT_OPENING;
-            retired_media = std::move(session->media);
+            retired_pipeline = std::move(session->pipeline);
             *out_result = {};
         }
-        retired_media.reset();
+        // Stop/join an old execution outside the state mutex. Snapshot readers
+        // can still observe OPENING instead of being blocked behind teardown.
+        retired_pipeline.reset();
 
         std::shared_ptr<lapis::media::PlaybackMediaSession> media;
+        std::shared_ptr<RuntimePlaybackPipeline> pipeline;
         lapis::media::MediaOpenInfo media_open_result{};
         try {
             media = std::make_shared<lapis::media::PlaybackMediaSession>();
@@ -189,6 +311,9 @@ lapis_result lapis_session_open(
                 std::string(locator->value_utf8)
             };
             media_open_result = media->open(core_locator);
+            if (media_open_result.ok()) {
+                pipeline = create_pipeline(media);
+            }
         } catch (...) {
             mark_faulted_if_current(session, epoch);
             throw;
@@ -203,6 +328,10 @@ lapis_result lapis_session_open(
             session->transport = LAPIS_TRANSPORT_FAULTED;
             return map_open_error(media_open_result.error);
         }
+        if (pipeline == nullptr || pipeline->execution == nullptr) {
+            session->transport = LAPIS_TRANSPORT_FAULTED;
+            return LAPIS_E_INTERNAL;
+        }
 
         out_result->capabilities = 0;
         if (media_open_result.duration.has_value()) {
@@ -210,7 +339,7 @@ lapis_result lapis_session_open(
             out_result->has_duration = 1;
         }
 
-        session->media = std::move(media);
+        session->pipeline = std::move(pipeline);
         session->transport = LAPIS_TRANSPORT_READY;
         return LAPIS_OK;
     });
@@ -222,16 +351,47 @@ lapis_result lapis_session_play(lapis_session* session, lapis_playback_epoch epo
             return LAPIS_E_INVALID_ARGUMENT;
         }
 
+        std::scoped_lock command_lock(session->command_mutex);
+
+        std::shared_ptr<RuntimePlaybackPipeline> pipeline;
+        lapis_transport_state prior_transport{};
+        int64_t position_ns{};
+        {
+            std::scoped_lock lock(session->mutex);
+            if (!matches_epoch(*session, epoch)) {
+                return LAPIS_E_STALE_EPOCH;
+            }
+
+            if (session->transport != LAPIS_TRANSPORT_READY &&
+                session->transport != LAPIS_TRANSPORT_PAUSED) {
+                return LAPIS_E_INVALID_STATE;
+            }
+            if (session->pipeline == nullptr ||
+                session->pipeline->execution == nullptr) {
+                session->transport = LAPIS_TRANSPORT_FAULTED;
+                return LAPIS_E_INTERNAL;
+            }
+
+            prior_transport = session->transport;
+            position_ns = session->position_ns;
+            pipeline = session->pipeline;
+        }
+
+        const auto result = prior_transport == LAPIS_TRANSPORT_READY
+            ? pipeline->execution->start(
+                lapis::media::PlaybackEpoch{epoch.value},
+                lapis::media::MediaTime{position_ns})
+            : pipeline->execution->resume();
+        if (!result.ok()) {
+            const auto mapped = map_execution_error(result.error);
+            mark_faulted_if_current(session, epoch);
+            return mapped;
+        }
+
         std::scoped_lock lock(session->mutex);
         if (!matches_epoch(*session, epoch)) {
             return LAPIS_E_STALE_EPOCH;
         }
-
-        if (session->transport != LAPIS_TRANSPORT_READY &&
-            session->transport != LAPIS_TRANSPORT_PAUSED) {
-            return LAPIS_E_INVALID_STATE;
-        }
-
         session->transport = LAPIS_TRANSPORT_PLAYING;
         return LAPIS_OK;
     });
@@ -243,15 +403,39 @@ lapis_result lapis_session_pause(lapis_session* session, lapis_playback_epoch ep
             return LAPIS_E_INVALID_ARGUMENT;
         }
 
+        std::scoped_lock command_lock(session->command_mutex);
+
+        std::shared_ptr<RuntimePlaybackPipeline> pipeline;
+        {
+            std::scoped_lock lock(session->mutex);
+            if (!matches_epoch(*session, epoch)) {
+                return LAPIS_E_STALE_EPOCH;
+            }
+
+            if (session->transport != LAPIS_TRANSPORT_PLAYING) {
+                return LAPIS_E_INVALID_STATE;
+            }
+            if (session->pipeline == nullptr ||
+                session->pipeline->execution == nullptr) {
+                session->transport = LAPIS_TRANSPORT_FAULTED;
+                return LAPIS_E_INTERNAL;
+            }
+            pipeline = session->pipeline;
+        }
+
+        const auto result = pipeline->execution->pause();
+        if (!result.ok()) {
+            const auto mapped = map_execution_error(result.error);
+            mark_faulted_if_current(session, epoch);
+            return mapped;
+        }
+        const auto execution_snapshot = pipeline->execution->snapshot();
+
         std::scoped_lock lock(session->mutex);
         if (!matches_epoch(*session, epoch)) {
             return LAPIS_E_STALE_EPOCH;
         }
-
-        if (session->transport != LAPIS_TRANSPORT_PLAYING) {
-            return LAPIS_E_INVALID_STATE;
-        }
-
+        session->position_ns = execution_snapshot.clock.position.nanoseconds;
         session->transport = LAPIS_TRANSPORT_PAUSED;
         return LAPIS_OK;
     });
@@ -266,8 +450,10 @@ lapis_result lapis_session_seek(
             return LAPIS_E_INVALID_ARGUMENT;
         }
 
+        std::scoped_lock command_lock(session->command_mutex);
+
         lapis_transport_state return_state{};
-        std::shared_ptr<lapis::media::PlaybackMediaSession> media;
+        std::shared_ptr<RuntimePlaybackPipeline> pipeline;
         {
             std::scoped_lock lock(session->mutex);
             if (!advances_epoch(*session, epoch)) {
@@ -279,29 +465,23 @@ lapis_result lapis_session_seek(
                 session->transport != LAPIS_TRANSPORT_PAUSED) {
                 return LAPIS_E_INVALID_STATE;
             }
+            if (session->pipeline == nullptr ||
+                session->pipeline->execution == nullptr) {
+                session->transport = LAPIS_TRANSPORT_FAULTED;
+                return LAPIS_E_INTERNAL;
+            }
 
             return_state = session->transport;
             session->epoch = epoch.value;
             session->transport = LAPIS_TRANSPORT_SEEKING;
-            media = session->media;
+            pipeline = session->pipeline;
         }
 
-        bool seek_succeeded{};
+        lapis::media::PlaybackExecutionResult seek_result{};
         try {
-            // State transitions remain protected by the short-lived session mutex,
-            // while media mutations use a separate gate. Re-check the epoch after
-            // acquiring that gate so a stale seek can never run after a newer seek
-            // and leave the demuxer at the wrong physical position.
-            std::scoped_lock media_lock(session->media_operation_mutex);
-            {
-                std::scoped_lock state_lock(session->mutex);
-                if (!matches_epoch(*session, epoch)) {
-                    return LAPIS_E_STALE_EPOCH;
-                }
-            }
-
-            seek_succeeded = media != nullptr &&
-                media->seek(lapis::media::MediaTime{position.nanoseconds});
+            seek_result = pipeline->execution->seek(
+                lapis::media::PlaybackEpoch{epoch.value},
+                lapis::media::MediaTime{position.nanoseconds});
         } catch (...) {
             mark_faulted_if_current(session, epoch);
             throw;
@@ -312,9 +492,9 @@ lapis_result lapis_session_seek(
             return LAPIS_E_STALE_EPOCH;
         }
 
-        if (!seek_succeeded) {
+        if (!seek_result.ok()) {
             session->transport = LAPIS_TRANSPORT_FAULTED;
-            return LAPIS_E_INTERNAL;
+            return map_execution_error(seek_result.error);
         }
 
         session->position_ns = position.nanoseconds;
@@ -329,19 +509,38 @@ lapis_result lapis_session_close(lapis_session* session, lapis_playback_epoch ep
             return LAPIS_E_INVALID_ARGUMENT;
         }
 
-        std::shared_ptr<lapis::media::PlaybackMediaSession> retired_media;
+        std::scoped_lock command_lock(session->command_mutex);
+
+        std::shared_ptr<RuntimePlaybackPipeline> pipeline;
         {
             std::scoped_lock lock(session->mutex);
             if (!advances_epoch(*session, epoch)) {
                 return LAPIS_E_STALE_EPOCH;
             }
+            pipeline = session->pipeline;
+        }
 
+        if (pipeline != nullptr && pipeline->execution != nullptr) {
+            const auto result = pipeline->execution->close(
+                lapis::media::PlaybackEpoch{epoch.value});
+            if (!result.ok()) {
+                const auto mapped = map_execution_error(result.error);
+                std::scoped_lock lock(session->mutex);
+                session->epoch = epoch.value;
+                session->transport = LAPIS_TRANSPORT_FAULTED;
+                return mapped;
+            }
+        }
+
+        std::shared_ptr<RuntimePlaybackPipeline> retired_pipeline;
+        {
+            std::scoped_lock lock(session->mutex);
             session->epoch = epoch.value;
             session->position_ns = 0;
             session->transport = LAPIS_TRANSPORT_CLOSED;
-            retired_media = std::move(session->media);
+            retired_pipeline = std::move(session->pipeline);
         }
-        retired_media.reset();
+        retired_pipeline.reset();
         return LAPIS_OK;
     });
 }
@@ -355,10 +554,36 @@ lapis_result lapis_session_get_snapshot(
         }
 
         std::scoped_lock lock(session->mutex);
+
+        auto transport = session->transport;
+        auto position_ns = session->position_ns;
+        if (session->pipeline != nullptr &&
+            session->pipeline->execution != nullptr &&
+            (transport == LAPIS_TRANSPORT_PLAYING ||
+             transport == LAPIS_TRANSPORT_PAUSED ||
+             transport == LAPIS_TRANSPORT_ENDED ||
+             transport == LAPIS_TRANSPORT_FAULTED)) {
+            const auto execution_snapshot =
+                session->pipeline->execution->snapshot();
+            transport = transport_from_execution_state(
+                execution_snapshot.state,
+                transport);
+            position_ns = execution_snapshot.clock.position.nanoseconds;
+
+            // Natural completion/failure is asynchronous. Latch the effective
+            // state here so later command validation observes the same transport
+            // state that this snapshot publishes.
+            if (transport == LAPIS_TRANSPORT_ENDED ||
+                transport == LAPIS_TRANSPORT_FAULTED) {
+                session->transport = transport;
+            }
+            session->position_ns = position_ns;
+        }
+
         out_snapshot->session_id = session->session_id;
         out_snapshot->epoch.value = session->epoch;
-        out_snapshot->position.nanoseconds = session->position_ns;
-        out_snapshot->transport = session->transport;
+        out_snapshot->position.nanoseconds = position_ns;
+        out_snapshot->transport = transport;
         return LAPIS_OK;
     });
 }

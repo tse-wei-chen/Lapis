@@ -128,6 +128,9 @@ private:
     [[nodiscard]] PlaybackExecutionResult fault_unlocked(
         PlaybackExecutionError error);
     [[nodiscard]] bool epoch_advances_unlocked(PlaybackEpoch epoch) const;
+    [[nodiscard]] bool start_epoch_valid_unlocked(
+        PlaybackEpoch epoch,
+        MediaTime position) const;
     [[nodiscard]] bool workers_failed_unlocked() const noexcept;
     [[nodiscard]] bool workers_drained_unlocked() const noexcept;
     [[nodiscard]] bool start_generation_unlocked(PlaybackEpoch epoch);
@@ -153,6 +156,7 @@ private:
     std::shared_ptr<AudioFrameStream> pending_audio_render_stream_;
     bool video_generation_active_{};
     bool audio_generation_active_{};
+    bool stopped_timeline_prepared_{};
     mutable std::mutex control_mutex_;
     PlaybackExecutionState logical_state_{PlaybackExecutionState::Stopped};
 };

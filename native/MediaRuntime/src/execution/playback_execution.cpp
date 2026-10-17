@@ -95,7 +95,7 @@ PlaybackExecutionResult PlaybackExecution::start(
     if (logical_state_ != PlaybackExecutionState::Stopped) {
         return {PlaybackExecutionError::InvalidState};
     }
-    if (!epoch_advances_unlocked(epoch)) {
+    if (!start_epoch_valid_unlocked(epoch, position)) {
         return {PlaybackExecutionError::StaleEpoch};
     }
 
@@ -106,6 +106,7 @@ PlaybackExecutionResult PlaybackExecution::start(
 
     if (!start_generation_unlocked(epoch)) {
         clock_.reset(epoch, SteadyClockSource::now());
+        stopped_timeline_prepared_ = false;
         logical_state_ = PlaybackExecutionState::Faulted;
         return {PlaybackExecutionError::WorkerStartFailed};
     }
@@ -113,6 +114,7 @@ PlaybackExecutionResult PlaybackExecution::start(
     if (!clock_.start(position, SteadyClockSource::now())) {
         stop_generation_unlocked();
         clock_.reset(epoch, SteadyClockSource::now());
+        stopped_timeline_prepared_ = false;
         logical_state_ = PlaybackExecutionState::Faulted;
         return {PlaybackExecutionError::ClockFailure};
     }
@@ -121,10 +123,12 @@ PlaybackExecutionResult PlaybackExecution::start(
         (void)clock_.stop(SteadyClockSource::now());
         stop_generation_unlocked();
         clock_.reset(epoch, SteadyClockSource::now());
+        stopped_timeline_prepared_ = false;
         logical_state_ = PlaybackExecutionState::Faulted;
         return {PlaybackExecutionError::WorkerStartFailed};
     }
 
+    stopped_timeline_prepared_ = false;
     logical_state_ = PlaybackExecutionState::Running;
     return {};
 }
@@ -213,19 +217,27 @@ PlaybackExecutionResult PlaybackExecution::seek(
 
     if (!media_.seek(position)) {
         clock_.reset(epoch, SteadyClockSource::now());
+        stopped_timeline_prepared_ = false;
         logical_state_ = PlaybackExecutionState::Faulted;
         return {PlaybackExecutionError::MediaSeekFailed};
     }
 
     if (!clock_.rebase(epoch, position, SteadyClockSource::now())) {
         clock_.reset(epoch, SteadyClockSource::now());
+        stopped_timeline_prepared_ = false;
         logical_state_ = PlaybackExecutionState::Faulted;
         return {PlaybackExecutionError::ClockFailure};
     }
 
+    // A stopped seek prepares the new timeline without starting workers. The
+    // next Start is therefore allowed to use this exact epoch + position instead
+    // of inventing a second discontinuity solely to begin presentation.
+    stopped_timeline_prepared_ = prior_state == PlaybackExecutionState::Stopped;
+
     if (prior_state != PlaybackExecutionState::Stopped &&
         !start_generation_unlocked(epoch)) {
         clock_.reset(epoch, SteadyClockSource::now());
+        stopped_timeline_prepared_ = false;
         logical_state_ = PlaybackExecutionState::Faulted;
         return {PlaybackExecutionError::WorkerStartFailed};
     }
@@ -234,6 +246,7 @@ PlaybackExecutionResult PlaybackExecution::seek(
         if (!clock_.resume(SteadyClockSource::now())) {
             stop_generation_unlocked();
             clock_.reset(epoch, SteadyClockSource::now());
+            stopped_timeline_prepared_ = false;
             logical_state_ = PlaybackExecutionState::Faulted;
             return {PlaybackExecutionError::ClockFailure};
         }
@@ -260,6 +273,7 @@ PlaybackExecutionResult PlaybackExecution::close(PlaybackEpoch epoch) {
 
     stop_generation_unlocked();
     clock_.reset(epoch, SteadyClockSource::now());
+    stopped_timeline_prepared_ = false;
     logical_state_ = PlaybackExecutionState::Stopped;
     return {};
 }
@@ -312,6 +326,7 @@ PlaybackExecutionResult PlaybackExecution::fault_unlocked(
         (void)clock_.stop(now);
     }
     stop_generation_unlocked();
+    stopped_timeline_prepared_ = false;
     logical_state_ = PlaybackExecutionState::Faulted;
     return {error};
 }
@@ -319,6 +334,19 @@ PlaybackExecutionResult PlaybackExecution::fault_unlocked(
 bool PlaybackExecution::epoch_advances_unlocked(PlaybackEpoch epoch) const {
     return epoch.value() >
         clock_.snapshot(SteadyClockSource::now()).epoch.value();
+}
+
+bool PlaybackExecution::start_epoch_valid_unlocked(
+    PlaybackEpoch epoch,
+    MediaTime position) const {
+    const auto snapshot = clock_.snapshot(SteadyClockSource::now());
+    if (epoch.value() > snapshot.epoch.value()) {
+        return true;
+    }
+
+    return stopped_timeline_prepared_ &&
+        epoch.value() == snapshot.epoch.value() &&
+        position == snapshot.position;
 }
 
 bool PlaybackExecution::workers_failed_unlocked() const noexcept {

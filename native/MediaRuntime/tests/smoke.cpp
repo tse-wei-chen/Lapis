@@ -56,17 +56,36 @@ int main() {
     lapis_open_result open_result{};
     CHECK(lapis_session_open(session, &locator, {1}, &open_result) == LAPIS_OK);
 
-    CHECK(lapis_session_play(session, {1}) == LAPIS_OK);
-    CHECK(lapis_session_pause(session, {1}) == LAPIS_OK);
-    CHECK(lapis_session_play(session, {1}) == LAPIS_OK);
-    CHECK(lapis_session_close(session, {2}) == LAPIS_OK);
+    CHECK(lapis_session_get_snapshot(session, &snapshot) == LAPIS_OK);
+    CHECK(snapshot.transport == LAPIS_TRANSPORT_READY);
+    CHECK(snapshot.epoch.value == 1);
+
+    // Seeking while READY prepares a stopped PlaybackExecution timeline. Play
+    // must use that same epoch; beginning presentation is not a discontinuity.
+    CHECK(lapis_session_seek(session, {0}, {2}) == LAPIS_OK);
+    CHECK(lapis_session_get_snapshot(session, &snapshot) == LAPIS_OK);
+    CHECK(snapshot.transport == LAPIS_TRANSPORT_READY);
+    CHECK(snapshot.epoch.value == 2);
+    CHECK(snapshot.position.nanoseconds == 0);
+
+    CHECK(lapis_session_play(session, {2}) == LAPIS_OK);
+    CHECK(lapis_session_pause(session, {2}) == LAPIS_OK);
+
+    CHECK(lapis_session_get_snapshot(session, &snapshot) == LAPIS_OK);
+    CHECK(snapshot.transport == LAPIS_TRANSPORT_PAUSED);
+    CHECK(snapshot.epoch.value == 2);
+    CHECK(snapshot.position.nanoseconds >= 0);
+
+    CHECK(lapis_session_play(session, {2}) == LAPIS_OK);
+    CHECK(lapis_session_close(session, {3}) == LAPIS_OK);
 
     // A command captured from the previous timeline is rejected before state checks.
-    CHECK(lapis_session_pause(session, {1}) == LAPIS_E_STALE_EPOCH);
+    CHECK(lapis_session_pause(session, {2}) == LAPIS_E_STALE_EPOCH);
 
     CHECK(lapis_session_get_snapshot(session, &snapshot) == LAPIS_OK);
     CHECK(snapshot.transport == LAPIS_TRANSPORT_CLOSED);
-    CHECK(snapshot.epoch.value == 2);
+    CHECK(snapshot.epoch.value == 3);
+    CHECK(snapshot.position.nanoseconds == 0);
 
     lapis_session_destroy(session);
     lapis_runtime_destroy(runtime);
