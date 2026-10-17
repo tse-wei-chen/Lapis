@@ -122,6 +122,15 @@ public:
         MediaTime position);
     [[nodiscard]] PlaybackExecutionResult close(PlaybackEpoch epoch);
 
+    // Output-surface rebinding is presentation control, not a playback
+    // discontinuity. Serialize it with transport lifecycle so a public adapter
+    // never races generation start/stop while the render worker acknowledges it.
+    [[nodiscard]] VideoOutputSurfaceControlStatus set_video_output_surface(
+        VideoOutputSurfaceDescriptor surface) {
+        std::scoped_lock lock(control_mutex_);
+        return renderer_.set_output_surface(surface);
+    }
+
     [[nodiscard]] PlaybackExecutionSnapshot snapshot() const;
 
 private:

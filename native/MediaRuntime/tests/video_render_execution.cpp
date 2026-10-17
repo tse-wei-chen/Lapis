@@ -6,10 +6,13 @@
 #include "session/playback_media_session.hpp"
 #include "video/video_presenter.hpp"
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -30,6 +33,9 @@ struct PresenterProbe final {
     lapis::media::VideoPresentStatus present_status{
         lapis::media::VideoPresentStatus::Presented
     };
+    lapis::media::VideoOutputSurfaceApplyStatus surface_status{
+        lapis::media::VideoOutputSurfaceApplyStatus::Ready
+    };
     std::uint64_t begin_count{};
     std::uint64_t present_count{};
     std::uint64_t end_count{};
@@ -40,6 +46,14 @@ struct PresenterProbe final {
     std::vector<lapis::media::VideoPresentContext> contexts;
     std::vector<std::uint32_t> widths;
     std::vector<std::uint32_t> heights;
+    std::vector<lapis::media::VideoOutputSurfaceDescriptor> surfaces;
+    std::vector<std::thread::id> surface_threads;
+
+    std::mutex present_gate_mutex;
+    std::condition_variable present_gate_changed;
+    bool block_first_present{};
+    bool first_present_entered{};
+    bool release_first_present{};
 
     void reset_records() {
         begin_count = 0;
@@ -52,6 +66,11 @@ struct PresenterProbe final {
         contexts.clear();
         widths.clear();
         heights.clear();
+        surfaces.clear();
+        surface_threads.clear();
+        block_first_present = false;
+        first_present_entered = false;
+        release_first_present = false;
     }
 };
 
@@ -59,6 +78,13 @@ class RecordingPresenter final : public lapis::media::IVideoPresenter {
 public:
     explicit RecordingPresenter(std::shared_ptr<PresenterProbe> probe)
         : probe_(std::move(probe)) {}
+
+    lapis::media::VideoOutputSurfaceApplyStatus set_output_surface(
+        const lapis::media::VideoOutputSurfaceDescriptor& surface) override {
+        probe_->surfaces.push_back(surface);
+        probe_->surface_threads.push_back(std::this_thread::get_id());
+        return probe_->surface_status;
+    }
 
     lapis::media::VideoPresenterBeginStatus begin(
         lapis::media::PlaybackEpoch epoch) override {
@@ -76,6 +102,16 @@ public:
         probe_->contexts.push_back(context);
         probe_->widths.push_back(frame.surface != nullptr ? frame.surface->width() : 0);
         probe_->heights.push_back(frame.surface != nullptr ? frame.surface->height() : 0);
+
+        if (probe_->block_first_present && probe_->present_count == 1) {
+            std::unique_lock lock(probe_->present_gate_mutex);
+            probe_->first_present_entered = true;
+            probe_->present_gate_changed.notify_all();
+            probe_->present_gate_changed.wait(lock, [this] {
+                return probe_->release_first_present;
+            });
+        }
+
         return probe_->present_status;
     }
 
@@ -110,6 +146,23 @@ bool wait_for_scheduler_completion(lapis::media::VideoSchedulerWorker& worker) {
         std::this_thread::sleep_for(1ms);
     }
     return false;
+}
+
+bool wait_for_first_present(const std::shared_ptr<PresenterProbe>& probe) {
+    using namespace std::chrono_literals;
+    std::unique_lock lock(probe->present_gate_mutex);
+    return probe->present_gate_changed.wait_for(
+        lock,
+        3s,
+        [&probe] { return probe->first_present_entered; });
+}
+
+void release_first_present(const std::shared_ptr<PresenterProbe>& probe) {
+    {
+        std::scoped_lock lock(probe->present_gate_mutex);
+        probe->release_first_present = true;
+    }
+    probe->present_gate_changed.notify_all();
 }
 
 } // namespace
@@ -175,6 +228,7 @@ int main() {
     CHECK(probe->contexts[1].epoch.value() == 7);
     CHECK(probe->widths[0] == 2 && probe->heights[0] == 2);
     CHECK(probe->widths[1] == 2 && probe->heights[1] == 2);
+    CHECK(probe->surfaces.empty());
 
     CHECK(media.seek(MediaTime{}));
     const auto stale_source_now = SteadyClockSource::now();
@@ -230,6 +284,76 @@ int main() {
     CHECK(probe->end_count == 1);
     CHECK(probe->begin_thread == probe->present_threads[0]);
     CHECK(probe->end_thread == probe->begin_thread);
+
+    // A surface configured while no render generation exists is deferred. The
+    // next generation applies it on the render thread before presentation. A
+    // live replacement is synchronous: the caller does not receive Applied until
+    // the render thread has left the current present() call and switched surfaces.
+    CHECK(media.seek(MediaTime{}));
+    const auto surface_now = SteadyClockSource::now();
+    CHECK(clock.rebase(PlaybackEpoch{11}, MediaTime{}, surface_now));
+    probe->reset_records();
+    probe->present_status = VideoPresentStatus::Presented;
+    probe->surface_status = VideoOutputSurfaceApplyStatus::Ready;
+    probe->block_first_present = true;
+
+    const VideoOutputSurfaceDescriptor first_surface{
+        VideoOutputSurfaceKind::Win32Window,
+        static_cast<std::uintptr_t>(0x1111)
+    };
+    const VideoOutputSurfaceDescriptor second_surface{
+        VideoOutputSurfaceKind::Win32Window,
+        static_cast<std::uintptr_t>(0x2222)
+    };
+    CHECK(
+        renderer.set_output_surface(first_surface) ==
+        VideoOutputSurfaceControlStatus::Deferred);
+
+    CHECK(media.start_decode_generation(MediaDecodeSelection{true, false}));
+    auto surface_decoded = decoder.start(PlaybackEpoch{11});
+    auto surface_presentation = scheduler.start(surface_decoded);
+    renderer.start(surface_presentation);
+    CHECK(wait_for_first_present(probe));
+
+    std::atomic<VideoOutputSurfaceControlStatus> replacement_status{
+        VideoOutputSurfaceControlStatus::Failed
+    };
+    std::jthread replacement([&] {
+        replacement_status.store(
+            renderer.set_output_surface(second_surface),
+            std::memory_order_release);
+    });
+
+    release_first_present(probe);
+    replacement.join();
+    CHECK(
+        replacement_status.load(std::memory_order_acquire) ==
+        VideoOutputSurfaceControlStatus::Applied);
+
+    CHECK(wait_for_render_completion(renderer));
+    renderer.stop();
+    scheduler.stop();
+    decoder.stop();
+    media.stop_decode_generation();
+
+    CHECK(renderer.state() == VideoRenderWorkerState::Drained);
+    CHECK(
+        renderer.last_output_surface_apply_status() ==
+        VideoOutputSurfaceApplyStatus::Ready);
+    CHECK(probe->surfaces.size() == 3);
+    CHECK(probe->surfaces[0] == first_surface);
+    CHECK(probe->surfaces[1] == second_surface);
+    CHECK(probe->surfaces[2] == VideoOutputSurfaceDescriptor{});
+    CHECK(probe->surface_threads.size() == 3);
+    CHECK(probe->surface_threads[0] == probe->begin_thread);
+    CHECK(probe->surface_threads[1] == probe->begin_thread);
+    CHECK(probe->surface_threads[2] == probe->begin_thread);
+    CHECK(probe->surface_threads[0] != main_thread);
+
+    CHECK(
+        renderer.set_output_surface(
+            VideoOutputSurfaceDescriptor{VideoOutputSurfaceKind::None, 1}) ==
+        VideoOutputSurfaceControlStatus::Invalid);
 
     return 0;
 }

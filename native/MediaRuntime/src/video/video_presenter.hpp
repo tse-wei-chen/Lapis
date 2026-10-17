@@ -3,6 +3,7 @@
 #include "core/media_time.hpp"
 #include "core/playback_epoch.hpp"
 #include "video/video_frame.hpp"
+#include "video/video_output_surface.hpp"
 
 #include <cstdint>
 
@@ -32,6 +33,17 @@ struct VideoPresentContext final {
 class IVideoPresenter {
 public:
     virtual ~IVideoPresenter() = default;
+
+    // Output-surface changes are invoked only from the Render Worker thread. A
+    // Ready result is an acknowledgement boundary: after it returns, the
+    // presenter must no longer access resources owned by the previously bound
+    // output surface. The default keeps headless presenters source-compatible.
+    [[nodiscard]] virtual VideoOutputSurfaceApplyStatus set_output_surface(
+        const VideoOutputSurfaceDescriptor& surface) {
+        return surface.kind == VideoOutputSurfaceKind::None
+            ? VideoOutputSurfaceApplyStatus::Ready
+            : VideoOutputSurfaceApplyStatus::Unsupported;
+    }
 
     // begin(), present(), and end() are invoked only from the Render Worker
     // thread. Implementations may therefore establish thread-affine graphics
