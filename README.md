@@ -46,7 +46,7 @@ dotnet build Lapis.slnx -c Release
 dotnet run --project src/Lapis.Desktop.WinForms -c Release --no-build
 ```
 
-The Desktop project automatically copies `build/native/Release/Lapis.MediaRuntime.dll` into its output when that file exists. It currently opens local video files, renders SDR BGRA8 through D3D11/DXGI to a real HWND, and supports Play/Pause, Stop and seek-to-seconds. Blu-ray navigation, HDR, subtitles, AI translation and packaging are separate milestones. See [desktop-host development notes](docs/development/desktop-host.md) for Windows prerequisites and limitations.
+The Desktop project automatically copies `build/native/Release/Lapis.MediaRuntime.dll` into its output when that file exists. It currently opens local video files, renders SDR BGRA8 through D3D11/DXGI to a real HWND, and supports Play/Pause, Stop, seek-to-seconds, and an actual native playback progress bar. The playback actor reconciles real native Ended/Faulted/position via an optional observation port. Blu-ray navigation, HDR, subtitles, AI translation and packaging are separate milestones. See [desktop-host development notes](docs/development/desktop-host.md) for Windows prerequisites and limitations.
 
 ## Repository layout
 

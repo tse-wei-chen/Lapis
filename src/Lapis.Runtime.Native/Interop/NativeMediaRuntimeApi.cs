@@ -25,6 +25,7 @@ internal interface INativeMediaRuntimeApi
         NativeMediaTime position,
         NativePlaybackEpoch epoch);
     NativeResult SessionClose(nint session, NativePlaybackEpoch epoch);
+    NativeResult SessionGetSnapshot(nint session, out NativePlaybackSnapshot snapshot);
     NativeResult SessionSetVideoOutputSurface(
         nint session,
         NativeVideoOutputSurface surface,
@@ -92,6 +93,10 @@ internal sealed class PInvokeNativeMediaRuntimeApi : INativeMediaRuntimeApi
 
     public NativeResult SessionClose(nint session, NativePlaybackEpoch epoch) =>
         NativeMethods.SessionClose(session, epoch);
+
+    public NativeResult SessionGetSnapshot(
+        nint session, out NativePlaybackSnapshot snapshot) =>
+        NativeMethods.SessionGetSnapshot(session, out snapshot);
 
     public NativeResult SessionSetVideoOutputSurface(
         nint session,

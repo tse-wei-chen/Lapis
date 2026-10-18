@@ -13,7 +13,8 @@ public sealed record PlaybackSnapshot(
     OutputState Output,
     AiState Ai,
     MediaCapability Capabilities,
-    PlayerError? LastError)
+    PlayerError? LastError,
+    MediaTime? Duration = null)
 {
     public static PlaybackSnapshot CreateInitial(PlaybackSessionId sessionId) =>
         new(

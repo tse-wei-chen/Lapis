@@ -27,7 +27,7 @@ public sealed class NativeMediaRuntimeException : Exception
 /// In-process adapter from the Application playback-runtime port to the stable
 /// native C ABI. One adapter instance binds to exactly one PlaybackSessionId.
 /// </summary>
-public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfaceBinding
+public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfaceBinding, IPlaybackRuntimeObserver
 {
     private readonly object _gate = new();
     private readonly INativeMediaRuntimeApi _api;
@@ -227,6 +227,55 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
         RuntimeCommandContext context,
         CancellationToken cancellationToken) =>
         SetVideoOutputSurfaceAsync(VideoOutputSurface.None, context, cancellationToken);
+
+    /// <summary>
+    /// Observes native execution state through the existing C ABI v2 snapshot.
+    /// Reads are serialized with native lifetime control; the caller is
+    /// responsible for dispatching this synchronous P/Invoke away from UI.
+    /// This method never lazily creates a native session just to poll it.
+    /// </summary>
+    public ValueTask<RuntimePlaybackObservation> ReadSnapshotAsync(
+        PlaybackSessionId sessionId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ThrowIfDisposed();
+            if (_session is null || _boundSessionId != sessionId)
+            {
+                throw new InvalidOperationException(
+                    "Cannot observe a native playback session before it is bound.");
+            }
+
+            var result = _api.SessionGetSnapshot(_session.Handle, out var snapshot);
+            ThrowForResult(result, "session_get_snapshot");
+            if (snapshot.Position.Nanoseconds < 0)
+            {
+                throw new NativeMediaRuntimeException(
+                    "session_get_snapshot.position", NativeResult.Internal);
+            }
+            var transport = snapshot.Transport switch
+            {
+                NativeTransportState.Closed => TransportState.Closed,
+                NativeTransportState.Opening => TransportState.Opening,
+                NativeTransportState.Ready => TransportState.Ready,
+                NativeTransportState.Playing => TransportState.Playing,
+                NativeTransportState.Paused => TransportState.Paused,
+                NativeTransportState.Seeking => TransportState.Seeking,
+                NativeTransportState.Ended => TransportState.Ended,
+                NativeTransportState.Faulted => TransportState.Faulted,
+                _ => throw new NativeMediaRuntimeException(
+                    "session_get_snapshot.transport", NativeResult.Internal)
+            };
+            return ValueTask.FromResult(new RuntimePlaybackObservation(
+                new PlaybackSessionId(new Guid(snapshot.SessionId.ToByteArray())),
+                new PlaybackEpoch(snapshot.Epoch.Value),
+                new MediaTime(snapshot.Position.Nanoseconds),
+                transport));
+        }
+    }
 
     public ValueTask DisposeAsync()
     {
