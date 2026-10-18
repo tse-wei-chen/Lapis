@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LAPIS_MEDIA_RUNTIME_ABI_VERSION 1u
+#define LAPIS_MEDIA_RUNTIME_ABI_VERSION 2u
 
 typedef struct lapis_runtime lapis_runtime;
 typedef struct lapis_session lapis_session;
@@ -54,6 +54,7 @@ typedef enum lapis_result {
     LAPIS_E_STALE_EPOCH = 4,
     LAPIS_E_ABI_MISMATCH = 5,
     LAPIS_E_UNSUPPORTED = 6,
+    LAPIS_E_OUTPUT_UNAVAILABLE = 7,
     LAPIS_E_INTERNAL = 100
 } lapis_result;
 
@@ -80,6 +81,32 @@ typedef struct lapis_playback_snapshot {
     lapis_media_time position;
     lapis_transport_state transport;
 } lapis_playback_snapshot;
+
+/*
+ * Output-surface binding is independent of playback discontinuities. None must
+ * have a zero native_handle; Win32Window must have a non-zero HWND represented
+ * as uintptr_t. The caller owns the HWND and must keep it alive until a later
+ * successful detach/replacement, session close, or session destruction.
+ * A successful call returns APPLIED if acknowledged by the render thread,
+ * otherwise DEFERRED when no render generation is active. Both states guarantee
+ * the previously attached window is no longer accessed after the call returns.
+ * The requested epoch must match the session's current playback epoch; binding
+ * does not itself increment that epoch. A failed binding is not committed.
+ */
+typedef enum lapis_video_output_surface_kind {
+    LAPIS_VIDEO_OUTPUT_SURFACE_NONE = 0,
+    LAPIS_VIDEO_OUTPUT_SURFACE_WIN32_WINDOW = 1
+} lapis_video_output_surface_kind;
+
+typedef struct lapis_video_output_surface {
+    lapis_video_output_surface_kind kind;
+    uintptr_t native_handle;
+} lapis_video_output_surface;
+
+typedef enum lapis_video_output_surface_binding {
+    LAPIS_OUTPUT_SURFACE_APPLIED = 0,
+    LAPIS_OUTPUT_SURFACE_DEFERRED = 1
+} lapis_video_output_surface_binding;
 
 /*
  * Lifetime contract:
@@ -117,6 +144,11 @@ LAPIS_API lapis_result lapis_session_seek(
 LAPIS_API lapis_result lapis_session_close(
     lapis_session* session,
     lapis_playback_epoch epoch);
+LAPIS_API lapis_result lapis_session_set_video_output_surface(
+    lapis_session* session,
+    lapis_video_output_surface surface,
+    lapis_playback_epoch epoch,
+    lapis_video_output_surface_binding* out_binding);
 LAPIS_API lapis_result lapis_session_get_snapshot(
     lapis_session* session,
     lapis_playback_snapshot* out_snapshot);

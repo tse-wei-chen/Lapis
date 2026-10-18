@@ -27,7 +27,7 @@ public sealed class NativeMediaRuntimeException : Exception
 /// In-process adapter from the Application playback-runtime port to the stable
 /// native C ABI. One adapter instance binds to exactly one PlaybackSessionId.
 /// </summary>
-public sealed class NativePlaybackRuntime : IPlaybackRuntime
+public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfaceBinding
 {
     private readonly object _gate = new();
     private readonly INativeMediaRuntimeApi _api;
@@ -188,6 +188,46 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime
         return ValueTask.CompletedTask;
     }
 
+    /// <summary>
+    /// Bind or detach a presentation target without creating a new playback
+    /// epoch. An Applied result acknowledges that the old target is released.
+    /// Deferred is safe while no render generation is active.
+    /// </summary>
+    public ValueTask<VideoOutputSurfaceBindingState> SetVideoOutputSurfaceAsync(
+        VideoOutputSurface surface,
+        RuntimeCommandContext context,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var nativeSurface = ToNativeVideoOutputSurface(surface);
+        lock (_gate)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ThrowIfDisposed();
+            var session = EnsureSession(context.SessionId);
+            var result = _api.SessionSetVideoOutputSurface(
+                session,
+                nativeSurface,
+                new NativePlaybackEpoch { Value = context.Epoch.Value },
+                out var binding);
+            ThrowForResult(result, "session_set_video_output_surface");
+
+            return ValueTask.FromResult(binding switch
+            {
+                NativeVideoOutputSurfaceBinding.Applied => VideoOutputSurfaceBindingState.Applied,
+                NativeVideoOutputSurfaceBinding.Deferred => VideoOutputSurfaceBindingState.Deferred,
+                _ => throw new NativeMediaRuntimeException(
+                    "session_set_video_output_surface.binding",
+                    NativeResult.Internal)
+            });
+        }
+    }
+
+    public ValueTask<VideoOutputSurfaceBindingState> ClearVideoOutputSurfaceAsync(
+        RuntimeCommandContext context,
+        CancellationToken cancellationToken) =>
+        SetVideoOutputSurfaceAsync(VideoOutputSurface.None, context, cancellationToken);
+
     public ValueTask DisposeAsync()
     {
         lock (_gate)
@@ -238,6 +278,26 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime
         return session;
     }
 
+    private static NativeVideoOutputSurface ToNativeVideoOutputSurface(VideoOutputSurface surface) =>
+        surface.Kind switch
+        {
+            VideoOutputSurfaceKind.None when surface.NativeHandle == 0 =>
+                new NativeVideoOutputSurface
+                {
+                    Kind = NativeVideoOutputSurfaceKind.None,
+                    NativeHandle = 0
+                },
+            VideoOutputSurfaceKind.Win32Window when surface.NativeHandle != 0 =>
+                new NativeVideoOutputSurface
+                {
+                    Kind = NativeVideoOutputSurfaceKind.Win32Window,
+                    NativeHandle = (nuint)surface.NativeHandle
+                },
+            _ => throw new ArgumentException(
+                "Invalid output-surface kind or native handle combination.",
+                nameof(surface))
+        };
+
     private static NativeMediaLocatorKind ToNativeLocatorKind(MediaLocatorKind kind) =>
         kind switch
         {
@@ -272,6 +332,9 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime
             case NativeResult.Unsupported:
                 throw new NotSupportedException(
                     $"Native media runtime does not support '{operation}'.");
+            case NativeResult.OutputUnavailable:
+                throw new InvalidOperationException(
+                    $"Native video output is unavailable during '{operation}'.");
             case NativeResult.Internal:
             default:
                 throw new NativeMediaRuntimeException(operation, result);

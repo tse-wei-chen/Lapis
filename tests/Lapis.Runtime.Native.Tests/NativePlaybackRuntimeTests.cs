@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Lapis.Application.Runtime;
 using Lapis.Contracts.Capabilities;
 using Lapis.Contracts.Media;
@@ -145,11 +146,122 @@ public sealed class NativePlaybackRuntimeTests
         Assert.DoesNotContain("session_play", api.Calls);
     }
 
+    [Fact]
+    public void VideoOutputSurfaceAbiUsesNativePointerAlignment()
+    {
+        Assert.Equal(2u, NativeAbi.Version);
+        Assert.Equal(typeof(int), Enum.GetUnderlyingType(typeof(NativeVideoOutputSurfaceKind)));
+        Assert.Equal(IntPtr.Size == 8 ? 8L : 4L,
+            Marshal.OffsetOf<NativeVideoOutputSurface>(
+                nameof(NativeVideoOutputSurface.NativeHandle)).ToInt64());
+        Assert.Equal(IntPtr.Size == 8 ? 16 : 8,
+            Marshal.SizeOf<NativeVideoOutputSurface>());
+    }
+
+    [Fact]
+    public async Task OutputBindingUsesOwnPortPreservesEpochAndSupportsDetach()
+    {
+        var api = new FakeNativeApi();
+        await using var runtime = new NativePlaybackRuntime(api);
+        IVideoOutputSurfaceBinding bindingPort = runtime;
+        var sessionId = new PlaybackSessionId(Guid.NewGuid());
+        var initial = new RuntimeCommandContext(sessionId, new PlaybackEpoch(0));
+        var hwnd = (nint)0x123456;
+        var state = await bindingPort.SetVideoOutputSurfaceAsync(
+            VideoOutputSurface.ForWin32Window(hwnd),
+            initial,
+            CancellationToken.None);
+
+        Assert.Equal(VideoOutputSurfaceBindingState.Deferred, state);
+        Assert.Equal(NativeVideoOutputSurfaceKind.Win32Window, api.LastSurface.Kind);
+        Assert.Equal((nuint)hwnd, api.LastSurface.NativeHandle);
+        Assert.Equal((ulong)0, api.LastEpoch.Value);
+        Assert.Equal(1, api.SessionCreateCount);
+        Assert.Contains("session_set_video_output_surface", api.Calls);
+
+        await runtime.OpenAsync(
+            new MediaLocator(MediaLocatorKind.File, "movie.mkv"),
+            new RuntimeCommandContext(sessionId, new PlaybackEpoch(1)),
+            CancellationToken.None);
+
+        api.SurfaceBinding = NativeVideoOutputSurfaceBinding.Applied;
+        state = await runtime.ClearVideoOutputSurfaceAsync(
+            new RuntimeCommandContext(sessionId, new PlaybackEpoch(1)),
+            CancellationToken.None);
+        Assert.Equal(VideoOutputSurfaceBindingState.Applied, state);
+        Assert.Equal(NativeVideoOutputSurfaceKind.None, api.LastSurface.Kind);
+        Assert.Equal((nuint)0, api.LastSurface.NativeHandle);
+        Assert.Equal((ulong)1, api.LastEpoch.Value);
+        Assert.Equal(1, api.SessionCreateCount);
+    }
+
+    [Fact]
+    public async Task OutputBindingValidatesBeforeSessionCreationAndMapsFailures()
+    {
+        var api = new FakeNativeApi();
+        await using var runtime = new NativePlaybackRuntime(api);
+        var sessionId = new PlaybackSessionId(Guid.NewGuid());
+        var context = new RuntimeCommandContext(sessionId, new PlaybackEpoch(0));
+
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await runtime.SetVideoOutputSurfaceAsync(
+                new VideoOutputSurface(VideoOutputSurfaceKind.Win32Window, 0),
+                context, CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await runtime.SetVideoOutputSurfaceAsync(
+                new VideoOutputSurface(VideoOutputSurfaceKind.None, (nint)1),
+                context, CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await runtime.SetVideoOutputSurfaceAsync(
+                new VideoOutputSurface((VideoOutputSurfaceKind)99, (nint)1),
+                context, CancellationToken.None));
+        Assert.Equal(0, api.SessionCreateCount);
+
+        api.SurfaceResult = NativeResult.StaleEpoch;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runtime.SetVideoOutputSurfaceAsync(VideoOutputSurface.None,
+                context, CancellationToken.None));
+        api.SurfaceResult = NativeResult.Unsupported;
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await runtime.SetVideoOutputSurfaceAsync(VideoOutputSurface.None,
+                context, CancellationToken.None));
+        api.SurfaceResult = NativeResult.OutputUnavailable;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runtime.SetVideoOutputSurfaceAsync(VideoOutputSurface.None,
+                context, CancellationToken.None));
+        api.SurfaceResult = NativeResult.Ok;
+        api.SurfaceBinding = (NativeVideoOutputSurfaceBinding)99;
+        await Assert.ThrowsAsync<NativeMediaRuntimeException>(async () =>
+            await runtime.SetVideoOutputSurfaceAsync(VideoOutputSurface.None,
+                context, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task OutputBindingCancellationDoesNotEnterNative()
+    {
+        var api = new FakeNativeApi();
+        await using var runtime = new NativePlaybackRuntime(api);
+        var context = new RuntimeCommandContext(
+            new PlaybackSessionId(Guid.NewGuid()), new PlaybackEpoch(0));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await runtime.SetVideoOutputSurfaceAsync(
+                VideoOutputSurface.ForWin32Window((nint)111),
+                context, cancellation.Token));
+        Assert.Equal(0, api.SessionCreateCount);
+        Assert.DoesNotContain("session_set_video_output_surface", api.Calls);
+    }
+
     private sealed class FakeNativeApi : INativeMediaRuntimeApi
     {
         internal uint AbiVersion { get; set; } = NativeAbi.Version;
         internal NativeOpenResult OpenResult { get; set; }
         internal NativeResult PlayResult { get; set; } = NativeResult.Ok;
+        internal NativeResult SurfaceResult { get; set; } = NativeResult.Ok;
+        internal NativeVideoOutputSurfaceBinding SurfaceBinding { get; set; } = NativeVideoOutputSurfaceBinding.Deferred;
+        internal NativeVideoOutputSurface LastSurface { get; private set; }
         internal List<string> Calls { get; } = new();
         internal int SessionCreateCount { get; private set; }
         internal int SessionDestroyCount { get; private set; }
@@ -239,6 +351,20 @@ public sealed class NativePlaybackRuntimeTests
             LastPosition = position;
             LastEpoch = epoch;
             return NativeResult.Ok;
+        }
+
+        public NativeResult SessionSetVideoOutputSurface(
+            nint session,
+            NativeVideoOutputSurface surface,
+            NativePlaybackEpoch epoch,
+            out NativeVideoOutputSurfaceBinding binding)
+        {
+            Assert.Equal((nint)22, session);
+            Calls.Add("session_set_video_output_surface");
+            LastSurface = surface;
+            LastEpoch = epoch;
+            binding = SurfaceBinding;
+            return SurfaceResult;
         }
 
         public NativeResult SessionClose(nint session, NativePlaybackEpoch epoch)

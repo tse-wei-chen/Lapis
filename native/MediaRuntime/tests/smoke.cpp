@@ -50,6 +50,19 @@ int main() {
     CHECK(lapis_session_create(runtime, session_id, &session) == LAPIS_OK);
     CHECK(session != nullptr);
 
+    lapis_video_output_surface_binding binding{};
+    const lapis_video_output_surface detached{LAPIS_VIDEO_OUTPUT_SURFACE_NONE, 0};
+    const lapis_video_output_surface window{LAPIS_VIDEO_OUTPUT_SURFACE_WIN32_WINDOW, 0x1234};
+    CHECK(lapis_session_set_video_output_surface(session, detached, {0}, nullptr) == LAPIS_E_INVALID_ARGUMENT);
+    CHECK(lapis_session_set_video_output_surface(session, {LAPIS_VIDEO_OUTPUT_SURFACE_NONE, 1}, {0}, &binding) == LAPIS_E_INVALID_ARGUMENT);
+    CHECK(lapis_session_set_video_output_surface(session, {LAPIS_VIDEO_OUTPUT_SURFACE_WIN32_WINDOW, 0}, {0}, &binding) == LAPIS_E_INVALID_ARGUMENT);
+    CHECK(lapis_session_set_video_output_surface(session, {static_cast<lapis_video_output_surface_kind>(99), 1}, {0}, &binding) == LAPIS_E_INVALID_ARGUMENT);
+    CHECK(lapis_session_set_video_output_surface(session, window, {1}, &binding) == LAPIS_E_STALE_EPOCH);
+    CHECK(lapis_session_set_video_output_surface(session, window, {0}, &binding) == LAPIS_OK);
+    CHECK(binding == LAPIS_OUTPUT_SURFACE_DEFERRED);
+    CHECK(lapis_session_set_video_output_surface(session, detached, {0}, &binding) == LAPIS_OK);
+    CHECK(binding == LAPIS_OUTPUT_SURFACE_DEFERRED);
+
     lapis_playback_snapshot snapshot{};
     CHECK(lapis_session_get_snapshot(session, &snapshot) == LAPIS_OK);
     CHECK(same_session_id(snapshot.session_id, session_id));
@@ -63,6 +76,9 @@ int main() {
     CHECK(lapis_session_get_snapshot(session, &snapshot) == LAPIS_OK);
     CHECK(snapshot.transport == LAPIS_TRANSPORT_READY);
     CHECK(snapshot.epoch.value == 1);
+    CHECK(lapis_session_set_video_output_surface(session, detached, {0}, &binding) == LAPIS_E_STALE_EPOCH);
+    CHECK(lapis_session_set_video_output_surface(session, detached, {1}, &binding) == LAPIS_OK);
+    CHECK(binding == LAPIS_OUTPUT_SURFACE_DEFERRED);
 
     // Seeking while READY prepares a stopped PlaybackExecution timeline. Play
     // must use that same epoch; beginning presentation is not a discontinuity.
@@ -71,6 +87,9 @@ int main() {
     CHECK(snapshot.transport == LAPIS_TRANSPORT_READY);
     CHECK(snapshot.epoch.value == 2);
     CHECK(snapshot.position.nanoseconds == 0);
+    CHECK(lapis_session_set_video_output_surface(session, detached, {1}, &binding) == LAPIS_E_STALE_EPOCH);
+    CHECK(lapis_session_set_video_output_surface(session, detached, {2}, &binding) == LAPIS_OK);
+
 
     CHECK(lapis_session_play(session, {2}) == LAPIS_OK);
     CHECK(lapis_session_pause(session, {2}) == LAPIS_OK);
@@ -89,6 +108,9 @@ int main() {
     CHECK(lapis_session_get_snapshot(session, &snapshot) == LAPIS_OK);
     CHECK(snapshot.transport == LAPIS_TRANSPORT_CLOSED);
     CHECK(snapshot.epoch.value == 3);
+    CHECK(lapis_session_set_video_output_surface(session, window, {3}, &binding) == LAPIS_OK);
+    CHECK(binding == LAPIS_OUTPUT_SURFACE_DEFERRED);
+
     CHECK(snapshot.position.nanoseconds == 0);
 
     // Natural Ended/Faulted publication belongs to the serialized command path.
@@ -97,6 +119,10 @@ int main() {
     // depending on a previous snapshot read to mutate session transport.
     open_result = {};
     CHECK(lapis_session_open(session, &locator, {4}, &open_result) == LAPIS_OK);
+    // Pre-open HWND intent is preserved across the open boundary; the headless
+    // composition has no HWND presenter yet, so clear it before Play.
+    CHECK(lapis_session_set_video_output_surface(session, detached, {4}, &binding) == LAPIS_OK);
+    CHECK(binding == LAPIS_OUTPUT_SURFACE_DEFERRED);
     CHECK(lapis_session_play(session, {4}) == LAPIS_OK);
     std::this_thread::sleep_for(250ms);
     CHECK(lapis_session_pause(session, {4}) == LAPIS_E_INVALID_STATE);
