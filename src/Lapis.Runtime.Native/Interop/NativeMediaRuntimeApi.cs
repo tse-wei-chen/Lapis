@@ -25,6 +25,11 @@ internal interface INativeMediaRuntimeApi
         NativeMediaTime position,
         NativePlaybackEpoch epoch);
     NativeResult SessionClose(nint session, NativePlaybackEpoch epoch);
+    NativeResult SessionSetVideoOutputSurface(
+        nint session,
+        NativeVideoOutputSurface surface,
+        NativePlaybackEpoch epoch,
+        out NativeVideoOutputSurfaceBinding binding);
 }
 
 internal sealed class PInvokeNativeMediaRuntimeApi : INativeMediaRuntimeApi
@@ -87,4 +92,11 @@ internal sealed class PInvokeNativeMediaRuntimeApi : INativeMediaRuntimeApi
 
     public NativeResult SessionClose(nint session, NativePlaybackEpoch epoch) =>
         NativeMethods.SessionClose(session, epoch);
+
+    public NativeResult SessionSetVideoOutputSurface(
+        nint session,
+        NativeVideoOutputSurface surface,
+        NativePlaybackEpoch epoch,
+        out NativeVideoOutputSurfaceBinding binding) =>
+        NativeMethods.SessionSetVideoOutputSurface(session, surface, epoch, out binding);
 }

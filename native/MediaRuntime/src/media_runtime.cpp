@@ -6,6 +6,7 @@
 #include "session/playback_media_session.hpp"
 #include "source/media_source.hpp"
 #include "video/video_presenter.hpp"
+#include "video/video_output_surface.hpp"
 
 #if defined(_WIN32)
 #include "audio/wasapi/wasapi_shared_audio_output_provider.hpp"
@@ -57,6 +58,7 @@ struct lapis_session final {
     int64_t position_ns{0};
     lapis_transport_state transport{LAPIS_TRANSPORT_CLOSED};
     std::shared_ptr<RuntimePlaybackPipeline> pipeline;
+    lapis::media::VideoOutputSurfaceDescriptor desired_output_surface{};
 };
 
 namespace {
@@ -121,6 +123,47 @@ std::optional<lapis::media::MediaLocatorKind> to_core_locator_kind(
     }
 
     return std::nullopt;
+}
+
+std::optional<lapis::media::VideoOutputSurfaceDescriptor> to_core_output_surface(
+    lapis_video_output_surface surface) noexcept {
+    using lapis::media::VideoOutputSurfaceDescriptor;
+    using lapis::media::VideoOutputSurfaceKind;
+    VideoOutputSurfaceDescriptor descriptor{};
+    switch (surface.kind) {
+        case LAPIS_VIDEO_OUTPUT_SURFACE_NONE:
+            descriptor.kind = VideoOutputSurfaceKind::None;
+            break;
+        case LAPIS_VIDEO_OUTPUT_SURFACE_WIN32_WINDOW:
+            descriptor.kind = VideoOutputSurfaceKind::Win32Window;
+            break;
+        default:
+            return std::nullopt;
+    }
+    descriptor.native_handle = surface.native_handle;
+    if (!lapis::media::valid_video_output_surface(descriptor)) {
+        return std::nullopt;
+    }
+    return descriptor;
+}
+
+lapis_result map_surface_control_error(
+    lapis::media::VideoOutputSurfaceControlStatus status) noexcept {
+    using lapis::media::VideoOutputSurfaceControlStatus;
+    switch (status) {
+        case VideoOutputSurfaceControlStatus::Applied:
+        case VideoOutputSurfaceControlStatus::Deferred:
+            return LAPIS_OK;
+        case VideoOutputSurfaceControlStatus::Invalid:
+            return LAPIS_E_INVALID_ARGUMENT;
+        case VideoOutputSurfaceControlStatus::Unsupported:
+            return LAPIS_E_UNSUPPORTED;
+        case VideoOutputSurfaceControlStatus::Unavailable:
+            return LAPIS_E_OUTPUT_UNAVAILABLE;
+        case VideoOutputSurfaceControlStatus::Failed:
+            return LAPIS_E_INTERNAL;
+    }
+    return LAPIS_E_INTERNAL;
 }
 
 lapis_result map_open_error(lapis::media::MediaOpenError error) noexcept {
@@ -364,6 +407,15 @@ lapis_result lapis_session_open(
             media_open_result = media->open(core_locator);
             if (media_open_result.ok()) {
                 pipeline = create_pipeline(media);
+                // The desired host window belongs to the logical session,
+                // not to a particular media-open or decode generation.
+                const auto surface_status = pipeline->execution->set_video_output_surface(
+                    session->desired_output_surface);
+                if (surface_status != lapis::media::VideoOutputSurfaceControlStatus::Applied &&
+                    surface_status != lapis::media::VideoOutputSurfaceControlStatus::Deferred) {
+                    mark_faulted_if_current(session, epoch);
+                    return map_surface_control_error(surface_status);
+                }
             }
         } catch (...) {
             mark_faulted_if_current(session, epoch);
@@ -595,6 +647,57 @@ lapis_result lapis_session_close(lapis_session* session, lapis_playback_epoch ep
             retired_pipeline = std::move(session->pipeline);
         }
         retired_pipeline.reset();
+        return LAPIS_OK;
+    });
+}
+
+lapis_result lapis_session_set_video_output_surface(
+    lapis_session* session,
+    lapis_video_output_surface surface,
+    lapis_playback_epoch epoch,
+    lapis_video_output_surface_binding* out_binding) {
+    return guarded_result([&]() -> lapis_result {
+        if (session == nullptr || out_binding == nullptr) {
+            return LAPIS_E_INVALID_ARGUMENT;
+        }
+        const auto descriptor = to_core_output_surface(surface);
+        if (!descriptor.has_value()) {
+            return LAPIS_E_INVALID_ARGUMENT;
+        }
+
+        std::scoped_lock command_lock(session->command_mutex);
+        std::shared_ptr<RuntimePlaybackPipeline> pipeline;
+        lapis::media::VideoOutputSurfaceDescriptor previous{};
+        {
+            std::scoped_lock lock(session->mutex);
+            if (!matches_epoch(*session, epoch)) {
+                return LAPIS_E_STALE_EPOCH;
+            }
+            pipeline = session->pipeline;
+            previous = session->desired_output_surface;
+        }
+
+        auto status = lapis::media::VideoOutputSurfaceControlStatus::Deferred;
+        if (pipeline != nullptr && pipeline->execution != nullptr) {
+            status = pipeline->execution->set_video_output_surface(*descriptor);
+            if (status != lapis::media::VideoOutputSurfaceControlStatus::Applied &&
+                status != lapis::media::VideoOutputSurfaceControlStatus::Deferred) {
+                // A failed request is not committed as the next generation's
+                // target. Restore the previous desired binding after the render
+                // thread has acknowledged failure/teardown.
+                (void)pipeline->execution->set_video_output_surface(previous);
+                refresh_terminal_transport(session);
+                return map_surface_control_error(status);
+            }
+        }
+
+        {
+            std::scoped_lock lock(session->mutex);
+            session->desired_output_surface = *descriptor;
+        }
+        *out_binding = status == lapis::media::VideoOutputSurfaceControlStatus::Applied
+            ? LAPIS_OUTPUT_SURFACE_APPLIED
+            : LAPIS_OUTPUT_SURFACE_DEFERRED;
         return LAPIS_OK;
     });
 }

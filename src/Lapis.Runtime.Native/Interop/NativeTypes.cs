@@ -5,7 +5,7 @@ namespace Lapis.Runtime.Native.Interop;
 
 internal static class NativeAbi
 {
-    internal const uint Version = 1;
+    internal const uint Version = 2;
 }
 
 internal enum NativeResult : int
@@ -17,6 +17,7 @@ internal enum NativeResult : int
     StaleEpoch = 4,
     AbiMismatch = 5,
     Unsupported = 6,
+    OutputUnavailable = 7,
     Internal = 100
 }
 
@@ -86,6 +87,27 @@ internal struct NativePlaybackSessionId
         Byte08, Byte09, Byte10, Byte11,
         Byte12, Byte13, Byte14, Byte15
     ];
+}
+
+internal enum NativeVideoOutputSurfaceKind : int
+{
+    None = 0,
+    Win32Window = 1
+}
+
+internal enum NativeVideoOutputSurfaceBinding : int
+{
+    Applied = 0,
+    Deferred = 1
+}
+
+// Mirrors enum(int32) + uintptr_t with the platform's natural alignment.
+// Do not pack: on 64-bit Windows the handle begins at offset 8, not 4.
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeVideoOutputSurface
+{
+    public NativeVideoOutputSurfaceKind Kind;
+    public nuint NativeHandle;
 }
 
 [StructLayout(LayoutKind.Sequential)]
