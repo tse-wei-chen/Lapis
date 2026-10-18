@@ -48,6 +48,53 @@ public sealed class ArchitectureBoundaryTests
     }
 
     [Fact]
+    public void DesktopHostingOnlyDependsOnApplicationAndContracts()
+    {
+        var project = LoadProject("src/Lapis.Desktop.Hosting/Lapis.Desktop.Hosting.csproj");
+        var references = project.Descendants("ProjectReference")
+            .Select(element => element.Attribute("Include")?.Value.Replace('\\', '/'))
+            .Where(value => value is not null)
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(new[]
+        {
+            "../Lapis.Application/Lapis.Application.csproj",
+            "../Lapis.Contracts/Lapis.Contracts.csproj"
+        }, references);
+    }
+
+    [Fact]
+    public void WinFormsShellReferencesHostingAndNativeOnly()
+    {
+        var project = LoadProject("src/Lapis.Desktop.WinForms/Lapis.Desktop.WinForms.csproj");
+        var references = project.Descendants("ProjectReference")
+            .Select(element => element.Attribute("Include")?.Value.Replace('\\', '/'))
+            .Where(value => value is not null)
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(new[]
+        {
+            "../Lapis.Desktop.Hosting/Lapis.Desktop.Hosting.csproj",
+            "../Lapis.Runtime.Native/Lapis.Runtime.Native.csproj"
+        }, references);
+    }
+
+    [Fact]
+    public void DesktopHostingDoesNotOwnNativeInteropOrWinForms()
+    {
+        var files = Directory.EnumerateFiles(
+            Path.Combine(Root, "src", "Lapis.Desktop.Hosting"),
+            "*.cs", SearchOption.AllDirectories);
+        foreach (var file in files)
+        {
+            var source = File.ReadAllText(file);
+            Assert.DoesNotContain("LibraryImport", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("DllImport", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("System.Windows.Forms", source, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void ContractsDoNotLeakThirdPartyMediaTypes()
     {
         var forbidden = new[]

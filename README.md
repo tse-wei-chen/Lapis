@@ -8,6 +8,7 @@ Lapis separates the **control plane** from the **media data plane**:
 
 - `src/Lapis.Contracts` contains stable product/domain contracts only.
 - `src/Lapis.Application` owns product orchestration, serialized playback commands, state snapshots, epochs, and user-facing playback policy.
+- `src/Lapis.Desktop.Hosting` owns UI-neutral host command/surface ordering; `src/Lapis.Desktop.WinForms` is the first runnable Windows desktop shell.
 - `native/MediaRuntime` owns the hot media path, the executable immutable media graph, clocks/schedulers, and a stable C ABI.
 - third-party media libraries live behind native adapters; their types must not leak into managed contracts or native core contracts.
 - AI observes media through taps and must never block playback.
@@ -33,6 +34,19 @@ cmake -S native/MediaRuntime -B build/native -A x64 `
 cmake --build build/native --config Release
 ctest --test-dir build/native -C Release --output-on-failure
 ```
+
+## Desktop player (Windows)
+
+Build the native runtime and the managed solution, then run the first WinForms shell:
+
+```powershell
+# Configure the native build with the project-pinned vcpkg manifest/triplet first.
+cmake --build build/native --config Release
+dotnet build Lapis.slnx -c Release
+dotnet run --project src/Lapis.Desktop.WinForms -c Release --no-build
+```
+
+The Desktop project automatically copies `build/native/Release/Lapis.MediaRuntime.dll` into its output when that file exists. It currently opens local video files, renders SDR BGRA8 through D3D11/DXGI to a real HWND, and supports Play/Pause, Stop and seek-to-seconds. Blu-ray navigation, HDR, subtitles, AI translation and packaging are separate milestones. See [desktop-host development notes](docs/development/desktop-host.md) for Windows prerequisites and limitations.
 
 ## Repository layout
 

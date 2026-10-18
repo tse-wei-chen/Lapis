@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Lapis.Application/Lapis.Application.csproj" />
+    <ProjectReference Include="../Lapis.Contracts/Lapis.Contracts.csproj" />
+  </ItemGroup>
+</Project>

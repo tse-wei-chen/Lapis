@@ -3,7 +3,11 @@
 Lapis is designed as a media platform rather than a UI wrapped around one decoder stack.
 
 ```text
-UI / future frontends
+Lapis.Desktop.WinForms / future frontends
+        |
+        v
+Lapis.Desktop.Hosting
+  - host command serialization + HWND lifetime / presentation port
         |
         v
 Application control plane
@@ -57,6 +61,25 @@ Native MediaRuntime core
         |
         +---- media taps ----> AIHost (future, non-blocking)
 ```
+
+## First desktop host
+
+The first runnable Windows frontend is `Lapis.Desktop.WinForms`, which owns
+its `Panel.Handle`, file selection, and UI dispatch only. The portable
+`Lapis.Desktop.Hosting` coordinator orders actor transport commands together
+with calls to the separate `IVideoOutputSurfaceBinding` port. Output binding
+uses the actor's current epoch but does not advance it. The synchronous native
+surface-ACK wait runs away from the UI thread, and form close is deferred until
+the host/native session has stopped and released the borrowed HWND.
+
+The hosting library depends only on Application and Contracts. The WinForms
+composition edge supplies `NativePlaybackRuntime` to both ports; WinForms
+has no P/Invoke or DXGI dependency. Other desktop frameworks can reuse the
+coordinator and replace only their window-lifetime adapter.
+
+The actor's managed snapshots are still command-driven. Native asynchronous
+`Ended`/`Faulted` events and live position/duration are not reconciled yet;
+those need a separate observation channel before adding an accurate progress UI.
 
 ## Invariants
 
