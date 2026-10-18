@@ -13,7 +13,8 @@ Application control plane
         v
 Native MediaRuntime composition root
   - C ABI session -> PlaybackExecution
-  - headless video presenter until a surface adapter is bound
+  - Windows: D3D11/DXGI presenter (headless when no HWND is bound)
+  - Other platforms: headless presenter until a local output adapter exists
   - Windows default audio -> WASAPI shared provider
         |
         v
@@ -94,7 +95,7 @@ The current slice opens local files through `IMediaByteStream`, feeds FFmpeg via
 
 The public C ABI now owns a composition-level pipeline containing `PlaybackMediaSession` plus `PlaybackExecution`. `lapis_session_play`, `pause`, `seek`, and `close` call that execution owner rather than maintaining a parallel fake transport state machine. Per-session command serialization keeps concurrent result-returning calls ordered while the short-lived session mutex remains available to snapshots. Snapshot publication derives active time and natural Ended/Faulted state from `PlaybackExecutionSnapshot`.
 
-The C ABI currently supplies a headless `IVideoPresenter` so the real decode/process/schedule/render lifecycle can run before the native surface-binding contract exists. This adapter intentionally discards presented video frames and is a composition fallback, not the final desktop presenter. The execution/core boundary remains unchanged so a future D3D11/DXGI presenter can replace it without touching demux, decode, scheduler, audio, or playback-command semantics.
+The Windows C ABI composition root supplies a Win32 `D3D11VideoPresenter` behind the portable `IVideoPresenter` boundary. When a host binds an HWND through ABI v2, the render worker creates a DXGI flip-model swapchain and uploads processed BGRA8 CPU frames to a shader-resource texture for aspect-correct SDR display. Unbound Windows sessions and non-Windows builds still use headless presentation. Resource binding/replacement/detach remains render-thread-affine and acknowledged, while the host retains ownership of its HWND. The decode, process, scheduler, audio, and command boundaries are unchanged; GPU-native frame ingestion, HDR, and automatic device-loss recovery are follow-up modules.
 
 On Windows the same composition root supplies `WasapiSharedAudioOutputProvider` and creates `FfmpegAudioFrameConverter` instances through the portable processor factory. Thus media with audio reaches the existing real shared-mode audio branch when playback starts; non-Windows audio output composition remains a future backend concern.
 
@@ -116,4 +117,4 @@ On Windows, `WasapiSharedAudioOutputProvider` resolves the default multimedia re
 
 The audio hardware clock can therefore discipline the single authoritative `PlaybackClock` without becoming a second product clock. Corrections inside one playback epoch wake video timing only when drift actually exceeds policy, while media discontinuities still use the explicit epoch mechanism.
 
-Blu-ray navigation, explicit endpoint selection/change notifications, fallback target-format policy for non-representable engine mix formats, long-term frequency/rate correction, additional hysteresis/rate limiting based on real-device measurements, external/video-master policies, `IAudioClient3` low-latency period policy, exclusive/bitstream output, concrete D3D11/DXGI presentation and surface binding, GPU decode/processing, full color/HDR metadata, subtitles, AI taps, FFmpeg interrupt callbacks for blocking sources, cross-platform audio output composition, and full Blu-ray navigation remain deliberately outside this slice.
+Blu-ray navigation, explicit endpoint selection/change notifications, fallback target-format policy for non-representable engine mix formats, long-term frequency/rate correction, additional hysteresis/rate limiting based on real-device measurements, external/video-master policies, `IAudioClient3` low-latency period policy, exclusive/bitstream output, GPU decode/processing, D3D11 zero-copy presentation and HDR output, full color/HDR metadata, subtitles, AI taps, FFmpeg interrupt callbacks for blocking sources, cross-platform audio output composition, and full Blu-ray navigation remain deliberately outside this slice.

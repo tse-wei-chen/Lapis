@@ -43,6 +43,7 @@ if(WIN32)
         src/audio/wasapi/wasapi_format.cpp
         src/audio/wasapi/wasapi_shared_audio_output.cpp
         src/audio/wasapi/wasapi_shared_audio_output_provider.cpp
+        src/video/d3d11/d3d11_video_presenter.cpp
     )
 endif()
 
@@ -59,7 +60,7 @@ target_link_libraries(Lapis.MediaRuntime.Core
     PRIVATE ${FFMPEG_LIBRARIES}
 )
 if(WIN32)
-    target_link_libraries(Lapis.MediaRuntime.Core PRIVATE ole32)
+    target_link_libraries(Lapis.MediaRuntime.Core PRIVATE ole32 d3d11 dxgi d3dcompiler user32)
 endif()
 lapis_enable_strict_warnings(Lapis.MediaRuntime.Core)
 
@@ -120,6 +121,9 @@ if(BUILD_TESTING)
         PRIVATE LAPIS_TEST_MEDIA_PATH="${LAPIS_TEST_MEDIA_PATH}"
     )
     target_link_libraries(Lapis.MediaRuntime.SmokeTests PRIVATE Lapis.MediaRuntime)
+    if(WIN32)
+        target_link_libraries(Lapis.MediaRuntime.SmokeTests PRIVATE user32)
+    endif()
     lapis_enable_strict_warnings(Lapis.MediaRuntime.SmokeTests)
     add_test(NAME media_runtime_smoke COMMAND Lapis.MediaRuntime.SmokeTests)
 
@@ -222,6 +226,22 @@ if(BUILD_TESTING)
     )
 
     if(WIN32)
+        add_executable(
+            Lapis.MediaRuntime.D3D11PresenterTests
+            tests/d3d11_video_presenter.cpp
+        )
+        target_compile_features(
+            Lapis.MediaRuntime.D3D11PresenterTests PRIVATE cxx_std_20
+        )
+        target_link_libraries(
+            Lapis.MediaRuntime.D3D11PresenterTests PRIVATE Lapis.MediaRuntime.Core user32
+        )
+        lapis_enable_strict_warnings(Lapis.MediaRuntime.D3D11PresenterTests)
+        add_test(
+            NAME d3d11_video_presenter_smoke
+            COMMAND Lapis.MediaRuntime.D3D11PresenterTests
+        )
+
         add_executable(
             Lapis.MediaRuntime.WasapiFormatTests
             tests/wasapi_audio_output.cpp

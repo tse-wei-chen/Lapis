@@ -10,6 +10,7 @@
 
 #if defined(_WIN32)
 #include "audio/wasapi/wasapi_shared_audio_output_provider.hpp"
+#include "video/d3d11/d3d11_video_presenter.hpp"
 #endif
 
 #include <algorithm>
@@ -24,6 +25,7 @@ struct lapis_runtime final {};
 
 namespace {
 
+#if !defined(_WIN32)
 class HeadlessVideoPresenter final : public lapis::media::IVideoPresenter {
 public:
     [[nodiscard]] lapis::media::VideoPresenterBeginStatus begin(
@@ -39,6 +41,7 @@ public:
 
     void end() noexcept override {}
 };
+#endif
 
 struct RuntimePlaybackPipeline final {
     std::shared_ptr<lapis::media::PlaybackMediaSession> media;
@@ -209,7 +212,11 @@ std::unique_ptr<lapis::media::PlaybackExecution> create_execution(
     lapis::media::PlaybackMediaSession& media) {
     auto video_processor =
         std::make_unique<lapis::media::ffmpeg::FfmpegVideoFrameConverter>();
+    #if defined(_WIN32)
+    auto presenter = std::make_unique<lapis::media::d3d11::D3D11VideoPresenter>();
+    #else
     auto presenter = std::make_unique<HeadlessVideoPresenter>();
+    #endif
 
 #if defined(_WIN32)
     auto audio_provider = std::make_unique<

@@ -5,6 +5,12 @@
 #include <iostream>
 #include <thread>
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #define CHECK(condition) \
     do { \
         if (!(condition)) { \
@@ -132,6 +138,37 @@ int main() {
     CHECK(snapshot.epoch.value == 4);
 
     CHECK(lapis_session_close(session, {5}) == LAPIS_OK);
+
+    #if defined(_WIN32)
+    // End-to-end C ABI integration: composition must use a real HWND-capable
+    // D3D11 presenter rather than silently dropping video in Headless mode.
+    HWND test_window = CreateWindowExW(
+        0, L"STATIC", L"Lapis runtime D3D11 integration",
+        WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        100, 100, 320, 240,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    CHECK(test_window != nullptr);
+    const lapis_video_output_surface actual_window{
+        LAPIS_VIDEO_OUTPUT_SURFACE_WIN32_WINDOW,
+        reinterpret_cast<uintptr_t>(test_window)
+    };
+    CHECK(lapis_session_set_video_output_surface(session, actual_window, {5}, &binding) == LAPIS_OK);
+    CHECK(binding == LAPIS_OUTPUT_SURFACE_DEFERRED);
+    CHECK(lapis_session_open(session, &locator, {6}, &open_result) == LAPIS_OK);
+    CHECK(lapis_session_play(session, {6}) == LAPIS_OK);
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    do {
+        CHECK(lapis_session_get_snapshot(session, &snapshot) == LAPIS_OK);
+        if (snapshot.transport == LAPIS_TRANSPORT_ENDED ||
+            snapshot.transport == LAPIS_TRANSPORT_FAULTED) {
+            break;
+        }
+        std::this_thread::sleep_for(10ms);
+    } while (std::chrono::steady_clock::now() < deadline);
+    CHECK(snapshot.transport == LAPIS_TRANSPORT_ENDED);
+    CHECK(lapis_session_close(session, {7}) == LAPIS_OK);
+    CHECK(DestroyWindow(test_window) != FALSE);
+    #endif
 
     lapis_session_destroy(session);
     lapis_runtime_destroy(runtime);
