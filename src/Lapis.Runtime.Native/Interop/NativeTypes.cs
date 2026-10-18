@@ -129,6 +129,29 @@ internal struct NativeMediaLocator
     public nint ValueUtf8;
 }
 
+internal enum NativeTransportState : int
+{
+    Closed = 0,
+    Opening = 1,
+    Ready = 2,
+    Playing = 3,
+    Paused = 4,
+    Seeking = 5,
+    Ended = 6,
+    Faulted = 7
+}
+
+// Mirrors lapis_playback_snapshot from C ABI v2. Guid byte order is
+// preserved by NativePlaybackSessionId's 16 distinct byte fields.
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativePlaybackSnapshot
+{
+    public NativePlaybackSessionId SessionId;
+    public NativePlaybackEpoch Epoch;
+    public NativeMediaTime Position;
+    public NativeTransportState Transport;
+}
+
 [StructLayout(LayoutKind.Sequential)]
 internal struct NativeOpenResult
 {

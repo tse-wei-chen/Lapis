@@ -40,7 +40,11 @@ static triplet, those DLLs must also be deployed next to the executable.
 Open a local `.mkv`, `.mp4`, `.m2ts`, `.ts`, `.avi`, `.mov`, `.webm`
 or similar FFmpeg-supported file through **開啟影片**, Ctrl+O, or drag and drop.
 The host opens the media through the playback actor, binds its HWND through
-`IVideoOutputSurfaceBinding`, then starts playback. Space toggles pause.
+`IVideoOutputSurfaceBinding`, then starts playback. A separate optional
+`IPlaybackRuntimeObserver` polls the existing native C ABI snapshot away from
+the UI thread, and only matching session/epoch updates reach the actor state.
+The progress bar uses native position and open-result duration; releasing its
+thumb seeks to a proportional media timestamp. Space toggles pause.
 **跳至** seeks to an absolute time in seconds. **停止** closes the media
 generation and detaches the output target.
 
@@ -71,11 +75,10 @@ waits off the UI thread for the render-thread ACK.
   playlists/BD-J menus and protected commercial discs are not supported yet.
 - The output is SDR BGRA8 CPU-upload; GPU decode, HDR color management,
   subtitle overlay and device-loss recovery are not part of the shell.
-- The Application actor currently publishes command-driven snapshots; native
-  running position and asynchronous natural Ended/Faulted notification have not
-  yet been wired into managed state. The label is an actor transport view, not
-  a frame-accurate progress indicator. Next slice should add native playback
-  observation/event or bounded polling with epoch reconciliation.
+- Runtime snapshots are sampled every 150 ms while active, rather than being
+  pushed on each frame. The visible position reflects the last observed native
+  clock and is not a sample-accurate output-position guarantee. A future event
+  channel can replace polling behind the same optional observation port.
 - Recreating a WinForms video control's HWND externally (such as a host-specific
   DPI/handle-recreation workflow) requires a window-lifetime transition before
   the old handle is destroyed. The initial shell manages ordinary Stop and Form

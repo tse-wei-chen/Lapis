@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using Lapis.Application.Playback;
 using Lapis.Application.Runtime;
 using Lapis.Contracts.Capabilities;
@@ -107,6 +108,179 @@ public sealed class PlaybackSessionTests
         await Task.WhenAll(first, second);
 
         Assert.Equal(1, runtime.DisposeCount);
+    }
+
+    [Fact]
+    public async Task NativeObservationsUpdatePositionAndPublishNaturalEnd()
+    {
+        var runtime = new ObservingRuntime
+        {
+            Duration = MediaTime.FromSeconds(42)
+        };
+        await using var session = new PlaybackSession(runtime);
+        await session.ExecuteAsync(new OpenMediaCommand(
+            new MediaLocator(MediaLocatorKind.File, "movie.mkv")));
+        Assert.Equal(MediaTime.FromSeconds(42), session.Snapshot.Duration);
+        await session.ExecuteAsync(new PlayCommand());
+
+        await runtime.PollStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        runtime.Emit(new RuntimePlaybackObservation(
+            session.SessionId, new PlaybackEpoch(1),
+            MediaTime.FromSeconds(3), TransportState.Playing));
+        await WaitForSnapshotAsync(session, snapshot =>
+            snapshot.Position == MediaTime.FromSeconds(3));
+
+        runtime.Emit(new RuntimePlaybackObservation(
+            session.SessionId, new PlaybackEpoch(1),
+            MediaTime.FromSeconds(42), TransportState.Ended));
+        await WaitForSnapshotAsync(session, snapshot =>
+            snapshot.Transport == TransportState.Ended);
+        Assert.Equal(MediaTime.FromSeconds(42), session.Snapshot.Position);
+        Assert.Null(session.Snapshot.LastError);
+
+        await session.ExecuteAsync(new CloseCommand());
+        Assert.Equal(TransportState.Closed, session.Snapshot.Transport);
+        Assert.Null(session.Snapshot.Duration);
+    }
+
+    [Fact]
+    public async Task ObservationFromBeforeSeekCannotOverwriteNewEpoch()
+    {
+        var runtime = new ObservingRuntime();
+        await using var session = new PlaybackSession(runtime);
+        await session.ExecuteAsync(new OpenMediaCommand(
+            new MediaLocator(MediaLocatorKind.File, "movie.mkv")));
+        await session.ExecuteAsync(new PlayCommand());
+        await runtime.PollStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await session.ExecuteAsync(new SeekCommand(MediaTime.FromSeconds(20)));
+        runtime.Emit(new RuntimePlaybackObservation(
+            session.SessionId, new PlaybackEpoch(1),
+            MediaTime.FromSeconds(2), TransportState.Ended));
+        await runtime.WaitForDeliveredReadsAsync(1);
+        Assert.Equal(new PlaybackEpoch(2), session.Snapshot.Epoch);
+        Assert.Equal(TransportState.Playing, session.Snapshot.Transport);
+        Assert.Equal(MediaTime.FromSeconds(20), session.Snapshot.Position);
+
+        runtime.Emit(new RuntimePlaybackObservation(
+            session.SessionId, new PlaybackEpoch(2),
+            MediaTime.FromSeconds(21), TransportState.Playing));
+        await WaitForSnapshotAsync(session, snapshot =>
+            snapshot.Position == MediaTime.FromSeconds(21));
+    }
+
+    [Fact]
+    public async Task SameEpochStalePlayingReadCannotUndoPause()
+    {
+        var runtime = new ObservingRuntime();
+        await using var session = new PlaybackSession(runtime);
+        await session.ExecuteAsync(new OpenMediaCommand(
+            new MediaLocator(MediaLocatorKind.File, "movie.mkv")));
+        await session.ExecuteAsync(new PlayCommand());
+        await runtime.PollStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await session.ExecuteAsync(new PauseCommand());
+        runtime.Emit(new RuntimePlaybackObservation(
+            session.SessionId, new PlaybackEpoch(1),
+            MediaTime.FromSeconds(10), TransportState.Playing));
+        await runtime.WaitForDeliveredReadsAsync(1);
+        Assert.Equal(TransportState.Paused, session.Snapshot.Transport);
+        Assert.Equal(MediaTime.Zero, session.Snapshot.Position);
+    }
+
+    [Fact]
+    public async Task ObservationFaultReconcilesWithoutChangingEpoch()
+    {
+        var runtime = new ObservingRuntime();
+        await using var session = new PlaybackSession(runtime);
+        await session.ExecuteAsync(new OpenMediaCommand(
+            new MediaLocator(MediaLocatorKind.File, "movie.mkv")));
+        await session.ExecuteAsync(new PlayCommand());
+        await runtime.PollStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        runtime.Emit(new RuntimePlaybackObservation(
+            session.SessionId, new PlaybackEpoch(1),
+            MediaTime.FromSeconds(5), TransportState.Faulted));
+        await WaitForSnapshotAsync(session, snapshot =>
+            snapshot.Transport == TransportState.Faulted);
+        Assert.Equal("NativeFaulted", session.Snapshot.LastError?.Code);
+        Assert.Equal(new PlaybackEpoch(1), session.Snapshot.Epoch);
+    }
+
+    [Fact]
+    public async Task ObservationDisposalCancelsPendingReadBeforeRuntimeDispose()
+    {
+        var runtime = new ObservingRuntime();
+        var session = new PlaybackSession(runtime);
+        await session.ExecuteAsync(new OpenMediaCommand(
+            new MediaLocator(MediaLocatorKind.File, "movie.mkv")));
+        await session.ExecuteAsync(new PlayCommand());
+        await runtime.PollStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, runtime.DisposeCount);
+        Assert.True(runtime.ReadCanceled);
+    }
+
+    private static async Task WaitForSnapshotAsync(
+        PlaybackSession session, Func<PlaybackSnapshot, bool> predicate)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!predicate(session.Snapshot))
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+    }
+
+    private sealed class ObservingRuntime : FakeRuntime, IPlaybackRuntimeObserver
+    {
+        private readonly Channel<RuntimePlaybackObservation> _updates =
+            Channel.CreateUnbounded<RuntimePlaybackObservation>();
+        private int _readsDelivered;
+        public TaskCompletionSource PollStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool ReadCanceled { get; private set; }
+        public MediaTime? Duration { get; init; }
+
+        public override ValueTask<RuntimeOpenResult> OpenAsync(
+            MediaLocator locator, RuntimeCommandContext context,
+            CancellationToken cancellationToken)
+        {
+            _ = base.OpenAsync(locator, context, cancellationToken);
+            return ValueTask.FromResult(
+                new RuntimeOpenResult(MediaCapability.Chapters, Duration));
+        }
+
+        public async ValueTask<RuntimePlaybackObservation> ReadSnapshotAsync(
+            PlaybackSessionId sessionId, CancellationToken cancellationToken)
+        {
+            PollStarted.TrySetResult();
+            try
+            {
+                var value = await _updates.Reader.ReadAsync(cancellationToken);
+                Interlocked.Increment(ref _readsDelivered);
+                return value;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                ReadCanceled = true;
+                throw;
+            }
+        }
+
+        public void Emit(RuntimePlaybackObservation observation) =>
+            _updates.Writer.TryWrite(observation);
+
+        public async Task WaitForDeliveredReadsAsync(int count)
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (Volatile.Read(ref _readsDelivered) < count)
+            {
+                await Task.Delay(10, timeout.Token);
+            }
+            // The poller already received this value; let the actor consume the
+            // serialized observation envelope before asserting its state.
+            await Task.Delay(30);
+        }
     }
 
     private class FakeRuntime : IPlaybackRuntime

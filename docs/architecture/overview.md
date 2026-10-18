@@ -77,9 +77,16 @@ composition edge supplies `NativePlaybackRuntime` to both ports; WinForms
 has no P/Invoke or DXGI dependency. Other desktop frameworks can reuse the
 coordinator and replace only their window-lifetime adapter.
 
-The actor's managed snapshots are still command-driven. Native asynchronous
-`Ended`/`Faulted` events and live position/duration are not reconciled yet;
-those need a separate observation channel before adding an accurate progress UI.
+The actor now also consumes native execution snapshots via the optional
+`IPlaybackRuntimeObserver` port. It polls only while Playing/Paused, off the UI
+thread, and posts observations into its existing bounded command mailbox.
+The actor rejects mismatched session IDs or playback epochs, negative positions,
+transitional states, and same-epoch Play/Pause regressions; terminal Ended or
+Faulted is published with the native position. Open-result duration is carried
+through the same `PlaybackSnapshot` consumed by UI. Poll cancellation and task
+join finish before native runtime destruction; no timer or IO lifetime crosses
+session disposal. The first desktop UI uses this to display position/duration
+and to seek by dragging the progress slider.
 
 ## Invariants
 

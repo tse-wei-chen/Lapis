@@ -26,6 +26,18 @@ public sealed class PlayerForm : Form
     private readonly Button _playPause = NewButton("播放");
     private readonly Button _closeMedia = NewButton("停止");
     private readonly Button _seek = NewButton("跳至");
+    private readonly TrackBar _progress = new()
+    {
+        Dock = DockStyle.Fill,
+        AutoSize = false,
+        TickStyle = TickStyle.None,
+        Minimum = 0,
+        Maximum = 1000,
+        Enabled = false,
+        Height = 40,
+        Margin = new Padding(12, 3, 12, 3)
+    };
+    private bool _scrubbing;
     private readonly NumericUpDown _seekSeconds = new()
     {
         Minimum = 0,
@@ -65,13 +77,14 @@ public sealed class PlayerForm : Form
         var root = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            RowCount = 3,
+            RowCount = 4,
             ColumnCount = 1,
             Margin = Padding.Empty,
             Padding = Padding.Empty
         };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 68f));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 36f));
 
@@ -105,8 +118,9 @@ public sealed class PlayerForm : Form
         statusBar.Controls.Add(_state);
 
         root.Controls.Add(_video, 0, 0);
-        root.Controls.Add(toolbar, 0, 1);
-        root.Controls.Add(statusBar, 0, 2);
+        root.Controls.Add(_progress, 0, 1);
+        root.Controls.Add(toolbar, 0, 2);
+        root.Controls.Add(statusBar, 0, 3);
         Controls.Add(root);
 
         _open.Click += async (_, _) => await ChooseFileAsync();
@@ -122,6 +136,21 @@ public sealed class PlayerForm : Form
         _seek.Click += async (_, _) => await RunUiCommandAsync(
             async (host, token) => await host.SeekAsync(
                 TimeSpan.FromSeconds((double)_seekSeconds.Value), token));
+        _progress.MouseDown += (_, _) => _scrubbing = true;
+        _progress.MouseUp += async (_, _) =>
+        {
+            _scrubbing = false;
+            var duration = _host?.Snapshot.Duration;
+            if (duration is { Nanoseconds: > 0 } && !_closing && !_busy)
+            {
+                // MediaTime is canonical nanoseconds; use ticks to retain
+                // sub-second seek precision without clock simulation in UI.
+                var targetTicks = (long)(duration.Value.Nanoseconds / 100.0 *
+                    _progress.Value / _progress.Maximum);
+                await RunUiCommandAsync(async (host, token) =>
+                    await host.SeekAsync(TimeSpan.FromTicks(targetTicks), token));
+            }
+        };
 
         DragEnter += OnDragEnter;
         DragDrop += async (_, eventArgs) =>
@@ -283,12 +312,31 @@ public sealed class PlayerForm : Form
         {
             return;
         }
+        var duration = snapshot.Duration;
+        if (!_scrubbing)
+        {
+            _progress.Value = duration is { Nanoseconds: > 0 }
+                ? Math.Clamp((int)Math.Round(
+                    (double)snapshot.Position.Nanoseconds /
+                    duration.Value.Nanoseconds * _progress.Maximum),
+                    0, _progress.Maximum)
+                : 0;
+        }
+        var positionText = FormatPosition(snapshot.Position.ToTimeSpan());
+        var durationText = duration.HasValue
+            ? FormatPosition(duration.Value.ToTimeSpan())
+            : "--:--";
         _state.Text = snapshot.LastError is null
-            ? $"狀態：{snapshot.Transport}　|　Epoch：{snapshot.Epoch.Value}" +
+            ? $"狀態：{snapshot.Transport}　|　{positionText} / {durationText}" +
               (_openedFile is null ? "" : $"　|　{Path.GetFileName(_openedFile)}")
             : $"錯誤：{(snapshot.LastError.Context ?? snapshot.LastError.Code)}";
         RefreshControls();
     }
+
+    private static string FormatPosition(TimeSpan time) =>
+        time.TotalHours >= 1
+            ? $"{(long)time.TotalHours:00}:{time.Minutes:00}:{time.Seconds:00}"
+            : $"{time.Minutes:00}:{time.Seconds:00}";
 
     private void RefreshControls()
     {
@@ -302,6 +350,10 @@ public sealed class PlayerForm : Form
         _seek.Enabled = canInteract &&
             state is TransportState.Ready or TransportState.Playing or TransportState.Paused;
         _seekSeconds.Enabled = _seek.Enabled;
+        _progress.Enabled = canInteract &&
+            _host?.Snapshot.Duration is { Nanoseconds: > 0 } &&
+            state is (TransportState.Ready or TransportState.Playing or
+                TransportState.Paused or TransportState.Ended);
     }
 
     private void ShowFailure(Exception exception)

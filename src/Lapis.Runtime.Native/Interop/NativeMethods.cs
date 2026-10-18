@@ -65,6 +65,12 @@ internal static partial class NativeMethods
         NativePlaybackEpoch epoch,
         out NativeVideoOutputSurfaceBinding binding);
 
+    [LibraryImport(LibraryName, EntryPoint = "lapis_session_get_snapshot")]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    internal static partial NativeResult SessionGetSnapshot(
+        nint session,
+        out NativePlaybackSnapshot snapshot);
+
     [LibraryImport(LibraryName, EntryPoint = "lapis_session_close")]
     [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
     internal static partial NativeResult SessionClose(

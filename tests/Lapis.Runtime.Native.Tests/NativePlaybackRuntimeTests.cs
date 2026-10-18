@@ -254,10 +254,100 @@ public sealed class NativePlaybackRuntimeTests
         Assert.DoesNotContain("session_set_video_output_surface", api.Calls);
     }
 
+    [Fact]
+    public void NativeSnapshotLayoutMirrorsCAbi()
+    {
+        Assert.Equal(40, Marshal.SizeOf<NativePlaybackSnapshot>());
+        Assert.Equal(16L,
+            Marshal.OffsetOf<NativePlaybackSnapshot>(
+                nameof(NativePlaybackSnapshot.Epoch)).ToInt64());
+        Assert.Equal(24L,
+            Marshal.OffsetOf<NativePlaybackSnapshot>(
+                nameof(NativePlaybackSnapshot.Position)).ToInt64());
+        Assert.Equal(32L,
+            Marshal.OffsetOf<NativePlaybackSnapshot>(
+                nameof(NativePlaybackSnapshot.Transport)).ToInt64());
+    }
+
+    [Fact]
+    public async Task ObservationUsesExistingSessionAndPreservesNativeEpochAndPosition()
+    {
+        var api = new FakeNativeApi();
+        await using var runtime = new NativePlaybackRuntime(api);
+        IPlaybackRuntimeObserver observer = runtime;
+        var id = new PlaybackSessionId(
+            Guid.Parse("00112233-4455-6677-8899-aabbccddeeff"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await observer.ReadSnapshotAsync(id, CancellationToken.None));
+        Assert.Equal(0, api.SessionCreateCount);
+
+        await runtime.OpenAsync(
+            new MediaLocator(MediaLocatorKind.File, "movie.mkv"),
+            new RuntimeCommandContext(id, new PlaybackEpoch(1)),
+            CancellationToken.None);
+
+        api.Snapshot = new NativePlaybackSnapshot
+        {
+            SessionId = NativePlaybackSessionId.From(id),
+            Epoch = new NativePlaybackEpoch { Value = 1 },
+            Position = new NativeMediaTime { Nanoseconds = 1_250_000_000 },
+            Transport = NativeTransportState.Ended
+        };
+        var observed = await observer.ReadSnapshotAsync(id, CancellationToken.None);
+        Assert.Equal(id, observed.SessionId);
+        Assert.Equal(new PlaybackEpoch(1), observed.Epoch);
+        Assert.Equal(new MediaTime(1_250_000_000), observed.Position);
+        Assert.Equal(TransportState.Ended, observed.Transport);
+        Assert.Equal(1, api.SessionCreateCount);
+        Assert.Contains("session_get_snapshot", api.Calls);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await observer.ReadSnapshotAsync(
+                new PlaybackSessionId(Guid.NewGuid()), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ObservationRejectsInvalidNativePayloadAndCancellation()
+    {
+        var api = new FakeNativeApi();
+        await using var runtime = new NativePlaybackRuntime(api);
+        var id = new PlaybackSessionId(Guid.NewGuid());
+        await runtime.OpenAsync(
+            new MediaLocator(MediaLocatorKind.File, "movie.mkv"),
+            new RuntimeCommandContext(id, new PlaybackEpoch(1)),
+            CancellationToken.None);
+
+        api.Snapshot = new NativePlaybackSnapshot
+        {
+            SessionId = NativePlaybackSessionId.From(id),
+            Epoch = new NativePlaybackEpoch { Value = 1 },
+            Position = new NativeMediaTime { Nanoseconds = -1 },
+            Transport = NativeTransportState.Playing
+        };
+        await Assert.ThrowsAsync<NativeMediaRuntimeException>(async () =>
+            await runtime.ReadSnapshotAsync(id, CancellationToken.None));
+
+        var malformed = api.Snapshot;
+        malformed.Position.Nanoseconds = 5;
+        malformed.Transport = (NativeTransportState)99;
+        api.Snapshot = malformed;
+        await Assert.ThrowsAsync<NativeMediaRuntimeException>(async () =>
+            await runtime.ReadSnapshotAsync(id, CancellationToken.None));
+
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        var calls = api.Calls.Count(x => x == "session_get_snapshot");
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await runtime.ReadSnapshotAsync(id, canceled.Token));
+        Assert.Equal(calls, api.Calls.Count(x => x == "session_get_snapshot"));
+    }
+
     private sealed class FakeNativeApi : INativeMediaRuntimeApi
     {
         internal uint AbiVersion { get; set; } = NativeAbi.Version;
         internal NativeOpenResult OpenResult { get; set; }
+        internal NativePlaybackSnapshot Snapshot { get; set; }
         internal NativeResult PlayResult { get; set; } = NativeResult.Ok;
         internal NativeResult SurfaceResult { get; set; } = NativeResult.Ok;
         internal NativeVideoOutputSurfaceBinding SurfaceBinding { get; set; } = NativeVideoOutputSurfaceBinding.Deferred;
@@ -365,6 +455,15 @@ public sealed class NativePlaybackRuntimeTests
             LastEpoch = epoch;
             binding = SurfaceBinding;
             return SurfaceResult;
+        }
+
+        public NativeResult SessionGetSnapshot(
+            nint session, out NativePlaybackSnapshot snapshot)
+        {
+            Assert.Equal((nint)22, session);
+            Calls.Add("session_get_snapshot");
+            snapshot = Snapshot;
+            return NativeResult.Ok;
         }
 
         public NativeResult SessionClose(nint session, NativePlaybackEpoch epoch)

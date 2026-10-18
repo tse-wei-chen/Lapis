@@ -23,6 +23,8 @@ public sealed class PlaybackSession : IAsyncDisposable
     private readonly CancellationTokenSource _shutdown = new();
     private readonly object _disposeGate = new();
     private readonly Task _processingLoop;
+    private readonly Task? _observationLoop;
+    private static readonly TimeSpan ObservationPeriod = TimeSpan.FromMilliseconds(150);
     private PlaybackEpoch _epoch = PlaybackEpoch.Initial;
     private PlaybackSnapshot _snapshot;
     private Task? _disposeTask;
@@ -50,6 +52,10 @@ public sealed class PlaybackSession : IAsyncDisposable
 
         _snapshots.Writer.TryWrite(_snapshot);
         _processingLoop = Task.Run(ProcessCommandsAsync);
+        if (runtime is IPlaybackRuntimeObserver observer)
+        {
+            _observationLoop = Task.Run(() => ObserveRuntimeAsync(observer));
+        }
     }
 
     public PlaybackSessionId SessionId { get; }
@@ -123,6 +129,20 @@ public sealed class PlaybackSession : IAsyncDisposable
             disposeError = exception;
         }
 
+        // Do not destroy the native runtime until every observation has
+        // returned. The same adapter gate protects snapshots and native handles.
+        if (_observationLoop is not null)
+        {
+            try
+            {
+                await _observationLoop.ConfigureAwait(false);
+            }
+            catch (Exception exception) when (disposeError is null)
+            {
+                disposeError = exception;
+            }
+        }
+
         Publish(PlaybackSnapshot.CreateInitial(SessionId) with { Epoch = _epoch });
         _snapshots.Writer.TryComplete();
 
@@ -143,6 +163,52 @@ public sealed class PlaybackSession : IAsyncDisposable
         if (disposeError is not null)
         {
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(disposeError).Throw();
+        }
+    }
+
+    private async Task ObserveRuntimeAsync(IPlaybackRuntimeObserver observer)
+    {
+        using var timer = new PeriodicTimer(ObservationPeriod);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_shutdown.Token).ConfigureAwait(false))
+            {
+                var snapshot = Snapshot;
+                if (snapshot.Transport is not (TransportState.Playing or TransportState.Paused))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    // Some native adapters expose synchronous P/Invoke under a
+                    // ValueTask API. Always execute that read off the UI thread,
+                    // and never enqueue an unbounded backlog of observations.
+                    var observed = await Task.Run(async () =>
+                        await observer.ReadSnapshotAsync(SessionId, _shutdown.Token)
+                            .ConfigureAwait(false), _shutdown.Token).ConfigureAwait(false);
+                    _commands.Writer.TryWrite(new CommandEnvelope(
+                        new RuntimeObservationCommand(observed),
+                        _shutdown.Token,
+                        new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)));
+                }
+                catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception exception)
+                {
+                    _commands.Writer.TryWrite(new CommandEnvelope(
+                        new RuntimeObservationFailureCommand(snapshot.Epoch, exception),
+                        _shutdown.Token,
+                        new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)));
+                    // Do not spin on a permanently failing P/Invoke snapshot.
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        {
         }
     }
 
@@ -203,6 +269,12 @@ public sealed class PlaybackSession : IAsyncDisposable
     {
         switch (command)
         {
+            case RuntimeObservationCommand observation:
+                ReconcileObservation(observation.Observation);
+                break;
+            case RuntimeObservationFailureCommand observationFailure:
+                HandleObservationFailure(observationFailure);
+                break;
             case OpenMediaCommand open:
                 await HandleOpenAsync(open, cancellationToken).ConfigureAwait(false);
                 break;
@@ -223,6 +295,59 @@ public sealed class PlaybackSession : IAsyncDisposable
         }
     }
 
+    private void ReconcileObservation(RuntimePlaybackObservation observed)
+    {
+        var current = _snapshot;
+        if (observed.SessionId != SessionId ||
+            observed.Epoch != current.Epoch ||
+            observed.Position.Nanoseconds < 0 ||
+            current.Transport is not (TransportState.Playing or TransportState.Paused))
+        {
+            return;
+        }
+
+        // An in-flight read from before Pause/Resume can complete later with
+        // the same epoch. It must never undo the actor's newer command state.
+        if (observed.Transport != current.Transport &&
+            observed.Transport is not (TransportState.Ended or TransportState.Faulted))
+        {
+            return;
+        }
+
+        var next = current with
+        {
+            Transport = observed.Transport,
+            Position = observed.Position,
+            LastError = observed.Transport == TransportState.Faulted
+                ? current.LastError ?? new PlayerError(
+                    "Playback", "NativeFaulted", ErrorSeverity.Error,
+                    ErrorRecoverability.Retryable,
+                    "Native playback execution entered a faulted state.")
+                : current.LastError
+        };
+        if (next != current)
+        {
+            Publish(next);
+        }
+    }
+
+    private void HandleObservationFailure(RuntimeObservationFailureCommand failure)
+    {
+        if (failure.Epoch != _snapshot.Epoch ||
+            _snapshot.Transport is not (TransportState.Playing or TransportState.Paused))
+        {
+            return;
+        }
+        Publish(_snapshot with
+        {
+            Transport = TransportState.Faulted,
+            LastError = new PlayerError(
+                "Playback", "ObservationFailure", ErrorSeverity.Error,
+                ErrorRecoverability.Retryable, failure.Error.Message,
+                failure.Error.GetType().FullName)
+        });
+    }
+
     private async ValueTask HandleOpenAsync(
         OpenMediaCommand command,
         CancellationToken cancellationToken)
@@ -234,6 +359,7 @@ public sealed class PlaybackSession : IAsyncDisposable
             Position = MediaTime.Zero,
             Transport = TransportState.Opening,
             Capabilities = MediaCapability.None,
+            Duration = null,
             LastError = null
         });
 
@@ -246,6 +372,7 @@ public sealed class PlaybackSession : IAsyncDisposable
         {
             Transport = TransportState.Ready,
             Capabilities = result.Capabilities,
+            Duration = result.Duration,
             LastError = null
         });
     }
@@ -314,6 +441,12 @@ public sealed class PlaybackSession : IAsyncDisposable
         Volatile.Write(ref _snapshot, snapshot);
         _snapshots.Writer.TryWrite(snapshot);
     }
+
+    private sealed record RuntimeObservationCommand(
+        RuntimePlaybackObservation Observation) : PlaybackCommand;
+
+    private sealed record RuntimeObservationFailureCommand(
+        PlaybackEpoch Epoch, Exception Error) : PlaybackCommand;
 
     private sealed record CommandEnvelope(
         PlaybackCommand Command,
