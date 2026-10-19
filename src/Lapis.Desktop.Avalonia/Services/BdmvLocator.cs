@@ -1,10 +1,11 @@
 using Lapis.Contracts.Media;
+using Lapis.Library;
 
 namespace Lapis.Desktop.Avalonia.Services;
 
 /// <summary>
-/// Cheap local UX validation only; the Native Source Provider remains the
-/// authoritative BDMV parser and enforces clear-disc/protection constraints.
+/// Disc root and its BDMV child both normalize to the same catalog locator.
+/// No parser/DRM inference is made from the auxiliary MakeMKV directory.
 /// </summary>
 public static class BdmvLocator
 {
@@ -14,22 +15,14 @@ public static class BdmvLocator
         if (string.IsNullOrWhiteSpace(path)) return false;
         try
         {
-            var absolute = Path.GetFullPath(path);
-            if (!Directory.Exists(absolute)) return false;
-            var last = Path.GetFileName(Path.TrimEndingDirectorySeparator(absolute));
-            var bdmv = string.Equals(last, "BDMV", StringComparison.OrdinalIgnoreCase)
-                ? absolute : Path.Combine(absolute, "BDMV");
-            if (!Directory.Exists(Path.Combine(bdmv, "PLAYLIST")) ||
-                !Directory.Exists(Path.Combine(bdmv, "STREAM")) ||
-                (!File.Exists(Path.Combine(bdmv, "index.bdmv")) &&
-                 !File.Exists(Path.Combine(bdmv, "index.bdm"))))
-                return false;
-
-            locator = new MediaLocator(MediaLocatorKind.Directory, absolute);
+            locator = LibrarySourcePaths.Normalize(
+                new MediaLocator(MediaLocatorKind.Directory, path));
             return true;
         }
         catch (ArgumentException) { return false; }
         catch (NotSupportedException) { return false; }
+        catch (InvalidDataException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
         catch (IOException) { return false; }
         catch (UnauthorizedAccessException) { return false; }
     }

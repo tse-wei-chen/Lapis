@@ -92,6 +92,16 @@ public sealed class ArchitectureBoundaryTests
     }
 
     [Fact]
+    public void AvaloniaPublishCanSelectTheBdmvNativeVariant()
+    {
+        var xml = LoadProject("src/Lapis.Desktop.Avalonia/Lapis.Desktop.Avalonia.csproj");
+        var output = xml.Descendants("Content").Single(node =>
+            (string?)node.Attribute("Include") == "$(LapisNativeRuntimeDir)/*.dll");
+        Assert.Equal("Always", (string?)output.Element("CopyToOutputDirectory"));
+        Assert.Equal("Always", (string?)output.Element("CopyToPublishDirectory"));
+    }
+
+    [Fact]
     public void DesktopHostingDoesNotOwnNativeInteropOrUiFramework()
     {
         var files = Directory.EnumerateFiles(

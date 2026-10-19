@@ -17,9 +17,12 @@ dotnet build Lapis.slnx -c Release --no-restore
 dotnet run --project src/Lapis.Desktop.Avalonia -c Release --no-build
 ```
 
-The managed project now stages **all** `build/native/Release/*.dll` alongside
-the Avalonia executable for both `dotnet build` and `dotnet publish`, after
-the Native Release build has completed. The directory contains
+The default project stages **all** `build/native/Release/*.dll` alongside
+Avalonia, after Native Release is built. To play BDMV directories, use
+`scripts/build-bdmv-player.ps1` to build `build/native-bdmv` with libbluray
+enabled and publish an isolated `build/Lapis.BdmvPlayer` directory.
+The `LapisNativeRuntimeDir` MSBuild property selects the specific Native
+build; without it, the standard file-only runtime is selected. The directory contains
 `Lapis.MediaRuntime.dll` **and** the FFmpeg shared libraries (and libbluray
 dependencies if built with the opt-in feature). No machine-wide PATH changes
 should be necessary. A managed-only build can still show the library without
@@ -36,6 +39,12 @@ Get-ChildItem src/Lapis.Desktop.Avalonia/bin/Release/net10.0-windows/*dll |
   Where-Object Name -Match 'Lapis.MediaRuntime|avcodec|avformat|avutil'
 dotnet run --project src/Lapis.Desktop.Avalonia -c Release --no-build
 ```
+
+If `session_open` returns Unsupported for BDMV, check that you launched
+the **BDMV-specific published executable**; it is not interchangeable
+with the normal file-only build. The extra `MAKEMKV` directory may remain
+in the disc root, but doesn't establish whether the BDMV stream is clear.
+AACS/BD+ decryption and BD-J menu navigation remain unsupported.
 
 If error `0x8007007E` remains despite app-local dependencies, check for a
 missing MSVC x64 runtime or an unresolved transitive DLL with the Windows

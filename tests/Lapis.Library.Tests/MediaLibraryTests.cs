@@ -31,6 +31,43 @@ public sealed class MediaLibraryTests
     }
 
     [Fact]
+    public async Task TypicalMakeMkvBackupLayoutIsOneDiscWithPrimaryPlaylistsOnly()
+    {
+        using var test = new TestFiles();
+        var root = test.CreateDisc("Wakare");
+        var bdmv = Path.Combine(root, "BDMV");
+        Directory.CreateDirectory(Path.Combine(bdmv, "AUXDATA"));
+        Directory.CreateDirectory(Path.Combine(bdmv, "BACKUP", "PLAYLIST"));
+        Directory.CreateDirectory(Path.Combine(bdmv, "BACKUP", "CLIPINF"));
+        Directory.CreateDirectory(Path.Combine(bdmv, "BDJO"));
+        Directory.CreateDirectory(Path.Combine(bdmv, "JAR"));
+        Directory.CreateDirectory(Path.Combine(bdmv, "CLIPINF"));
+        Directory.CreateDirectory(Path.Combine(bdmv, "META", "DL"));
+        Directory.CreateDirectory(Path.Combine(root, "CERTIFICATE", "BACKUP"));
+        Directory.CreateDirectory(Path.Combine(root, "MAKEMKV", "AACS", "DUPLICATE"));
+        Directory.CreateDirectory(Path.Combine(root, "MAKEMKV", "CMAP"));
+        File.WriteAllText(Path.Combine(bdmv, "PLAYLIST", "00002.mpls"), "");
+        File.WriteAllText(Path.Combine(bdmv, "PLAYLIST", "00004.mpls"), "");
+        File.WriteAllText(Path.Combine(bdmv, "BACKUP", "PLAYLIST", "00999.mpls"), "");
+        File.WriteAllText(Path.Combine(bdmv, "META", "DL", "bdmt_jpn.xml"), "<disc/>");
+        File.WriteAllBytes(Path.Combine(bdmv, "META", "DL", "RSL_wakareD1_L.jpg"), [0xFF, 0xD8, 0xFF]);
+        File.WriteAllText(Path.Combine(root, "MAKEMKV", "AACS", "MKB_RO.inf"), "");
+        File.WriteAllText(Path.Combine(root, "MAKEMKV", "discattd.dat"), "");
+        var library = new JsonMediaLibrary(Path.Combine(test.Root, "catalog.json"));
+
+        var disc = await library.ImportAsync(
+            new MediaLocator(MediaLocatorKind.Directory, root));
+        var byBdmv = await library.ImportAsync(
+            new MediaLocator(MediaLocatorKind.Directory, bdmv));
+
+        Assert.Equal(disc.Id, byBdmv.Id);
+        Assert.Equal(root, disc.SourcePath);
+        Assert.Equal(new[] { "00002", "00004" },
+            DiscPlaylistIndex.ListIdentifiers(disc));
+        Assert.Single(await library.ListAsync());
+    }
+
+    [Fact]
     public async Task FileImportSearchMetadataAndRemoveOnlyCatalog()
     {
         using var test = new TestFiles();

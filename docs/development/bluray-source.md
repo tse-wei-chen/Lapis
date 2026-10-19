@@ -4,13 +4,26 @@ Lapis's native media runtime can optionally open an **unprotected** Blu-ray
 directory as a virtual MPEG-TS stream through libbluray. This is NOT full
 PowerDVD-equivalent disc playback: there is no BD-J, menu rendering, actor-
 coordinated title/chapter switching, optical drive access, ISO support, or
-AACS/BD+ decryption. The WinForms desktop shell has a separate **Open BDMV** folder picker
-and Ctrl+Shift+O shortcut. Only a native build with libbluray enabled can
-actually open that Directory locator.
+AACS/BD+ decryption. The library-first Avalonia app imports one complete disc root (or its BDMV
+child) as one collection item. Only a native build with libbluray enabled can
+actually open the Directory locator.
 
-## Enable explicitly (Windows, x64)
+## Windows x64: build and publish the BDMV player
 
-From a PowerShell terminal at the repository root with a vcpkg checkout:
+With `VCPKG_ROOT` configured, run from the repository root:
+
+```powershell
+.\scripts\build-bdmv-player.ps1
+.\build\Lapis.BdmvPlayer\Lapis.Desktop.Avalonia.exe
+```
+
+Use `-VcpkgRoot C:\vcpkg` if needed. The script explicitly enables both
+`VCPKG_MANIFEST_FEATURES=bluray` and `LAPIS_ENABLE_LIBBLURAY=ON`, builds
+the adapter, validates its source contract, then publishes all relevant
+Native DLLs to an isolated executable folder. No overwriting the ordinary
+file-only Native build or system PATH modifications.
+
+Manual equivalent for the Native build only:
 
 ```powershell
 cmake -S native/MediaRuntime -B build/native-bdmv -A x64 `
@@ -28,8 +41,10 @@ dependencies only for this opt-in configuration. If using a different
 package manager, provide `LIBBLURAY_INCLUDE_DIR` and
 `LIBBLURAY_LIBRARY` at CMake configure time.
 
-The release triplet builds **dynamic** libraries. Make the required
-libbluray and dependent runtime DLLs available to the final executable.
+The release triplet builds **dynamic** libraries. The script stages the
+correct libbluray and other dependent DLLs alongside the BDMV-specific app.
+A normal `dotnet run` without `LapisNativeRuntimeDir` still uses the
+standard file-only Native build.
 Check vcpkg's `share/libbluray/copyright` and dependency licenses before
 redistribution. Do not clone libbluray sources into Lapis.
 
@@ -60,10 +75,18 @@ MediaLocator(Directory, "<disc root>")
 The C ABI v2 already models Directory locators, but only a build with
 `LAPIS_ENABLE_LIBBLURAY=ON` registers this real source by default.
 DesktopPlaybackHost routes Directory locators through the same PlaybackSession
-actor and HWND binding as File locators; it never calls the disc API from
-WinForms. The desktop shell also supports dropping a valid BDMV directory.
-Point to a disc root with `BDMV/index.bdmv`, `BDMV/PLAYLIST`
-and `BDMV/STREAM`, or to its `BDMV` subdirectory.
+actor and HWND binding as File locators; Avalonia never calls the disc API
+directly. The library accepts an outer disc root containing
+`BDMV/index.bdmv`, `BDMV/PLAYLIST`, and `BDMV/STREAM`, or the
+`BDMV` subdirectory itself; both canonicalize to the same root.
+
+Realistic disc backups may include `BDMV/BACKUP`, `BDMV/CLIPINF`,
+`BDMV/BDJO`, `BDMV/JAR`, `BDMV/META/DL` artwork and
+`bdmt_jpn.xml`, `CERTIFICATE`, and `MAKEMKV/AACS` or `MAKEMKV/CMAP`.
+These are **not** additional titles in the library. Read-only Playlist
+file indexing consults `BDMV/PLAYLIST`, not `BDMV/BACKUP/PLAYLIST`.
+The presence of `MAKEMKV/AACS` alone does not establish the encryption
+status of `BDMV/STREAM`.
 
 The first implementation rejects discs reporting AACS or BD+. It only
 exposes read-only Title/Playlist/Chapter/Angle metadata (where present).

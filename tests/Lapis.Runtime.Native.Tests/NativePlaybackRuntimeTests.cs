@@ -24,6 +24,38 @@ public sealed class NativePlaybackRuntimeTests
     }
 
     [Fact]
+    public async Task UnsupportedBdmvOpenProvidesBuildGuidance()
+    {
+        var api = new FakeNativeApi { SessionOpenResult = NativeResult.Unsupported };
+        await using var runtime = new NativePlaybackRuntime(api);
+        var error = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await runtime.OpenAsync(
+                new MediaLocator(MediaLocatorKind.Directory, @"C:\Disc"),
+                new RuntimeCommandContext(
+                    new PlaybackSessionId(Guid.NewGuid()), new PlaybackEpoch(1)),
+                CancellationToken.None));
+        Assert.Contains("libbluray", error.Message);
+        Assert.Contains("build-bdmv-player.ps1", error.Message);
+        Assert.Contains("AACS/BD+", error.Message);
+        Assert.Equal(NativeMediaLocatorKind.Directory, api.LastLocatorKind);
+    }
+
+    [Fact]
+    public async Task UnsupportedFileOpenPreservesNativeOperationError()
+    {
+        var api = new FakeNativeApi { SessionOpenResult = NativeResult.Unsupported };
+        await using var runtime = new NativePlaybackRuntime(api);
+        var error = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await runtime.OpenAsync(
+                new MediaLocator(MediaLocatorKind.File, "movie.mkv"),
+                new RuntimeCommandContext(
+                    new PlaybackSessionId(Guid.NewGuid()), new PlaybackEpoch(1)),
+                CancellationToken.None));
+        Assert.Contains("session_open", error.Message);
+        Assert.DoesNotContain("build-bdmv-player.ps1", error.Message);
+    }
+
+    [Fact]
     public async Task CommandsMapContractsAndDisposeSessionBeforeRuntime()
     {
         var api = new FakeNativeApi
@@ -448,6 +480,7 @@ public sealed class NativePlaybackRuntimeTests
         internal NativeDiagnosticEvent[] DiagnosticEvents { get; set; } = [];
         internal ulong DiagnosticDropped { get; set; } = 0;
         internal NativeOpenResult OpenResult { get; set; }
+        internal NativeResult SessionOpenResult { get; set; } = NativeResult.Ok;
         internal NativePlaybackSnapshot Snapshot { get; set; }
         internal NativeResult PlayResult { get; set; } = NativeResult.Ok;
         internal NativeResult SurfaceResult { get; set; } = NativeResult.Ok;
@@ -541,7 +574,7 @@ public sealed class NativePlaybackRuntimeTests
             LastLocatorValue = value;
             LastEpoch = epoch;
             result = OpenResult;
-            return NativeResult.Ok;
+            return SessionOpenResult;
         }
 
         public NativeResult SessionPlay(nint session, NativePlaybackEpoch epoch)

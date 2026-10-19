@@ -21,7 +21,7 @@ public sealed class BdmvLocatorTests
             Assert.Equal(Path.GetFullPath(root), disc.Value);
             Assert.True(BdmvLocator.TryFromDirectory(bdmv, out var child));
             Assert.Equal(MediaLocatorKind.Directory, child!.Kind);
-            Assert.Equal(Path.GetFullPath(bdmv), child.Value);
+            Assert.Equal(Path.GetFullPath(root), child.Value);
         }
         finally
         {

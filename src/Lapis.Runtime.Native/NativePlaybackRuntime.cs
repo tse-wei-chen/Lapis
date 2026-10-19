@@ -81,6 +81,18 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
                 locator.Value,
                 epoch,
                 out var openResult);
+            if (result == NativeResult.Unsupported &&
+                locator.Kind == MediaLocatorKind.Directory)
+            {
+                // Generic source rejection can mean a build without the
+                // opt-in provider or a rejected disc. Never infer DRM state.
+                throw new NotSupportedException(
+                    "無法開啟完整 BDMV 光碟。Lapis.MediaRuntime.dll 可能沒有編入 " +
+                    "libbluray，或 Native 不接受目前的光碟結構。" +
+                    "請使用 scripts/build-bdmv-player.ps1 建立 Blu-ray 版本，" +
+                    "並確認播放器載入的是該版本的 DLL。" +
+                    "目前只支援可讀取的未受保護 BDMV，不支援 AACS/BD+ 或 BD-J 選單。");
+            }
             ThrowForResult(result, "session_open");
 
             MediaTime? duration = null;
