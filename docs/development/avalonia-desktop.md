@@ -17,10 +17,31 @@ dotnet build Lapis.slnx -c Release --no-restore
 dotnet run --project src/Lapis.Desktop.Avalonia -c Release --no-build
 ```
 
-The managed project copies `build/native/Release/Lapis.MediaRuntime.dll`
-beside its executable when it exists; codec dependencies also need to be
-on the DLL search path or deployed next to the app. The window can open
-without a Native DLL, but playing media cannot.
+The managed project now stages **all** `build/native/Release/*.dll` alongside
+the Avalonia executable for both `dotnet build` and `dotnet publish`, after
+the Native Release build has completed. The directory contains
+`Lapis.MediaRuntime.dll` **and** the FFmpeg shared libraries (and libbluray
+dependencies if built with the opt-in feature). No machine-wide PATH changes
+should be necessary. A managed-only build can still show the library without
+Native installed, but watching a movie requires these DLLs.
+
+If you already built the UI before Native, rebuild the UI. Quick local recovery
+on Windows from the repository root:
+
+```powershell
+cmake --build build/native --config Release
+dotnet build src/Lapis.Desktop.Avalonia/Lapis.Desktop.Avalonia.csproj -c Release
+# Check both the main DLL and the avformat/avcodec/avutil dependencies:
+Get-ChildItem src/Lapis.Desktop.Avalonia/bin/Release/net10.0-windows/*dll |
+  Where-Object Name -Match 'Lapis.MediaRuntime|avcodec|avformat|avutil'
+dotnet run --project src/Lapis.Desktop.Avalonia -c Release --no-build
+```
+
+If error `0x8007007E` remains despite app-local dependencies, check for a
+missing MSVC x64 runtime or an unresolved transitive DLL with the Windows
+Dependencies viewer or `dumpbin /DEPENDENTS`. Never fix this by blindly
+copying random DLLs into System32. The product package must independently
+carry its redistributable Native dependencies, subject to THIRD_PARTY.md.
 
 The app now starts on the **library**, not on the player surface. Import
 one or multiple local video files, or one **entire clear Blu-ray disc root**

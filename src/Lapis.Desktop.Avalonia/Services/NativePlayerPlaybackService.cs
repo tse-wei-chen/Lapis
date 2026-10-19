@@ -31,7 +31,27 @@ public sealed class NativePlayerPlaybackService(Func<nint> getVideoHwnd)
 
         if (_host is null)
         {
-            var runtime = new NativePlaybackRuntime();
+            NativePlaybackRuntime runtime;
+            try
+            {
+                runtime = new NativePlaybackRuntime();
+            }
+            catch (DllNotFoundException exception)
+            {
+                throw new InvalidOperationException(
+                    "無法載入 Lapis 原生播放引擎或其 FFmpeg/libbluray 相依 DLL。" +
+                    "請先編譯 Native Release，再重新建置 Avalonia，" +
+                    "確定 Lapis.MediaRuntime.dll 與相依 DLL 一起部署於程式目錄。",
+                    exception);
+            }
+            catch (BadImageFormatException exception)
+            {
+                throw new InvalidOperationException(
+                    "Lapis 原生播放引擎與目前執行平台架構不相容；" +
+                    "請確認 .NET 應用及所有 Native DLL 均為 x64。",
+                    exception);
+            }
+
             _host = new DesktopPlaybackHost(runtime, runtime);
         }
 

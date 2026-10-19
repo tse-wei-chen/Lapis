@@ -123,10 +123,23 @@ jobs:
         timeout-minutes: 4
         run: |
           dotnet build tests/Lapis.Desktop.Avalonia.Tests/Lapis.Desktop.Avalonia.Tests.csproj -c Release
+          # Test the PRODUCT deployment, not just a test host with Native's
+          # build folder injected into PATH (which previously hid missing DLLs).
+          dotnet build src/Lapis.Desktop.Avalonia/Lapis.Desktop.Avalonia.csproj -c Release
           $nativeDir = (Resolve-Path "build/native/Release").Path
+          $appDir = (Resolve-Path "src/Lapis.Desktop.Avalonia/bin/Release/net10.0-windows").Path
           $testDir = (Resolve-Path "tests/Lapis.Desktop.Avalonia.Tests/bin/Release/net10.0-windows").Path
-          Copy-Item (Join-Path $nativeDir "Lapis.MediaRuntime.dll") $testDir -Force
-          $env:PATH = "$nativeDir;$env:PATH"
+          $nativeDlls = @(Get-ChildItem -Path $nativeDir -Filter "*.dll" -File)
+          if ($nativeDlls.Count -le 1) {
+            throw "Native output contains no dependency DLLs; FFmpeg app-local staging is missing."
+          }
+          foreach ($dll in $nativeDlls) {
+            if (-not (Test-Path (Join-Path $appDir $dll.Name))) {
+              throw "Avalonia app deployment missing $($dll.Name)."
+            }
+          }
+          Copy-Item (Join-Path $nativeDir "*.dll") $testDir -Force
+          # No PATH override. Native acceptance must resolve DLLs beside the app.
           $env:LAPIS_AVALONIA_NATIVE_ACCEPTANCE = "1"
           $env:LAPIS_NATIVE_UI_MEDIA = (Resolve-Path "native/MediaRuntime/tests/assets/test_soak_churn.mp4").Path
           dotnet test tests/Lapis.Desktop.Avalonia.Tests/Lapis.Desktop.Avalonia.Tests.csproj `

@@ -15,11 +15,17 @@
     <ProjectReference Include="../Lapis.Runtime.Native/Lapis.Runtime.Native.csproj" />
     <ProjectReference Include="../Lapis.Library/Lapis.Library.csproj" />
   </ItemGroup>
-  <!-- Native playback is Windows-only today; never silently claim macOS/Linux
-       support merely because the presentation toolkit is cross-platform. -->
-  <Target Name="CopyNativeMediaRuntime" AfterTargets="Build"
-          Condition="Exists('$(MSBuildProjectDirectory)/../../build/native/Release/Lapis.MediaRuntime.dll')">
-    <Copy SourceFiles="$(MSBuildProjectDirectory)/../../build/native/Release/Lapis.MediaRuntime.dll"
-          DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
-  </Target>
+  <!-- The CMake/vcpkg Release output is a deployable native runtime set:
+       Lapis.MediaRuntime.dll plus transitive FFmpeg (and optional libbluray)
+       DLLs copied next to it by vcpkg's Windows app-local deployment.
+       Copy ALL DLLs to build AND publish outputs; copying only the main DLL
+       causes ERROR_MOD_NOT_FOUND (0x8007007E) on a normal user machine.
+       Leave managed-only builds valid when Native has not been built yet. -->
+  <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)/../../build/native/Release/Lapis.MediaRuntime.dll')">
+    <Content Include="$(MSBuildProjectDirectory)/../../build/native/Release/*.dll">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
 </Project>
