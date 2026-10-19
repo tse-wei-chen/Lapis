@@ -1,0 +1,62 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:video="clr-namespace:Lapis.Desktop.Avalonia.Controls"
+        x:Class="Lapis.Desktop.Avalonia.Views.MainWindow"
+        Title="Lapis — Desktop Player" Width="1220" Height="780"
+        MinWidth="900" MinHeight="540"
+        Background="#0B1019" Foreground="#EAF0F7">
+  <Grid RowDefinitions="Auto,*,Auto,Auto" Margin="18" RowSpacing="14">
+    <Border Grid.Row="0" Background="#151E2C" CornerRadius="14" Padding="14">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="12">
+        <StackPanel Grid.Column="0" Spacing="2">
+          <TextBlock Text="LAPIS" FontWeight="Bold" FontSize="22"/>
+          <TextBlock Text="DESKTOP PLAYER" Foreground="#8FA4BC" FontSize="10"/>
+        </StackPanel>
+        <TextBlock Grid.Column="1" Text="{Binding MediaTitle}"
+                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                   FontSize="15" Foreground="#D9E5F2" Margin="18,0,0,0"/>
+        <Button Grid.Column="2" Content="開啟影片" Click="OpenFile_Click"
+                MinWidth="108" VerticalAlignment="Center"/>
+        <Button Grid.Column="3" Content="開啟 BDMV" Click="OpenBdmv_Click"
+                MinWidth="118" VerticalAlignment="Center"/>
+      </Grid>
+    </Border>
+
+    <!-- HWND airspace: no Avalonia overlays are placed over NativeControlHost.
+         Subtitle/menu compositing is a separate GPU surface milestone. -->
+    <Border Grid.Row="1" Background="#030508" CornerRadius="12"
+            ClipToBounds="True" BorderThickness="1" BorderBrush="#26354A">
+      <video:WindowsVideoSurface x:Name="VideoSurface"/>
+    </Border>
+
+    <Border Grid.Row="2" Background="#151E2C" CornerRadius="12" Padding="14">
+      <Grid RowDefinitions="Auto,Auto" RowSpacing="12">
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+          <TextBlock Grid.Column="0" Text="{Binding PositionText}"
+                     Foreground="#B7C9DD" FontSize="13"/>
+          <TextBlock Grid.Column="1" Text="{Binding TransportText}"
+                     Foreground="#98C8FF" FontSize="13"/>
+        </Grid>
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="10">
+          <Button Content="◀ 10 秒" Command="{Binding BackCommand}" IsEnabled="{Binding CanTransport}" MinWidth="90"/>
+          <Button Content="{Binding PlayPauseLabel}" Command="{Binding ToggleCommand}" IsEnabled="{Binding CanTransport}"
+                  MinWidth="130"/>
+          <Button Content="10 秒 ▶" Command="{Binding ForwardCommand}" IsEnabled="{Binding CanTransport}" MinWidth="90"/>
+          <Button Content="停止" Command="{Binding StopCommand}" IsEnabled="{Binding CanTransport}" MinWidth="82"/>
+          <TextBlock Text="影片播放與聲音仍由 Native MediaRuntime 處理"
+                     VerticalAlignment="Center" Foreground="#8298AD"
+                     Margin="20,0,0,0"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="3" Background="#111927" CornerRadius="9" Padding="11,8">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Grid.Column="0" Text="{Binding StatusText}" Foreground="#B5C7D9"
+                   TextTrimming="CharacterEllipsis"/>
+        <TextBlock Grid.Column="1" Text="AI 翻譯字幕 · 規劃中"
+                   Foreground="#8698AB" Margin="16,0,0,0"/>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

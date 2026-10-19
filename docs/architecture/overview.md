@@ -123,6 +123,13 @@ and to seek by dragging the progress slider.
 
 ## Current implementation slice
 
+The product desktop UI is now **Avalonia 11/MVVM** (`Lapis.Desktop.Avalonia`),
+with a replaceable `IPlayerPlaybackService` and Windows-specific
+`NativeControlHost` HWND adapter. Existing WinForms shell is retained only
+for legacy native GPU acceptance. Avalonia NativeControlHost has an airspace
+boundary: transparent subtitles/menus must be composed into a proper GPU
+surface rather than assumed to overlay an HWND (ADR 0040).
+
 The source-selected Blu-ray chapter-seek control path resolves a chapter
 ID to an immutable MediaTime through a separately versioned, read-only C ABI
 extension. Only the serialized C# PlaybackSession actor may then invoke the
