@@ -22,6 +22,7 @@ public sealed class PlayerViewModelTests
         Assert.Equal("Playing", viewModel.TransportText);
         Assert.Equal("00:12 / 01:00", viewModel.PositionText);
         Assert.True(viewModel.CanTransport);
+        Assert.True(viewModel.CanSeek);
     }
 
     [Fact]
@@ -36,10 +37,23 @@ public sealed class PlayerViewModelTests
         Assert.Equal("尚未開啟影片", viewModel.MediaTitle);
     }
 
+    [Fact]
+    public async Task EndedPlaybackAllowsReplayButNotSeeking()
+    {
+        var fake = new FakePlayer { OpenTransport = TransportState.Ended };
+        await using var viewModel = new PlayerViewModel(fake);
+        await viewModel.OpenAsync(new MediaLocator(MediaLocatorKind.File, "movie.mkv"));
+
+        Assert.True(viewModel.CanTransport);
+        Assert.False(viewModel.CanSeek);
+        Assert.Equal("重播", viewModel.PlayPauseLabel);
+    }
+
     private sealed class FakePlayer : IPlayerPlaybackService
     {
         public MediaLocator? LastLocator { get; private set; }
         public bool FailOpen { get; set; }
+        public TransportState OpenTransport { get; set; } = TransportState.Playing;
         public PlaybackSnapshot Snapshot { get; private set; } =
             PlaybackSnapshot.CreateInitial(PlaybackSessionId.New());
 
@@ -51,7 +65,7 @@ public sealed class PlayerViewModelTests
             Snapshot = Snapshot with
             {
                 Epoch = new PlaybackEpoch(1),
-                Transport = TransportState.Playing,
+                Transport = OpenTransport,
                 Position = Lapis.Contracts.Time.MediaTime.FromSeconds(12),
                 Duration = Lapis.Contracts.Time.MediaTime.FromSeconds(60)
             };

@@ -69,6 +69,9 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
     public bool CanTransport => !_busy && _currentMedia is not null &&
         _transport is TransportState.Ready or TransportState.Playing
             or TransportState.Paused or TransportState.Ended;
+    public bool CanSeek => !_busy && _currentMedia is not null &&
+        _transport is TransportState.Ready or TransportState.Playing
+            or TransportState.Paused;
 
     public Task OpenAsync(MediaLocator locator)
     {
@@ -99,7 +102,7 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private Task SeekRelativeAsync(int deltaSeconds)
     {
-        if (!CanTransport || _transport == TransportState.Ended)
+        if (!CanSeek)
             return Task.CompletedTask;
         var position = _player.Snapshot.Position.ToTimeSpan() +
                        TimeSpan.FromSeconds(deltaSeconds);
@@ -126,6 +129,7 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
             if (_disposed) return;
             _busy = true;
             OnPropertyChanged(nameof(CanTransport));
+            OnPropertyChanged(nameof(CanSeek));
             await operation();
             ApplySnapshot(_player.Snapshot);
             StatusText = _player.Snapshot.LastError is { } error
@@ -188,6 +192,7 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
         OnPropertyChanged(nameof(TransportText));
         OnPropertyChanged(nameof(PlayPauseLabel));
         OnPropertyChanged(nameof(CanTransport));
+        OnPropertyChanged(nameof(CanSeek));
         var time = snapshot.Position.ToTimeSpan();
         var duration = snapshot.Duration?.ToTimeSpan();
         PositionText = $"{FormatTime(time)} / " +

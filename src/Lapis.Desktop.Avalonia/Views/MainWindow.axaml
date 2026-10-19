@@ -38,10 +38,10 @@
                      Foreground="#98C8FF" FontSize="13"/>
         </Grid>
         <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="10">
-          <Button Content="◀ 10 秒" Command="{Binding BackCommand}" IsEnabled="{Binding CanTransport}" MinWidth="90"/>
+          <Button Content="◀ 10 秒" Command="{Binding BackCommand}" IsEnabled="{Binding CanSeek}" MinWidth="90"/>
           <Button Content="{Binding PlayPauseLabel}" Command="{Binding ToggleCommand}" IsEnabled="{Binding CanTransport}"
                   MinWidth="130"/>
-          <Button Content="10 秒 ▶" Command="{Binding ForwardCommand}" IsEnabled="{Binding CanTransport}" MinWidth="90"/>
+          <Button Content="10 秒 ▶" Command="{Binding ForwardCommand}" IsEnabled="{Binding CanSeek}" MinWidth="90"/>
           <Button Content="停止" Command="{Binding StopCommand}" IsEnabled="{Binding CanTransport}" MinWidth="82"/>
           <TextBlock Text="影片播放與聲音仍由 Native MediaRuntime 處理"
                      VerticalAlignment="Center" Foreground="#8298AD"
