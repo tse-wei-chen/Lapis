@@ -1,4 +1,5 @@
 #include "source/bluray/bluray_source.hpp"
+#include "source/bluray/title_selection.hpp"
 
 // Only the libbluray adapter sees BLURAY* and the library's structs.
 extern "C" {
@@ -10,6 +11,7 @@ extern "C" {
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -146,8 +148,6 @@ std::unique_ptr<IBlurayDisc> open_libbluray_disc(
                             NavigationCapability::Playlists;
     snapshot.titles.reserve(title_count);
 
-    std::uint32_t longest_index = 0;
-    std::uint64_t longest_ticks = 0;
     for (std::uint32_t index = 0; index < title_count; ++index) {
         std::unique_ptr<BLURAY_TITLE_INFO, decltype(&bd_free_title_info)> info(
             bd_get_title_info(disc.get(), index, 0), &bd_free_title_info);
@@ -157,10 +157,6 @@ std::unique_ptr<IBlurayDisc> open_libbluray_disc(
         title.id = index; // libbluray title-list index, not MPLS ID
         title.playlist_id = info->playlist;
         title.duration = ticks_to_media_time(info->duration);
-        if (info->duration > longest_ticks) {
-            longest_ticks = info->duration;
-            longest_index = index;
-        }
         if (info->chapter_count > 4096U ||
             (info->chapter_count != 0 && info->chapters == nullptr)) {
             return nullptr;
@@ -196,10 +192,16 @@ std::unique_ptr<IBlurayDisc> open_libbluray_disc(
 
     if (snapshot.titles.empty()) return nullptr;
     const int main_title = bd_get_main_title(disc.get());
-    std::uint32_t selection = main_title >= 0 &&
-        static_cast<std::uint32_t>(main_title) < title_count
-        ? static_cast<std::uint32_t>(main_title) : longest_index;
-    if (bd_select_title(disc.get(), selection) == 0) return nullptr;
+    const auto preferred = main_title >= 0
+        ? std::optional<std::uint32_t>{
+            static_cast<std::uint32_t>(main_title)}
+        : std::nullopt;
+    const auto selected_index = choose_initial_title(snapshot, preferred);
+    if (!selected_index.has_value() ||
+        bd_select_title(disc.get(), *selected_index) == 0) {
+        return nullptr;
+    }
+    const auto selection = *selected_index;
     const auto bytes = bd_get_title_size(disc.get());
     if (bytes == 0) return nullptr;
     snapshot.selected_title = selection;

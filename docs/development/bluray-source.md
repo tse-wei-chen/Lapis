@@ -31,6 +31,19 @@ libbluray and dependent runtime DLLs available to the final executable.
 Check vcpkg's `share/libbluray/copyright` and dependency licenses before
 redistribution. Do not clone libbluray sources into Lapis.
 
+The repository includes an **opt-in** GitHub Actions workflow
+`libbluray opt-in build` (`.github/workflows/libbluray-opt-in.yml`).
+While the workflow exists only in a feature branch, the GitHub Actions
+`workflow_dispatch` button is not available (GitHub requires the workflow
+file on the default branch). To validate PR #35 without merging it, **edit
+the PR description to add `[verify-libbluray]`**. The PR `edited` event
+will launch the optional backend build once; remove the marker afterward
+to prevent unintentional reruns on later description edits. After the
+workflow reaches the default branch, the Actions tab can dispatch it
+directly against a selected ref. The normal PR pipeline never installs
+the optional dependencies. This build checks compilation and link
+compatibility, **not playback of a physical disc**.
+
 ## How the source integrates
 
 ```text

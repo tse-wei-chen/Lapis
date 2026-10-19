@@ -91,6 +91,9 @@ jobs:
           $vcpkgExe = (Get-Command vcpkg).Source
           $vcpkgRoot = Split-Path -Parent $vcpkgExe
           git -C $vcpkgRoot fetch origin a5f736224e85b32e25a8ffc52562333180396642 --depth=1
+          # Keep the active registry consistent with builtin-baseline.
+          # Fetching the commit without checking it out is insufficient.
+          git -C $vcpkgRoot -c advice.detachedHead=false checkout --detach a5f736224e85b32e25a8ffc52562333180396642
           "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Configure
         shell: pwsh

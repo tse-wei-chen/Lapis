@@ -31,16 +31,20 @@ C ABI or GUI to `BLURAY*` and `BLURAY_TITLE_INFO`.
    fallback) **before** starting FFmpeg. The backend rejects encrypted
    AACS/BD+ discs, zero-title/no-stream data, and suspiciously large title
    or chapter counts. Do not enable menu/BD-J/overlay capability flags.
-5. Navigation actions deliberately return `NotReady` instead of changing
+5. The initial main title must be present in successfully decoded title
+   metadata. If the library's reported main title has no metadata, choose
+   the longest available title; reject a completely empty list. This
+   policy is a pure helper with default-CI regression coverage.
+6. Navigation actions deliberately return `NotReady` instead of changing
    the live virtual MPEG-TS cursor behind a running FFmpeg demuxer. Actor
    coordination, epoch bumps, stream replacement, and menu events are
    deferred.
-6. Compile and register the real backend only with
+7. Compile and register the real backend only with
    `LAPIS_ENABLE_LIBBLURAY=ON`. vcpkg manifest feature `bluray`
    supplies the external library; the normal/default dependency graph and
    CI remain FFmpeg-only. `BluraySourceProvider` itself always compiles,
    permitting fake disc backends in deterministic native regression tests.
-7. The already existing C ABI v2 Directory locator can reach this provider
+8. The already existing C ABI v2 Directory locator can reach this provider
    **when** the opt-in backend is compiled. No new ABI exports, frontend
    directory picker or misleading BD-J controls are added.
 
@@ -52,9 +56,15 @@ C ABI or GUI to `BLURAY*` and `BLURAY_TITLE_INFO`.
   operations, source replacement and final adapter destruction.
 - The standard Windows Native CTest and Managed/WinForms integration suite
   must remain green with the default (libbluray OFF) configuration.
-- **Not yet verified in CI:** compiling/linking the optional libbluray ON
-  mode and playing a real unprotected BDMV directory. Both require explicit
-  opt-in acceptance with a legal test disc and packaged libbluray dependencies.
+- An opt-in workflow `libbluray opt-in build` compiles and links the
+  actual adapter with the pinned vcpkg feature and runs the source contract.
+  Before the file is on the default branch, it can be triggered from this
+  feature PR via a description edit containing `[verify-libbluray]`.
+  After merge, it also supports `workflow_dispatch`. It is deliberately
+  not part of regular PR CI and does not prove physical-disc playback.
+- **Not yet verified by default CI:** the optional libbluray ON build and
+  real unprotected BDMV playback. A manual workflow run is required for the
+  former; the latter requires a legal test disc and playback acceptance.
 
 ## Next steps
 

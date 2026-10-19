@@ -1,5 +1,6 @@
 #include "session/playback_media_session.hpp"
 #include "source/bluray/bluray_source.hpp"
+#include "source/bluray/title_selection.hpp"
 #include "source/file/file_source.hpp"
 
 #include <chrono>
@@ -101,6 +102,28 @@ private:
 int main() {
     using namespace lapis::media;
     using lapis::media::bluray::BluraySourceProvider;
+
+    // Main-title metadata sometimes fails to load. Selection must only
+    // return an index which is actually present in our discovery snapshot.
+    NavigationSnapshot candidates;
+    CHECK(!bluray::choose_initial_title(candidates, std::uint32_t{10}));
+    TitleInfo short_title;
+    short_title.id = 4;
+    short_title.duration = MediaTime{3'000'000'000};
+    TitleInfo long_title;
+    long_title.id = 9;
+    long_title.duration = MediaTime{7'000'000'000};
+    candidates.titles.push_back(short_title);
+    candidates.titles.push_back(long_title);
+    CHECK(bluray::choose_initial_title(candidates, std::uint32_t{4}) ==
+          std::optional<std::uint32_t>{4});
+    CHECK(bluray::choose_initial_title(candidates, std::uint32_t{100}) ==
+          std::optional<std::uint32_t>{9});
+    CHECK(bluray::choose_initial_title(candidates, std::nullopt) ==
+          std::optional<std::uint32_t>{9});
+    candidates.titles.front().duration = long_title.duration;
+    CHECK(bluray::choose_initial_title(candidates, std::nullopt) ==
+          std::optional<std::uint32_t>{4});
 
     TemporaryDisc disc;
     const auto name = utf8_path(disc.root);
