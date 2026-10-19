@@ -30,6 +30,8 @@ public sealed partial class MainWindow : Window
     private readonly ItemsControl _discPlaylistList;
     private readonly ScrollViewer _gridSurface;
     private readonly Border _listSurface;
+    private readonly Grid _dropOverlay;
+    private bool _dropBusy;
     private readonly Grid _navigationHost;
     private readonly Border _navigationIndicator;
     private readonly Button _navAll;
@@ -61,6 +63,8 @@ public sealed partial class MainWindow : Window
             ?? throw new InvalidOperationException("Missing library grid viewport.");
         _listSurface = this.FindControl<Border>("LibraryListSurface")
             ?? throw new InvalidOperationException("Missing library list viewport.");
+        _dropOverlay = this.FindControl<Grid>("LibraryDropOverlay")
+            ?? throw new InvalidOperationException("Missing library drop overlay.");
         _navigationHost = this.FindControl<Grid>("LibraryNavigationHost")
             ?? throw new InvalidOperationException("Missing sidebar host.");
         _navigationIndicator = this.FindControl<Border>("LibraryNavigationIndicator")
@@ -99,6 +103,17 @@ public sealed partial class MainWindow : Window
             catch (Exception exception) { _library.ReportError($"無法讀取收藏庫：{exception.Message}"); }
         };
 
+        // OS Explorer drops are handled by the library screen; Watch never
+        // accepts dropped content and no import initiates Native playback.
+        _libraryPage.AddHandler(DragDrop.DragEnterEvent,
+            LibraryDragEnter, RoutingStrategies.Bubble, handledEventsToo: true);
+        _libraryPage.AddHandler(DragDrop.DragOverEvent,
+            LibraryDragOver, RoutingStrategies.Bubble, handledEventsToo: true);
+        _libraryPage.AddHandler(DragDrop.DragLeaveEvent,
+            LibraryDragLeave, RoutingStrategies.Bubble, handledEventsToo: true);
+        _libraryPage.AddHandler(DragDrop.DropEvent,
+            LibraryDrop, RoutingStrategies.Bubble, handledEventsToo: true);
+
         _timeline.AddHandler(InputElement.PointerPressedEvent,
             TimelinePointerPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
         _timeline.AddHandler(InputElement.PointerReleasedEvent,
@@ -109,6 +124,85 @@ public sealed partial class MainWindow : Window
     }
 
     private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
+
+    private bool CanAcceptFiles(DragEventArgs args) =>
+        !_dropBusy && _libraryPage.IsVisible &&
+        args.Data.Contains(DataFormats.Files);
+
+    private void LibraryDragEnter(object? sender, DragEventArgs args) =>
+        LibraryDragOver(sender, args);
+
+    private void LibraryDragOver(object? sender, DragEventArgs args)
+    {
+        var valid = CanAcceptFiles(args);
+        args.DragEffects = valid ? DragDropEffects.Copy : DragDropEffects.None;
+        args.Handled = true;
+        if (valid && !_dropOverlay.IsVisible)
+        {
+            _dropOverlay.IsVisible = true;
+            Dispatcher.UIThread.Post(() => LibraryMotion.Enter(_dropOverlay),
+                DispatcherPriority.Loaded);
+        }
+        else if (!valid)
+        {
+            _dropOverlay.IsVisible = false;
+        }
+    }
+
+    private void LibraryDragLeave(object? sender, DragEventArgs args)
+    {
+        // A leave event can originate when the pointer crosses child controls.
+        // Hide only when leaving the whole library surface.
+        var position = args.GetPosition(_libraryPage);
+        if (position.X < 0 || position.Y < 0 ||
+            position.X > _libraryPage.Bounds.Width ||
+            position.Y > _libraryPage.Bounds.Height)
+        {
+            _dropOverlay.IsVisible = false;
+        }
+    }
+
+    private async void LibraryDrop(object? sender, DragEventArgs args)
+    {
+        var accept = CanAcceptFiles(args);
+        args.DragEffects = accept ? DragDropEffects.Copy : DragDropEffects.None;
+        args.Handled = true;
+        _dropOverlay.IsVisible = false;
+        if (!accept) return;
+
+        // Read the paths before the platform disposes its drop data.
+        var paths = args.Data.GetFiles()
+            ?.Select(item => item.TryGetLocalPath())
+            .ToArray() ?? [];
+        if (paths.Length == 0)
+        {
+            _library.ReportError("沒有可存取的本機影片或 Blu-ray 資料夾。");
+            return;
+        }
+
+        _dropBusy = true;
+        try
+        {
+            var plan = LibraryDropClassifier.Classify(paths);
+            var result = await _library.ImportManyAsync(
+                plan.Sources, plan.Rejected.Count);
+            if (plan.Rejected.Count != 0)
+            {
+                _library.ReportError(
+                    $"拖曳匯入：新增 {result.Added} 部、已收藏 {result.AlreadyPresent} 部、" +
+                    $"略過 {result.Skipped} 個。{plan.Rejected[0]}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _library.ReportError($"拖曳匯入失敗：{ex.Message}");
+        }
+        finally
+        {
+            _dropBusy = false;
+            _dropOverlay.IsVisible = false;
+        }
+    }
 
     private void TimelinePointerPressed(object? sender, PointerPressedEventArgs args)
     {

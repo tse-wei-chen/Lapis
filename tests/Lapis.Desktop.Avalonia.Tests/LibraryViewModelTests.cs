@@ -138,6 +138,46 @@ public sealed class LibraryViewModelTests
     }
 
     [Fact]
+    public async Task BulkDropImportPreservesExistingItemsAndOnlyIndexesSources()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "lapis-bulk-" + Guid.NewGuid());
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var clip = Path.Combine(directory, "trailer.mp4");
+            File.WriteAllText(clip, "original stays unchanged");
+            var root = Path.Combine(directory, "BluRayMovie");
+            Directory.CreateDirectory(Path.Combine(root, "BDMV", "PLAYLIST"));
+            Directory.CreateDirectory(Path.Combine(root, "BDMV", "STREAM"));
+            File.WriteAllText(Path.Combine(root, "BDMV", "index.bdmv"), "");
+            using var view = new LibraryViewModel(
+                new JsonMediaLibrary(Path.Combine(directory, "catalog.json")));
+            await view.LoadAsync();
+
+            var movie = new MediaLocator(MediaLocatorKind.File, clip);
+            var disc = new MediaLocator(MediaLocatorKind.Directory, root);
+            var first = await view.ImportManyAsync([movie, disc], rejectedCount: 2);
+            Assert.Equal(new LibraryDropImportResult(2, 0, 2), first);
+            Assert.Equal(2, view.VisibleItems.Count);
+            Assert.True(view.IsAllCategory);
+
+            view.ShowDiscs();
+            view.SearchText = "not-a-title";
+            var again = await view.ImportManyAsync([movie, disc]);
+            Assert.Equal(new LibraryDropImportResult(0, 2, 0), again);
+            Assert.True(view.IsAllCategory);
+            Assert.Equal("", view.SearchText);
+            Assert.Equal(2, view.VisibleItems.Count);
+            Assert.Equal("original stays unchanged", File.ReadAllText(clip));
+            Assert.True(File.Exists(Path.Combine(root, "BDMV", "index.bdmv")));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task RemoveOnlyUpdatesCatalogAndFiltering()
     {
         var storage = new FakeLibrary();

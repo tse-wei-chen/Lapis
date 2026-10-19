@@ -6,18 +6,18 @@
         MinWidth="980" MinHeight="580"
         Background="#0A0E15" Foreground="#EDF3FB">
   <Window.Resources>
-    <!-- Muted petrol / graphite replaces the previous gold accent.
-         One palette for library shell, navigation and selection. -->
-    <SolidColorBrush x:Key="LibraryCanvas" Color="#F5F7F8"/>
-    <SolidColorBrush x:Key="LibrarySurface" Color="#FFFFFF"/>
-    <SolidColorBrush x:Key="LibrarySurfaceAlt" Color="#EDF2F4"/>
-    <SolidColorBrush x:Key="LibraryAccent" Color="#287584"/>
-    <SolidColorBrush x:Key="LibraryAccentHover" Color="#1F5E6D"/>
-    <SolidColorBrush x:Key="LibraryAccentSoft" Color="#E2EFF1"/>
-    <SolidColorBrush x:Key="LibraryText" Color="#1F2B32"/>
-    <SolidColorBrush x:Key="LibrarySubtext" Color="#6D7A84"/>
-    <SolidColorBrush x:Key="LibraryBorder" Color="#DCE4E8"/>
-    <SolidColorBrush x:Key="LibraryHover" Color="#F0F5F6"/>
+    <!-- Cinema dark palette. Single set of brush tokens shared across grid,
+         list, context menus, navigation, and animated states. -->
+    <SolidColorBrush x:Key="LibraryCanvas" Color="#0C1118"/>
+    <SolidColorBrush x:Key="LibrarySurface" Color="#151C26"/>
+    <SolidColorBrush x:Key="LibrarySurfaceAlt" Color="#202B37"/>
+    <SolidColorBrush x:Key="LibraryAccent" Color="#60B9CC"/>
+    <SolidColorBrush x:Key="LibraryAccentHover" Color="#78CDD9"/>
+    <SolidColorBrush x:Key="LibraryAccentSoft" Color="#1C3844"/>
+    <SolidColorBrush x:Key="LibraryText" Color="#ECF3F9"/>
+    <SolidColorBrush x:Key="LibrarySubtext" Color="#9BAAB9"/>
+    <SolidColorBrush x:Key="LibraryBorder" Color="#2B3949"/>
+    <SolidColorBrush x:Key="LibraryHover" Color="#243340"/>
   </Window.Resources>
 
   <Window.Styles>
@@ -26,7 +26,7 @@
     </Style>
     <Style Selector="Button.subtle-action">
       <Setter Property="Background" Value="{StaticResource LibrarySurfaceAlt}"/>
-      <Setter Property="Foreground" Value="#373E46"/>
+      <Setter Property="Foreground" Value="#D6E2EC"/>
       <Setter Property="BorderBrush" Value="{StaticResource LibraryBorder}"/>
       <Setter Property="BorderThickness" Value="1"/>
       <Setter Property="CornerRadius" Value="5"/>
@@ -35,7 +35,7 @@
     </Style>
     <Style Selector="Button.accent-action">
       <Setter Property="Background" Value="{StaticResource LibraryAccent}"/>
-      <Setter Property="Foreground" Value="{StaticResource LibrarySurface}"/>
+      <Setter Property="Foreground" Value="#0A171D"/>
       <Setter Property="BorderThickness" Value="0"/>
       <Setter Property="CornerRadius" Value="5"/>
       <Setter Property="Padding" Value="17,9"/>
@@ -72,17 +72,17 @@
       <Setter Property="FontWeight" Value="SemiBold"/>
     </Style>
     <Style Selector="Button.library-nav.selected:pointerover">
-      <Setter Property="Background" Value="#D4E9ED"/>
+      <Setter Property="Background" Value="#254753"/>
     </Style>
     <Style Selector="Button.library-nav:pressed">
-      <Setter Property="Background" Value="#CEE3E8"/>
+      <Setter Property="Background" Value="#315564"/>
     </Style>
     <Style Selector="Button.library-nav:focus-visible">
       <Setter Property="BorderBrush" Value="{StaticResource LibraryAccent}"/>
       <Setter Property="BorderThickness" Value="1"/>
     </Style>
     <Style Selector="TextBlock.sidebar-section">
-      <Setter Property="Foreground" Value="#90959C"/>
+      <Setter Property="Foreground" Value="#8E9BAA"/>
       <Setter Property="FontSize" Value="11"/>
     </Style>
     <Style Selector="Button.view-button">
@@ -127,7 +127,7 @@
       </Setter>
       <Setter Property="Padding" Value="0"/>
       <Setter Property="Background" Value="{StaticResource LibrarySurface}"/>
-      <Setter Property="Foreground" Value="#333B43"/>
+      <Setter Property="Foreground" Value="#DCE6F0"/>
       <Setter Property="BorderBrush" Value="{StaticResource LibraryBorder}"/>
       <Setter Property="BorderThickness" Value="0,0,0,1"/>
       <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
@@ -155,11 +155,11 @@
   </Window.Styles>
 
   <Grid>
-  <!-- The library uses a light theme; Watch keeps the dark app theme.
-       All data browsing is independent of the native playback session. -->
-  <ThemeVariantScope RequestedThemeVariant="Light">
+  <!-- Library and Watch are dark; Native video host remains isolated. -->
+  <ThemeVariantScope RequestedThemeVariant="Dark">
     <Grid x:Name="LibraryPage" RowDefinitions="Auto,*"
-          IsVisible="True" Background="{StaticResource LibraryCanvas}">
+          IsVisible="True" DragDrop.AllowDrop="True"
+          Background="{StaticResource LibraryCanvas}">
 
       <Border Grid.Row="0" Background="{StaticResource LibrarySurface}" BorderBrush="{StaticResource LibraryBorder}"
               BorderThickness="0,0,0,1" Padding="23,12" MinHeight="64">
@@ -168,7 +168,7 @@
             <TextBlock Text="LAPIS" FontWeight="SemiBold" FontSize="20"
                        LetterSpacing="3" Foreground="{StaticResource LibraryText}"/>
             <TextBlock Text="YOUR PERSONAL CINEMA" FontSize="9"
-                       Foreground="#838A92" LetterSpacing="1"/>
+                       Foreground="#8191A5" LetterSpacing="1"/>
           </StackPanel>
           <TextBlock Grid.Column="1" Text="Cinema Library" FontSize="15"
                      FontWeight="Medium" HorizontalAlignment="Center"
@@ -202,14 +202,14 @@
                     Content="◷   最近加入" Click="ShowRecentlyAdded_Click"/>
             <Border Height="1" Background="{StaticResource LibraryBorder}" Margin="6,19,6,16"/>
             <TextBlock Text="匯入" Classes="sidebar-section" Margin="11,0,0,10"/>
-            <TextBlock Text="使用右上角匯入按鈕建立索引。"
+            <TextBlock Text="使用右上角按鈕或拖曳影片、BDMV 資料夾匯入。"
                        Foreground="{StaticResource LibrarySubtext}"
                        Margin="11,0" FontSize="11" TextWrapping="Wrap"/>
             <Border Height="1" Background="{StaticResource LibraryBorder}" Margin="6,20,6,10"/>
             <TextBlock Text="{Binding CountText}" Margin="11,5"
                        FontSize="11" Foreground="{StaticResource LibrarySubtext}" TextWrapping="Wrap"/>
             <TextBlock Text="僅建立收藏索引，不搬移原始影片。" Margin="11,3"
-                       FontSize="11" Foreground="#90959B" TextWrapping="Wrap"/>
+                       FontSize="11" Foreground="#8191A5" TextWrapping="Wrap"/>
           </StackPanel>
           <!-- One compositor-driven selection marker, not one per button. -->
           <Canvas IsHitTestVisible="False" ZIndex="2">
@@ -262,8 +262,8 @@
               <StackPanel Spacing="11" HorizontalAlignment="Center">
                 <TextBlock Text="收藏庫目前沒有影片" FontSize="20"
                            FontWeight="Medium" HorizontalAlignment="Center"/>
-                <TextBlock Text="匯入本機影片或整個 Blu-ray 光碟資料夾，即可開始整理收藏。"
-                           Foreground="#767C84" TextWrapping="Wrap"
+                <TextBlock Text="把影片、Blu-ray 根目錄或 BDMV 資料夾拖到視窗，或使用右上角匯入按鈕。"
+                           Foreground="#A7B3C0" TextWrapping="Wrap"
                            HorizontalAlignment="Center" TextAlignment="Center"/>
                 <Button Content="＋ 匯入 Blu-ray" Classes="accent-action"
                         Click="ImportDisc_Click" HorizontalAlignment="Center"
@@ -273,7 +273,7 @@
 
             <TextBlock Text="沒有符合條件的收藏，請調整搜尋或篩選。"
                        IsVisible="{Binding HasNoResults}" Margin="4,18"
-                       FontSize="14" Foreground="#737B85"/>
+                       FontSize="14" Foreground="#95A7B9"/>
 
             <ScrollViewer x:Name="LibraryGridSurface" IsVisible="{Binding IsGridView}"
                           HorizontalScrollBarVisibility="Disabled"
@@ -309,7 +309,7 @@
                       </Button.ContextMenu>
                       <StackPanel Width="272" Spacing="7">
                         <Border Width="272" Height="153" CornerRadius="5"
-                                Background="#E8EBEF" BorderBrush="{StaticResource LibraryBorder}"
+                                Background="#1A2735" BorderBrush="{StaticResource LibraryBorder}"
                                 BorderThickness="1" ClipToBounds="True">
                           <Grid RowDefinitions="Auto,*,Auto">
                             <Image Grid.RowSpan="3" Source="{Binding Poster}"
@@ -317,21 +317,21 @@
                             <TextBlock Grid.Row="1" Text="L"
                                        IsVisible="{Binding ShowPlaceholder}"
                                        FontSize="68" FontWeight="Light"
-                                       Foreground="#B0B9C5"
+                                       Foreground="#536578"
                                        HorizontalAlignment="Center"
                                        VerticalAlignment="Center"/>
                             <Border Grid.Row="0" HorizontalAlignment="Left"
-                                    Margin="9" Background="#DDF9FAFB"
+                                    Margin="9" Background="#DA162534"
                                     CornerRadius="3" Padding="7,3">
                               <TextBlock Text="{Binding KindLabel}"
-                                         Foreground="#4A5059" FontSize="9"
+                                         Foreground="#E0ECF3" FontSize="9"
                                          FontWeight="SemiBold"/>
                             </Border>
                             <Border Grid.Row="2" Margin="9" Padding="9,5"
                                     HorizontalAlignment="Right"
-                                    Background="#DDFDFDFD" CornerRadius="5">
+                                    Background="#E019303D" CornerRadius="5">
                               <TextBlock Text="▶ 播放" FontSize="11"
-                                         FontWeight="SemiBold" Foreground="#31383F"/>
+                                         FontWeight="SemiBold" Foreground="#EAF5FA"/>
                             </Border>
                           </Grid>
                         </Border>
@@ -353,7 +353,7 @@
                     BorderThickness="1" CornerRadius="6">
               <Grid RowDefinitions="42,*">
                 <Grid ColumnDefinitions="70,2*,122,2*,132,110"
-                      Background="#F0F1F3">
+                      Background="#1B2531">
                   <TextBlock Grid.Column="0" Text="#" Classes="column-label"/>
                   <TextBlock Grid.Column="1" Text="片名" Classes="column-label"/>
                   <TextBlock Grid.Column="2" Text="類型" Classes="column-label"/>
@@ -389,7 +389,7 @@
                           <Grid ColumnDefinitions="70,2*,122,2*,132,110"
                                 Height="59">
                             <Border Grid.Column="0" Width="55" Height="32"
-                                    Background="#E5E8EC" CornerRadius="3"
+                                    Background="#253444" CornerRadius="3"
                                     VerticalAlignment="Center"
                                     HorizontalAlignment="Left" Margin="9,0">
                               <Image Source="{Binding Poster}" Stretch="Uniform"/>
@@ -416,12 +416,36 @@
             </Border>
           </Grid>
           <Grid Grid.Row="3" ColumnDefinitions="*,Auto">
-            <TextBlock Text="{Binding StatusText}" FontSize="11" Foreground="#777E86"
+            <TextBlock Text="{Binding StatusText}" FontSize="11" Foreground="#91A1B1"
                        TextTrimming="CharacterEllipsis"/>
             <TextBlock Grid.Column="1" Text="右鍵可檢視來源、複製路徑或移出收藏"
-                       FontSize="11" Foreground="#A1A6AB"/>
+                       FontSize="11" Foreground="#788A9B"/>
           </Grid>
         </Grid>
+      </Grid>
+      <!-- Non-interactive drag preview over the entire library surface.
+           Do not overlay NativeControlHost; drop only indexes the catalog. -->
+      <Grid x:Name="LibraryDropOverlay" Grid.RowSpan="2" ZIndex="100"
+            Background="#E80A121B" IsVisible="False"
+            IsHitTestVisible="False">
+        <Border BorderBrush="{StaticResource LibraryAccent}"
+                BorderThickness="2" CornerRadius="14" Margin="24"
+                Background="#D7172836">
+          <StackPanel VerticalAlignment="Center"
+                      HorizontalAlignment="Center" Spacing="14">
+            <TextBlock Text="＋" FontSize="50" Foreground="{StaticResource LibraryAccent}"
+                       HorizontalAlignment="Center"/>
+            <TextBlock Text="拖曳到這裡，加入收藏庫" FontSize="25"
+                       FontWeight="SemiBold" Foreground="{StaticResource LibraryText}"
+                       HorizontalAlignment="Center"/>
+            <TextBlock Text="影片檔案 · 完整 Blu-ray 光碟根目錄 · BDMV 資料夾"
+                       FontSize="13" Foreground="{StaticResource LibrarySubtext}"
+                       HorizontalAlignment="Center"/>
+            <TextBlock Text="只建立索引，不複製檔案、不會立即播放"
+                       FontSize="12" Foreground="{StaticResource LibraryAccent}"
+                       HorizontalAlignment="Center"/>
+          </StackPanel>
+        </Border>
       </Grid>
     </Grid>
   </ThemeVariantScope>
