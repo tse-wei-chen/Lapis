@@ -7,6 +7,34 @@ This is a first vertical slice, not a claim of complete PowerDVD parity.
 UI/VM can be ported, but Native FFmpeg/D3D11/WASAPI and the Win32 HWND output
 remain Windows-specific.
 
+## Dark cinema library and Explorer drag/drop (ADR 0044)
+
+The collection page is now a **dark, content-first cinema library** using
+charcoal/navy backgrounds, slate surfaces, fine dividers and a restrained
+cool teal accent. Fluent controls (including context menus, ComboBox and
+search) inherit the `Dark` ThemeVariant. Grid/List Composition interactions
+and the independent Native Watch/D3D11 lifecycle are preserved.
+
+Drop one or more local video files, a complete **Blu-ray disc root**, or its
+`BDMV` child anywhere on the Library page. A transient, input-transparent
+drop overlay explains the operation. Lapis classifies the dropped paths
+before import:
+
+- Known local video extensions (.mkv, .mp4, .m2ts, etc.) become File entries.
+- The outer disc root or its BDMV child, with index.bdmv, PLAYLIST and STREAM,
+  normalizes into the **same Directory entry**. Auxiliary CERTIFICATE,
+  BACKUP or MAKEMKV directories are never imported as their own movies.
+- Ordinary directories, unsupported file extensions, missing paths, remote
+  URI items and ISO images are **not** imported as valid movies.
+- Duplicates within a drop and already indexed sources are skipped. A
+  200-item limit bounds a single drop operation; errors are reported and
+  do not roll back unrelated successful items.
+
+The batch updates the library once after indexing sources, and does **not**
+copy, decrypt, move or play any media. Drop is disabled in Watch mode and
+does not interact with the player actor. Existing file/folder picker buttons
+remain available.
+
 ## Library interface (ADR 0042)
 
 The desktop starts with a light, compact media library inspired by a PC

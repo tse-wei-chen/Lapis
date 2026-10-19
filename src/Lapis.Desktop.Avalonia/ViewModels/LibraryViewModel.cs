@@ -11,6 +11,7 @@ public enum LibraryCategory { All, BluRay, Videos, RecentlyAdded }
 public enum LibrarySortMode { RecentlyAdded, TitleAscending, TitleDescending }
 
 public sealed record LibrarySortChoice(LibrarySortMode Mode, string Label);
+public sealed record LibraryDropImportResult(int Added, int AlreadyPresent, int Skipped);
 
 /// <summary>
 /// Collection-first shell state. Both visual layouts use exactly the same card
@@ -137,6 +138,59 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         var item = await _library.ImportAsync(source, cancellationToken);
         await LoadAsync(cancellationToken);
         StatusText = $"已加入收藏：{item.Title}（未複製原始影片）";
+    }
+
+    /// <summary>
+    /// Import multiple validated sources without reconstructing the card grid
+    /// after each item. Existing catalog entries retain their stable IDs.
+    /// Failed sources do not discard successful imports.
+    /// </summary>
+    public async Task<LibraryDropImportResult> ImportManyAsync(
+        IReadOnlyList<MediaLocator> sources,
+        int rejectedCount = 0,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(sources);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var seen = (await _library.ListAsync(cancellationToken))
+            .Select(item => item.Id).ToHashSet();
+
+        var imported = 0;
+        var alreadyStored = 0;
+        var failed = rejectedCount;
+        string? firstError = null;
+
+        foreach (var source in sources)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var item = await _library.ImportAsync(source, cancellationToken);
+                if (seen.Add(item.Id)) imported++;
+                else alreadyStored++;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                failed++;
+                firstError ??= ex.Message;
+            }
+        }
+
+        if (imported != 0 || alreadyStored != 0)
+        {
+            await LoadAsync(cancellationToken);
+            ShowAll();
+            SearchText = "";
+        }
+
+        StatusText = $"拖曳匯入：新增 {imported} 部、已收藏 {alreadyStored} 部、" +
+                     $"略過 {failed} 個。" +
+                     (firstError is null ? "" : $" 首個錯誤：{firstError}");
+        return new LibraryDropImportResult(imported, alreadyStored, failed);
     }
 
     public async Task RemoveAsync(MediaLibraryItem item, CancellationToken cancellationToken = default)
