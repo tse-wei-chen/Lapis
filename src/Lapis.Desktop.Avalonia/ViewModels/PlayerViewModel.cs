@@ -29,6 +29,10 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
     private string _statusText = "選擇影片或未加密 BDMV 資料夾開始播放";
     private string _positionText = "00:00 / --:--";
     private TransportState _transport = TransportState.Closed;
+    private double _seekPositionSeconds;
+    private double _seekDurationSeconds = 1;
+    private bool _scrubbing;
+    private PlaybackEpoch _scrubEpoch;
 
     public PlayerViewModel(IPlayerPlaybackService player)
     {
@@ -72,6 +76,67 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
     public bool CanSeek => !_busy && _currentMedia is not null &&
         _transport is TransportState.Ready or TransportState.Playing
             or TransportState.Paused;
+    public bool CanScrub => CanSeek &&
+        _player.Snapshot.Duration is { Nanoseconds: > 0 };
+
+    /// <summary>
+    /// Timeline is a preview only while dragging. Native snapshots never
+    /// fight the thumb, and changing Value never implicitly seeks.
+    /// </summary>
+    public double SeekPositionSeconds
+    {
+        get => _seekPositionSeconds;
+        set
+        {
+            if (!_scrubbing || !double.IsFinite(value)) return;
+            var preview = Math.Clamp(value, 0, _seekDurationSeconds);
+            SetProperty(ref _seekPositionSeconds, preview);
+            PositionText = $"{FormatTime(TimeSpan.FromSeconds(preview))} / " +
+                FormatTime(TimeSpan.FromSeconds(_seekDurationSeconds));
+        }
+    }
+
+    public double SeekDurationSeconds => _seekDurationSeconds;
+
+    public void BeginScrub()
+    {
+        if (_disposed || !CanScrub) return;
+        _scrubbing = true;
+        _scrubEpoch = _player.Snapshot.Epoch;
+    }
+
+    public void CancelScrub()
+    {
+        if (!_scrubbing) return;
+        _scrubbing = false;
+        ApplySnapshot(_player.Snapshot);
+    }
+
+    /// <summary>
+    /// Commit at most one Seek per drag-release. A transport discontinuity
+    /// during dragging invalidates the preview rather than seeking an old
+    /// epoch after another command has already moved playback.
+    /// </summary>
+    public async Task CommitScrubAsync()
+    {
+        if (!_scrubbing) return;
+        _scrubbing = false;
+        var target = TimeSpan.FromSeconds(_seekPositionSeconds);
+        if (_disposed || !CanScrub || _scrubEpoch != _player.Snapshot.Epoch)
+        {
+            if (!_disposed) ApplySnapshot(_player.Snapshot);
+            return;
+        }
+
+        try
+        {
+            await RunAsync(() => _player.SeekAsync(target, _lifetime.Token));
+        }
+        finally
+        {
+            if (!_disposed) ApplySnapshot(_player.Snapshot);
+        }
+    }
 
     public Task OpenAsync(MediaLocator locator)
     {
@@ -130,6 +195,7 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
             _busy = true;
             OnPropertyChanged(nameof(CanTransport));
             OnPropertyChanged(nameof(CanSeek));
+            OnPropertyChanged(nameof(CanScrub));
             await operation();
             ApplySnapshot(_player.Snapshot);
             StatusText = _player.Snapshot.LastError is { } error
@@ -149,6 +215,8 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
         {
             _busy = false;
             OnPropertyChanged(nameof(CanTransport));
+            OnPropertyChanged(nameof(CanSeek));
+            OnPropertyChanged(nameof(CanScrub));
             _commands.Release();
         }
     }
@@ -193,10 +261,19 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
         OnPropertyChanged(nameof(PlayPauseLabel));
         OnPropertyChanged(nameof(CanTransport));
         OnPropertyChanged(nameof(CanSeek));
+        OnPropertyChanged(nameof(CanScrub));
         var time = snapshot.Position.ToTimeSpan();
         var duration = snapshot.Duration?.ToTimeSpan();
-        PositionText = $"{FormatTime(time)} / " +
-            (duration.HasValue ? FormatTime(duration.Value) : "--:--");
+        var maxSeconds = Math.Max(1, duration?.TotalSeconds ?? 1);
+        SetProperty(ref _seekDurationSeconds, maxSeconds);
+        OnPropertyChanged(nameof(SeekDurationSeconds));
+        if (!_scrubbing)
+        {
+            SetProperty(ref _seekPositionSeconds,
+                Math.Clamp(time.TotalSeconds, 0, maxSeconds));
+            PositionText = $"{FormatTime(time)} / " +
+                (duration.HasValue ? FormatTime(duration.Value) : "--:--");
+        }
     }
 
     private static string FormatTime(TimeSpan time) =>

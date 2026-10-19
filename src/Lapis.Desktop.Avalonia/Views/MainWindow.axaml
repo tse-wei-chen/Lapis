@@ -30,14 +30,22 @@
     </Border>
 
     <Border Grid.Row="2" Background="#151E2C" CornerRadius="12" Padding="14">
-      <Grid RowDefinitions="Auto,Auto" RowSpacing="12">
+      <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="10">
         <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
           <TextBlock Grid.Column="0" Text="{Binding PositionText}"
                      Foreground="#B7C9DD" FontSize="13"/>
           <TextBlock Grid.Column="1" Text="{Binding TransportText}"
                      Foreground="#98C8FF" FontSize="13"/>
         </Grid>
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="10">
+        <!-- A real seek preview. Binding updates never issue Seek; only
+             pointer release commits a single actor command. -->
+        <Slider x:Name="PlaybackTimeline" Grid.Row="1"
+                Minimum="0" Maximum="{Binding SeekDurationSeconds}"
+                Value="{Binding SeekPositionSeconds, Mode=TwoWay}"
+                IsEnabled="{Binding CanScrub}"
+                TickFrequency="1" IsSnapToTickEnabled="False"
+                AutomationProperties.Name="播放進度時間軸"/>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10">
           <Button Content="◀ 10 秒" Command="{Binding BackCommand}" IsEnabled="{Binding CanSeek}" MinWidth="90"/>
           <Button Content="{Binding PlayPauseLabel}" Command="{Binding ToggleCommand}" IsEnabled="{Binding CanTransport}"
                   MinWidth="130"/>

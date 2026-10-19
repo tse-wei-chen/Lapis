@@ -23,6 +23,9 @@ public sealed class PlayerViewModelTests
         Assert.Equal("00:12 / 01:00", viewModel.PositionText);
         Assert.True(viewModel.CanTransport);
         Assert.True(viewModel.CanSeek);
+        Assert.True(viewModel.CanScrub);
+        Assert.Equal(12, viewModel.SeekPositionSeconds);
+        Assert.Equal(60, viewModel.SeekDurationSeconds);
     }
 
     [Fact]
@@ -49,10 +52,73 @@ public sealed class PlayerViewModelTests
         Assert.Equal("重播", viewModel.PlayPauseLabel);
     }
 
+    [Fact]
+    public async Task DragPreviewsTimeAndCommitsExactlyOneSeekAtRelease()
+    {
+        var fake = new FakePlayer();
+        await using var viewModel = new PlayerViewModel(fake);
+        await viewModel.OpenAsync(new MediaLocator(MediaLocatorKind.File, "movie.mkv"));
+        viewModel.BeginScrub();
+        viewModel.SeekPositionSeconds = 26.5;
+        viewModel.SeekPositionSeconds = 72; // Clamp to known duration.
+        Assert.Equal(60, viewModel.SeekPositionSeconds);
+        Assert.Equal("01:00 / 01:00", viewModel.PositionText);
+        Assert.Equal(0, fake.SeekCount);
+
+        await viewModel.CommitScrubAsync();
+        await viewModel.CommitScrubAsync(); // A second release is a no-op.
+        Assert.Equal(1, fake.SeekCount);
+        Assert.Equal(TimeSpan.FromSeconds(60), fake.LastSeek);
+        Assert.Equal(60, viewModel.SeekPositionSeconds);
+        Assert.True(viewModel.CanSeek);
+    }
+
+    [Fact]
+    public async Task NewEpochInvalidatesOldScrubAndCancellationDoesNotSeek()
+    {
+        var fake = new FakePlayer();
+        await using var viewModel = new PlayerViewModel(fake);
+        await viewModel.OpenAsync(new MediaLocator(MediaLocatorKind.File, "movie.mkv"));
+
+        viewModel.BeginScrub();
+        viewModel.SeekPositionSeconds = 44;
+        fake.AdvanceEpoch();
+        await viewModel.CommitScrubAsync();
+        Assert.Equal(0, fake.SeekCount);
+        Assert.Equal(12, viewModel.SeekPositionSeconds);
+
+        viewModel.BeginScrub();
+        viewModel.SeekPositionSeconds = 33;
+        viewModel.CancelScrub();
+        Assert.Equal(12, viewModel.SeekPositionSeconds);
+        Assert.Equal(0, fake.SeekCount);
+    }
+
+    [Fact]
+    public async Task EndOfCommandRepublishesEnabledSeekState()
+    {
+        var fake = new FakePlayer();
+        await using var viewModel = new PlayerViewModel(fake);
+        var changes = new List<bool>();
+        viewModel.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(PlayerViewModel.CanSeek))
+                changes.Add(viewModel.CanSeek);
+        };
+
+        await viewModel.OpenAsync(new MediaLocator(MediaLocatorKind.File, "movie.mkv"));
+        Assert.NotEmpty(changes);
+        Assert.True(changes[^1]);
+    }
+
     private sealed class FakePlayer : IPlayerPlaybackService
     {
         public MediaLocator? LastLocator { get; private set; }
         public bool FailOpen { get; set; }
+        public int SeekCount { get; private set; }
+        public TimeSpan? LastSeek { get; private set; }
+        public void AdvanceEpoch() =>
+            Snapshot = Snapshot with { Epoch = new PlaybackEpoch(Snapshot.Epoch.Value + 1) };
         public TransportState OpenTransport { get; set; } = TransportState.Playing;
         public PlaybackSnapshot Snapshot { get; private set; } =
             PlaybackSnapshot.CreateInitial(PlaybackSessionId.New());
@@ -74,8 +140,17 @@ public sealed class PlayerViewModelTests
 
         public Task ToggleAsync(CancellationToken cancellationToken) =>
             Task.CompletedTask;
-        public Task SeekAsync(TimeSpan position, CancellationToken cancellationToken) =>
-            Task.CompletedTask;
+        public Task SeekAsync(TimeSpan position, CancellationToken cancellationToken)
+        {
+            SeekCount++;
+            LastSeek = position;
+            Snapshot = Snapshot with
+            {
+                Epoch = new PlaybackEpoch(Snapshot.Epoch.Value + 1),
+                Position = Lapis.Contracts.Time.MediaTime.FromTimeSpan(position)
+            };
+            return Task.CompletedTask;
+        }
         public Task CloseAsync(CancellationToken cancellationToken) =>
             Task.CompletedTask;
         public async IAsyncEnumerable<PlaybackSnapshot> ObserveSnapshotsAsync(

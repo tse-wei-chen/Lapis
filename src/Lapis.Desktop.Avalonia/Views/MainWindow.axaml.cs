@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform.Storage;
@@ -12,6 +13,7 @@ namespace Lapis.Desktop.Avalonia.Views;
 public sealed partial class MainWindow : Window
 {
     private readonly WindowsVideoSurface _videoSurface;
+    private readonly Slider _timeline;
     private readonly PlayerViewModel _player;
     private bool _closeStarted;
     private bool _shutdownComplete;
@@ -21,13 +23,39 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         _videoSurface = this.FindControl<WindowsVideoSurface>("VideoSurface")
             ?? throw new InvalidOperationException("Missing D3D11 surface host.");
+        _timeline = this.FindControl<Slider>("PlaybackTimeline")
+            ?? throw new InvalidOperationException("Missing playback timeline.");
         _player = new PlayerViewModel(
             new NativePlayerPlaybackService(() => _videoSurface.OutputHandle));
         DataContext = _player;
+        // Slider/Thumb can mark pointer events handled; observe the tunnel
+        // before the built-in track/thumb interaction changes the Value.
+        _timeline.AddHandler(InputElement.PointerPressedEvent,
+            TimelinePointerPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
+        _timeline.AddHandler(InputElement.PointerReleasedEvent,
+            TimelinePointerReleased, RoutingStrategies.Tunnel, handledEventsToo: true);
+        _timeline.AddHandler(InputElement.PointerCaptureLostEvent,
+            TimelinePointerCaptureLost, RoutingStrategies.Bubble, handledEventsToo: true);
         Closing += OnClosing;
     }
 
     private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
+
+    private void TimelinePointerPressed(object? sender, PointerPressedEventArgs args)
+    {
+        if (args.GetCurrentPoint(_timeline).Properties.IsLeftButtonPressed)
+            _player.BeginScrub();
+    }
+
+    private async void TimelinePointerReleased(object? sender, PointerReleasedEventArgs args)
+    {
+        await _player.CommitScrubAsync();
+    }
+
+    private void TimelinePointerCaptureLost(object? sender, PointerCaptureLostEventArgs args)
+    {
+        _player.CancelScrub();
+    }
 
     private async void OpenFile_Click(object? sender, RoutedEventArgs args)
     {

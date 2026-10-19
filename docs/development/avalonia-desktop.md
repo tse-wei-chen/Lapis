@@ -23,7 +23,11 @@ on the DLL search path or deployed next to the app. The window can open
 without a Native DLL, but playing media cannot.
 
 Use **開啟影片** for local files and **開啟 BDMV** for an unprotected
-disc directory. Actual BDMV playback requires the separately validated,
+disc directory. A seek timeline is shown under the video whenever a known
+positive duration is available; dragging previews without changing playback,
+and releasing commits one actor-owned Seek. A seek that crosses a newer
+PlaybackEpoch is discarded. At EOF the timeline is disabled, while Replay
+remains available. Actual BDMV playback requires the separately validated,
 opt-in `LAPIS_ENABLE_LIBBLURAY=ON` native build, and all its runtime DLLs.
 BD-J, AACS/BD+, optical drive access, ISO, subtitle overlay and AI
 translation are **not implemented** by this shell.
@@ -69,7 +73,8 @@ exists. This is explicitly a blocker for final AI subtitles/BD-J UI.
 ## Tests
 
 `tests/Lapis.Desktop.Avalonia.Tests` covers local BDMV directory matching,
-typed locator forwarding and ViewModel errors without real Native DLLs.
+typed locator forwarding, one-shot seek scrubbing (including epoch invalidation),
+enabled-state notifications and ViewModel errors without real Native DLLs.
 The Native Windows CI plane now runs a **dedicated opt-in REAL Avalonia
 lifecycle acceptance**, after building MediaRuntime: it starts a true
 Avalonia Win32 desktop lifetime on an STA, opens the same FFmpeg/D3D11
