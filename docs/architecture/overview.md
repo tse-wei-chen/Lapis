@@ -25,6 +25,8 @@ Native MediaRuntime composition root
 Native MediaRuntime core
   - immutable GraphPlan / GraphBuilder
   - source / demux adapters
+      MediaSourceSession: byte stream + optional INavigationController
+        title / playlist / chapter / angle / menus / overlays (contract only)
       active DecodeGeneration
         DemuxPump -> bounded selected-stream packet queues -> decoders
   - decoded media contracts

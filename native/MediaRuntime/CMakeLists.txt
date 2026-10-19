@@ -146,6 +146,19 @@ if(BUILD_TESTING)
     add_test(NAME diagnostic_journal_concurrency
         COMMAND Lapis.MediaRuntime.DiagnosticJournalTests)
 
+    # This fixture tests the future libbluray boundary without linking libbluray.
+    add_executable(Lapis.MediaRuntime.NavigationContractTests
+        tests/navigation_contract.cpp)
+    target_compile_features(Lapis.MediaRuntime.NavigationContractTests
+        PRIVATE cxx_std_20)
+    target_compile_definitions(Lapis.MediaRuntime.NavigationContractTests
+        PRIVATE LAPIS_TEST_MEDIA_PATH="${LAPIS_TEST_MEDIA_PATH}")
+    target_link_libraries(Lapis.MediaRuntime.NavigationContractTests
+        PRIVATE Lapis.MediaRuntime.Core)
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.NavigationContractTests)
+    add_test(NAME navigation_contract
+        COMMAND Lapis.MediaRuntime.NavigationContractTests)
+
     add_executable(Lapis.MediaRuntime.GraphPlanTests tests/graph_plan.cpp)
     target_compile_features(Lapis.MediaRuntime.GraphPlanTests PRIVATE cxx_std_20)
     target_link_libraries(Lapis.MediaRuntime.GraphPlanTests PRIVATE Lapis.MediaRuntime.Core)

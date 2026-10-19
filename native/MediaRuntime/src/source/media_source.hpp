@@ -1,5 +1,7 @@
 #pragma once
 
+#include "navigation/navigation.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -67,6 +69,8 @@ enum class SourceError : std::uint8_t {
 };
 
 struct MediaSourceSession final {
+    // The virtual stream may borrow navigation state: destroy it first.
+    std::unique_ptr<INavigationController> navigation;
     std::unique_ptr<IMediaByteStream> stream;
     std::string demux_hint;
 };

@@ -9,6 +9,7 @@
 #include "source/media_source_registry.hpp"
 
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 namespace lapis::media {
@@ -58,6 +59,23 @@ PlaybackMediaSession::PlaybackMediaSession()
     : impl_(std::make_unique<Impl>()) {}
 
 PlaybackMediaSession::~PlaybackMediaSession() = default;
+
+void PlaybackMediaSession::register_source_provider(
+    std::unique_ptr<IMediaSourceProvider> provider) {
+    if (impl_->source != nullptr || impl_->demuxer != nullptr ||
+        impl_->packet_router != nullptr) {
+        throw std::logic_error(
+            "Register a media source provider before opening media.");
+    }
+    impl_->sources.add(std::move(provider));
+}
+
+std::optional<NavigationSnapshot> PlaybackMediaSession::navigation_snapshot() const {
+    if (impl_->source == nullptr || impl_->source->navigation == nullptr) {
+        return std::nullopt;
+    }
+    return impl_->source->navigation->snapshot();
+}
 
 MediaOpenInfo PlaybackMediaSession::open(const MediaLocator& locator) {
     impl_->reset();

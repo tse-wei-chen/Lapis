@@ -49,7 +49,11 @@ public:
     PlaybackMediaSession(const PlaybackMediaSession&) = delete;
     PlaybackMediaSession& operator=(const PlaybackMediaSession&) = delete;
 
+    // Composition-time registration: callers must register before Open.
+    void register_source_provider(std::unique_ptr<IMediaSourceProvider> provider);
     [[nodiscard]] MediaOpenInfo open(const MediaLocator& locator);
+    // Owned metadata snapshot: no raw navigation-controller pointer escapes.
+    [[nodiscard]] std::optional<NavigationSnapshot> navigation_snapshot() const;
     [[nodiscard]] bool start_decode_generation(MediaDecodeSelection selection);
     void stop_decode_generation() noexcept;
 

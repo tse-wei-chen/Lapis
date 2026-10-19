@@ -12,7 +12,7 @@ Letting FFmpeg open file paths and URLs directly would make the demux layer resp
 Lapis separates source access from container parsing:
 
 - `IMediaSourceProvider` selects a source implementation from an explicit `MediaLocatorKind`;
-- a source session owns an `IMediaByteStream` plus source metadata such as a demux hint;
+- a source session owns an `IMediaByteStream` plus source metadata such as a demux hint, with optional independently owned navigation under ADR 0036;
 - local files are implemented by `FileSourceProvider` and `FileByteStream`;
 - the demux hint is deliberately not the real path; it may preserve a suffix for format selection but cannot be used to reopen the source;
 - FFmpeg receives bytes through a custom `AVIOContext` backed by `IMediaByteStream`;
