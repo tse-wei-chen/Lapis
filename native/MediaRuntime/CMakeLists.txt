@@ -4,6 +4,14 @@ project(LapisMediaRuntime VERSION 0.15.0 LANGUAGES C CXX)
 find_package(FFMPEG REQUIRED)
 find_package(Threads REQUIRED)
 
+# Optional adapter. Use vcpkg manifest feature "bluray" when enabling:
+# -DLAPIS_ENABLE_LIBBLURAY=ON -DVCPKG_MANIFEST_FEATURES=bluray
+option(LAPIS_ENABLE_LIBBLURAY "Build the unprotected BDMV libbluray source" OFF)
+if(LAPIS_ENABLE_LIBBLURAY)
+    find_path(LIBBLURAY_INCLUDE_DIR NAMES libbluray/bluray.h REQUIRED)
+    find_library(LIBBLURAY_LIBRARY NAMES bluray libbluray REQUIRED)
+endif()
+
 function(lapis_enable_strict_warnings target)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4 /WX /permissive-)
@@ -17,6 +25,7 @@ add_library(Lapis.MediaRuntime.Core STATIC
     src/core/playback_clock.cpp
     src/source/media_source_registry.cpp
     src/source/file/file_source.cpp
+    src/source/bluray/bluray_source.cpp
     src/demux/ffmpeg/ffmpeg_io.cpp
     src/demux/ffmpeg/ffmpeg_demuxer.cpp
     src/demux/ffmpeg/ffmpeg_packet_router.cpp
@@ -37,6 +46,17 @@ add_library(Lapis.MediaRuntime.Core STATIC
     src/session/playback_media_session.cpp
     src/video/video_scheduler.cpp
 )
+
+if(LAPIS_ENABLE_LIBBLURAY)
+    target_sources(Lapis.MediaRuntime.Core PRIVATE
+        src/source/bluray/libbluray_disc.cpp)
+    target_include_directories(Lapis.MediaRuntime.Core
+        SYSTEM PRIVATE ${LIBBLURAY_INCLUDE_DIR})
+    target_link_libraries(Lapis.MediaRuntime.Core
+        PRIVATE ${LIBBLURAY_LIBRARY})
+    target_compile_definitions(Lapis.MediaRuntime.Core
+        PRIVATE LAPIS_ENABLE_LIBBLURAY=1)
+endif()
 
 if(WIN32)
     target_sources(Lapis.MediaRuntime.Core PRIVATE
@@ -147,6 +167,18 @@ if(BUILD_TESTING)
         COMMAND Lapis.MediaRuntime.DiagnosticJournalTests)
 
     # This fixture tests the future libbluray boundary without linking libbluray.
+    add_executable(Lapis.MediaRuntime.BluraySourceTests
+        tests/bluray_source.cpp)
+    target_compile_features(Lapis.MediaRuntime.BluraySourceTests
+        PRIVATE cxx_std_20)
+    target_compile_definitions(Lapis.MediaRuntime.BluraySourceTests
+        PRIVATE LAPIS_TEST_MEDIA_PATH="${LAPIS_TEST_MEDIA_PATH}")
+    target_link_libraries(Lapis.MediaRuntime.BluraySourceTests
+        PRIVATE Lapis.MediaRuntime.Core)
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.BluraySourceTests)
+    add_test(NAME bluray_source_contract
+        COMMAND Lapis.MediaRuntime.BluraySourceTests)
+
     add_executable(Lapis.MediaRuntime.NavigationContractTests
         tests/navigation_contract.cpp)
     target_compile_features(Lapis.MediaRuntime.NavigationContractTests

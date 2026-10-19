@@ -1,0 +1,64 @@
+# ADR 0037: Optional libbluray backend for unprotected BDMV directory sources
+
+- Status: Implemented (native opt-in preview)
+- Date: 2026-10-19
+
+## Context
+
+ADR 0036 defined optional `INavigationController` metadata independently
+of `IMediaByteStream`. The playback source registry only shipped FileSource.
+The next milestone is to put real libbluray behind the existing Source
+Provider boundary without coupling the FFmpeg demuxer, worker graph,
+C ABI or GUI to `BLURAY*` and `BLURAY_TITLE_INFO`.
+
+## Decision
+
+1. Add `BluraySourceProvider` for `MediaLocatorKind::Directory`, supporting
+   either a disc root containing `BDMV` or the `BDMV` directory itself.
+   Require `BDMV/PLAYLIST`, `BDMV/STREAM`, and a recognizable index.
+   Optical drives and ISO images are deliberately not accepted yet.
+2. Isolate the actual libbluray C API in
+   `source/bluray/libbluray_disc.cpp`. Its owner provides byte read/seek/size
+   and an owned, read-only navigation snapshot (title indices, distinct MPLS
+   IDs, chapters, angles, durations). libbluray's 90 kHz timestamps are
+   converted to canonical nanosecond `MediaTime` with overflow protection.
+3. The source session exposes one virtual `IMediaByteStream` for FFmpeg
+   custom AVIO, with a fake .m2ts hint, and a separate navigation object.
+   They share an adapter-owned disc lifetime. No libbluray pointer escapes.
+   A per-disc mutex serializes byte read/seek/tell; FFmpeg remains the
+   only demuxing owner.
+4. Startup selects libbluray's main title (or a discovered longest-title
+   fallback) **before** starting FFmpeg. The backend rejects encrypted
+   AACS/BD+ discs, zero-title/no-stream data, and suspiciously large title
+   or chapter counts. Do not enable menu/BD-J/overlay capability flags.
+5. Navigation actions deliberately return `NotReady` instead of changing
+   the live virtual MPEG-TS cursor behind a running FFmpeg demuxer. Actor
+   coordination, epoch bumps, stream replacement, and menu events are
+   deferred.
+6. Compile and register the real backend only with
+   `LAPIS_ENABLE_LIBBLURAY=ON`. vcpkg manifest feature `bluray`
+   supplies the external library; the normal/default dependency graph and
+   CI remain FFmpeg-only. `BluraySourceProvider` itself always compiles,
+   permitting fake disc backends in deterministic native regression tests.
+7. The already existing C ABI v2 Directory locator can reach this provider
+   **when** the opt-in backend is compiled. No new ABI exports, frontend
+   directory picker or misleading BD-J controls are added.
+
+## Verification
+
+- A fake disc uses the normal PlaybackMediaSession -> custom FFmpeg AVIO path
+  with the pre-existing Y4M media fixture. Tests verify directory detection,
+  reading/seeking, owned title/playlist metadata, unsupported navigation
+  operations, source replacement and final adapter destruction.
+- The standard Windows Native CTest and Managed/WinForms integration suite
+  must remain green with the default (libbluray OFF) configuration.
+- **Not yet verified in CI:** compiling/linking the optional libbluray ON
+  mode and playing a real unprotected BDMV directory. Both require explicit
+  opt-in acceptance with a legal test disc and packaged libbluray dependencies.
+
+## Next steps
+
+Test the opt-in build with an unprotected disc fixture on Windows, add explicit
+Blu-ray source selection to DesktopPlaybackHost without changing its renderer,
+then implement actor-owned navigation commands and epoch/event boundaries.
+Keep content-protection providers and BD-J/menu compositor independent.

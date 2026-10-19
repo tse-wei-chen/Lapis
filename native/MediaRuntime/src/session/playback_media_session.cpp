@@ -6,6 +6,9 @@
 #include "demux/ffmpeg/ffmpeg_demuxer.hpp"
 #include "demux/ffmpeg/ffmpeg_packet_router.hpp"
 #include "source/file/file_source.hpp"
+#if defined(LAPIS_ENABLE_LIBBLURAY)
+#include "source/bluray/bluray_source.hpp"
+#endif
 #include "source/media_source_registry.hpp"
 
 #include <memory>
@@ -18,6 +21,10 @@ class PlaybackMediaSession::Impl final {
 public:
     Impl() {
         sources.add(std::make_unique<FileSourceProvider>());
+#if defined(LAPIS_ENABLE_LIBBLURAY)
+        sources.add(std::make_unique<bluray::BluraySourceProvider>(
+            bluray::open_libbluray_disc));
+#endif
     }
 
     void stop_decode_generation() noexcept {
