@@ -19,6 +19,9 @@ public sealed class PlayerForm : Form
     // All visual composition lives in PlayerChrome; this Form only adapts
     // user actions to framework-neutral DesktopPlaybackHost commands.
     private readonly PlayerChrome _chrome = new();
+    // Native observations may arrive faster than WinForms can paint them.
+    // At most one UI refresh may be posted; it always reads the latest actor state.
+    private readonly CoalescedUiRefresh _snapshotUiRefresh;
     private readonly System.Windows.Forms.Timer _chromeIdleTimer = new()
     {
         Interval = 200
@@ -62,6 +65,15 @@ public sealed class PlayerForm : Form
         KeyPreview = true;
         AllowDrop = true;
         Controls.Add(_chrome);
+        _snapshotUiRefresh = new CoalescedUiRefresh(
+            callback => { BeginInvoke(callback); },
+            () =>
+            {
+                if (!_closing && !IsDisposed && IsHandleCreated && _host is { } host)
+                {
+                    DisplaySnapshot(host.Snapshot);
+                }
+            });
 
         _open.Click += async (_, _) => await ChooseFileAsync();
         _chrome.ChooseMediaButton.Click += async (_, _) => await ChooseFileAsync();
@@ -458,7 +470,7 @@ public sealed class PlayerForm : Form
     {
         try
         {
-            await foreach (var snapshot in host.ObserveSnapshotsAsync(cancellationToken))
+            await foreach (var _ in host.ObserveSnapshotsAsync(cancellationToken))
             {
                 if (_closing || IsDisposed || !IsHandleCreated)
                 {
@@ -466,13 +478,12 @@ public sealed class PlayerForm : Form
                 }
                 try
                 {
-                    BeginInvoke(new Action(() =>
-                    {
-                        if (!_closing && !IsDisposed && IsHandleCreated)
-                        {
-                            DisplaySnapshot(snapshot);
-                        }
-                    }));
+                    // A bounded actor channel alone is insufficient: posting
+                    // every observation via BeginInvoke creates a second,
+                    // unbounded queue on the WinForms UI dispatcher.
+                    // Coalesce notifications; the callback reads host.Snapshot
+                    // at delivery time so queued pre-seek states cannot regress UI.
+                    _snapshotUiRefresh.Signal();
                 }
                 catch (InvalidOperationException) when (!IsHandleCreated || _closing || IsDisposed)
                 {

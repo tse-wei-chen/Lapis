@@ -118,7 +118,13 @@ The host opens the media through the playback actor, binds its HWND through
 `IPlaybackRuntimeObserver` polls the existing native C ABI snapshot away from
 the UI thread, and only matching session/epoch updates reach the actor state.
 The seek rail uses native position and open-result duration; clicking or
-releasing its thumb seeks to a proportional media timestamp. Space or K toggles pause.
+releasing its thumb seeks to a proportional media timestamp.
+The actor's bounded observation channel is followed by a coalescing WinForms
+dispatch gate: at most one UI refresh is queued at a time, with one follow-up
+when observations arrive during painting. The UI reads the actor's **current**
+snapshot at dispatch time rather than rendering a captured pre-Seek value.
+A stalled UI therefore does not accumulate an unbounded BeginInvoke backlog,
+and old playback epochs cannot repaint newer command results. Space or K toggles pause.
 **跳至** seeks to an absolute time in seconds. Playback controls also offer ±10s jumps and F11 fullscreen. **停止** closes the media
 generation and detaches the output target. After natural **Ended**, pressing
 **重播** (or Space) reopens the same file with a fresh playback generation.
