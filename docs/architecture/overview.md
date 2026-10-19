@@ -67,7 +67,10 @@ Native MediaRuntime core
 ## Desktop frontend: Avalonia
 
 The first product page is a **library**: `Lapis.Library` indexes each local
-file or complete BDMV root behind `IMediaLibrary`. Its first JSON persistence
+file or complete BDMV root behind `IMediaLibrary`. Its optional
+`DiscArtworkLocator` searches only BDMV/META/DL; Avalonia owns the
+background decoded thumbnails and their lifetimes, keeping the catalog
+format and playback pipeline independent of image decoding. Its first JSON persistence
 adapter does not manipulate media, and `LibraryViewModel` is not a playback
 session. Selecting one card opens the distinct Watch page with the existing
 serialized playback actor (ADR 0041). MPLS filenames shown in the disc sidebar

@@ -44,7 +44,7 @@ public sealed class LibraryViewModelTests
         Assert.Empty(view.VisibleItems);
         view.ShowAll();
         Assert.Single(view.VisibleItems);
-        await view.RemoveAsync(entry);
+        await view.RemoveAsync(entry.Item);
         Assert.True(view.IsEmpty);
         Assert.Empty(view.VisibleItems);
         Assert.Single(storage.RemovedIds);

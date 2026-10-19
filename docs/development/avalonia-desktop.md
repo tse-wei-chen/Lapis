@@ -52,6 +52,15 @@ Dependencies viewer or `dumpbin /DEPENDENTS`. Never fix this by blindly
 copying random DLLs into System32. The product package must independently
 carry its redistributable Native dependencies, subject to THIRD_PARTY.md.
 
+Library cards display disc-supplied local JPEG artwork from
+`BDMV/META/DL`, preferring `*_L.jpg` and then `*_S.jpg`. The catalog
+stores no bitmap bytes or artwork URL. Optional image files are read
+off the UI thread with a bounded decode worker pool and decoded to at most
+400 pixels wide; bad/missing/unmounted art falls back to the "L" poster
+placeholder. Backup and `MAKEMKV` trees are excluded from artwork
+discovery. Tiles own and dispose their decoded bitmaps; no poster loads
+touch the media runtime or playback graph.
+
 The app now starts on the **library**, not on the player surface. Import
 one or multiple local video files, or one **entire clear Blu-ray disc root**
 (containing BDMV/PLAYLIST and BDMV/STREAM). Both the disc root and its BDMV

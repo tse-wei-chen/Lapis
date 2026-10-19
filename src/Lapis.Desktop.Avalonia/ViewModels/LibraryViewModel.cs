@@ -10,17 +10,19 @@ namespace Lapis.Desktop.Avalonia.ViewModels;
 /// Library-first home view state, entirely independent from native playback.
 /// The library's import operation indexes sources and never starts playback.
 /// </summary>
-public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyChanged
+public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyChanged, IDisposable
 {
     private readonly IMediaLibrary _library = library;
+    private readonly Dictionary<Guid, LibraryCardViewModel> _cards = [];
     private IReadOnlyList<MediaLibraryItem> _items = [];
+    private bool _disposed;
     private string _searchText = "";
     private string _statusText = "收藏你的電影；點選封面才開始播放。";
     private bool _discsOnly;
     private bool _loaded;
 
     public event PropertyChangedEventHandler? PropertyChanged;
-    public ObservableCollection<MediaLibraryItem> VisibleItems { get; } = [];
+    public ObservableCollection<LibraryCardViewModel> VisibleItems { get; } = [];
 
     public string SearchText
     {
@@ -52,7 +54,17 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
 
     public async Task LoadAsync(CancellationToken cancellationToken = default)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         _items = await _library.ListAsync(cancellationToken);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var identities = _items.Select(item => item.Id).ToHashSet();
+        foreach (var stale in _cards.Keys.Where(key => !identities.Contains(key)).ToArray())
+        {
+            _cards[stale].Dispose();
+            _cards.Remove(stale);
+        }
+        foreach (var item in _items)
+            _cards.TryAdd(item.Id, new LibraryCardViewModel(item));
         _loaded = true;
         OnPropertyChanged(nameof(CountText));
         OnPropertyChanged(nameof(HasItems));
@@ -91,11 +103,22 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
                 !item.Title.Contains(needle, StringComparison.OrdinalIgnoreCase) &&
                 !item.SourcePath.Contains(needle, StringComparison.OrdinalIgnoreCase))
                 continue;
-            VisibleItems.Add(item);
+            var card = _cards[item.Id];
+            VisibleItems.Add(card);
+            card.EnsurePosterLoaded();
         }
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(HasNoResults));
         OnPropertyChanged(nameof(CurrentFilterLabel));
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        foreach (var card in _cards.Values) card.Dispose();
+        _cards.Clear();
+        VisibleItems.Clear();
     }
 
     private void OnPropertyChanged([CallerMemberName] string property = "") =>

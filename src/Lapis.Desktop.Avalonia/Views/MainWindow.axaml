@@ -139,15 +139,26 @@
                   <StackPanel Width="186" Spacing="8">
                     <Border Height="245" CornerRadius="13" Background="#202E46"
                             BorderBrush="#384A67" BorderThickness="1" ClipToBounds="True">
-                      <Grid RowDefinitions="Auto,*,Auto" Margin="15">
-                        <TextBlock Text="{Binding KindLabel}" FontSize="10"
-                                   Foreground="#9EC4FF" FontWeight="SemiBold"/>
-                        <TextBlock Grid.Row="1" Text="L" FontSize="94" FontWeight="Light"
-                                   VerticalAlignment="Center" HorizontalAlignment="Center"
-                                   Foreground="#455F86"/>
-                        <Border Grid.Row="2" Background="#344B70" CornerRadius="6"
-                                HorizontalAlignment="Left" Padding="9,4">
-                          <TextBlock Text="▶  觀賞" FontSize="11" Foreground="#E7F0FD"/>
+                      <Grid RowDefinitions="Auto,*,Auto">
+                        <!-- Real disc artwork is decoded to a thumbnail off
+                             thread. No video-frame/GPU presenter ownership. -->
+                        <Image Grid.RowSpan="3" Source="{Binding Poster}"
+                               IsVisible="{Binding HasPoster}"
+                               Stretch="UniformToFill"/>
+                        <TextBlock Grid.Row="1" Text="L" FontSize="94"
+                                   IsVisible="{Binding ShowPlaceholder}"
+                                   FontWeight="Light" VerticalAlignment="Center"
+                                   HorizontalAlignment="Center" Foreground="#455F86"/>
+                        <Border Grid.Row="0" HorizontalAlignment="Left" Margin="12"
+                                Background="#CC15233A" CornerRadius="5" Padding="7,4">
+                          <TextBlock Text="{Binding KindLabel}" FontSize="10"
+                                     Foreground="#D7E9FF" FontWeight="SemiBold"/>
+                        </Border>
+                        <Border Grid.Row="2" Background="#D9233654"
+                                HorizontalAlignment="Left" Margin="12"
+                                CornerRadius="6" Padding="10,6">
+                          <TextBlock Text="▶  觀賞" FontSize="11"
+                                     Foreground="#F2F7FF" FontWeight="SemiBold"/>
                         </Border>
                       </Grid>
                     </Border>

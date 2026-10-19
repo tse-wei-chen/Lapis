@@ -142,7 +142,8 @@ public sealed partial class MainWindow : Window
 
     private async void PlayLibraryItem_Click(object? sender, RoutedEventArgs args)
     {
-        if (sender is not Button { CommandParameter: MediaLibraryItem item }) return;
+        if (sender is not Button { CommandParameter: LibraryCardViewModel card }) return;
+        var item = card.Item;
         try
         {
             // Validate that the referenced source still exists before switching
@@ -214,6 +215,7 @@ public sealed partial class MainWindow : Window
             // Native render worker joins before the persistent GPU HWND dies.
             await _player.DisposeAsync();
             _videoSurface.ReleaseAfterPlaybackStopped();
+            _library.Dispose();
             _shutdownComplete = true;
             Close();
         }
