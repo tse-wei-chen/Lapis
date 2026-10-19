@@ -73,7 +73,7 @@ public static class LibraryDropClassifier
                 if (unique.Add(key)) sources.Add(candidate);
             }
             catch (Exception ex) when (ex is ArgumentException or IOException or
-                UnauthorizedAccessException or NotSupportedException)
+                InvalidDataException or UnauthorizedAccessException or NotSupportedException)
             {
                 rejected.Add($"無法匯入 {Path.GetFileName(input)}：{ex.Message}");
             }
