@@ -67,7 +67,7 @@ public sealed class LibraryDropClassifierTests
         public string File(string name)
         {
             var path = Path.Combine(Root, name);
-            File.WriteAllText(path, "test");
+            System.IO.File.WriteAllText(path, "test");
             return path;
         }
         public string CreateBdmv(string name)
@@ -78,7 +78,7 @@ public sealed class LibraryDropClassifierTests
             Directory.CreateDirectory(Path.Combine(bdmv, "STREAM"));
             Directory.CreateDirectory(Path.Combine(root, "CERTIFICATE"));
             Directory.CreateDirectory(Path.Combine(root, "MAKEMKV", "AACS"));
-            File.WriteAllText(Path.Combine(bdmv, "index.bdmv"), "test");
+            System.IO.File.WriteAllText(Path.Combine(bdmv, "index.bdmv"), "test");
             return root;
         }
         public void Dispose()
