@@ -6,9 +6,15 @@ using Lapis.Library;
 
 namespace Lapis.Desktop.Avalonia.ViewModels;
 
+public enum LibraryDisplayMode { Grid, List }
+public enum LibraryCategory { All, BluRay, Videos }
+public enum LibrarySortMode { RecentlyAdded, TitleAscending, TitleDescending }
+
+public sealed record LibrarySortChoice(LibrarySortMode Mode, string Label);
+
 /// <summary>
-/// Library-first home view state, entirely independent from native playback.
-/// The library's import operation indexes sources and never starts playback.
+/// Collection-first shell state. Both visual layouts use exactly the same card
+/// identities/filtered collection; no native runtime is created while browsing.
 /// </summary>
 public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyChanged, IDisposable
 {
@@ -17,21 +23,45 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
     private IReadOnlyList<MediaLibraryItem> _items = [];
     private bool _disposed;
     private string _searchText = "";
-    private string _statusText = "收藏你的電影；點選封面才開始播放。";
-    private bool _discsOnly;
+    private string _statusText = "選取收藏項目以播放；原始影片不會被搬移。";
+    private LibraryCategory _category;
+    private LibraryDisplayMode _displayMode = LibraryDisplayMode.Grid;
+    private LibrarySortChoice _selectedSort = SortChoices[0];
     private bool _loaded;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public ObservableCollection<LibraryCardViewModel> VisibleItems { get; } = [];
+
+    public static IReadOnlyList<LibrarySortChoice> SortChoices { get; } =
+    [
+        new(LibrarySortMode.RecentlyAdded, "最近加入"),
+        new(LibrarySortMode.TitleAscending, "片名 A–Z"),
+        new(LibrarySortMode.TitleDescending, "片名 Z–A")
+    ];
+
+    public IReadOnlyList<LibrarySortChoice> SortOptions => SortChoices;
 
     public string SearchText
     {
         get => _searchText;
         set
         {
+            value ??= "";
             if (_searchText == value) return;
-            _searchText = value ?? "";
-            OnPropertyChanged();
+            _searchText = value;
+            Notify();
+            ApplyFilter();
+        }
+    }
+
+    public LibrarySortChoice SelectedSort
+    {
+        get => _selectedSort;
+        set
+        {
+            if (value is null || _selectedSort == value) return;
+            _selectedSort = value;
+            Notify();
             ApplyFilter();
         }
     }
@@ -41,22 +71,50 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         get => _statusText;
         private set
         {
+            if (_statusText == value) return;
             _statusText = value;
-            OnPropertyChanged();
+            Notify();
         }
     }
 
-    public string CountText => $"{_items.Count} 部收藏 · {_items.Count(item => item.IsDisc)} 張光碟";
+    public LibraryDisplayMode DisplayMode
+    {
+        get => _displayMode;
+        private set
+        {
+            if (_displayMode == value) return;
+            _displayMode = value;
+            Notify();
+            Notify(nameof(IsGridView));
+            Notify(nameof(IsListView));
+        }
+    }
+
+    public bool IsGridView => DisplayMode == LibraryDisplayMode.Grid;
+    public bool IsListView => DisplayMode == LibraryDisplayMode.List;
+    public bool IsAllCategory => _category == LibraryCategory.All;
+    public bool IsBluRayCategory => _category == LibraryCategory.BluRay;
+    public bool IsVideoCategory => _category == LibraryCategory.Videos;
+    public bool IsRecentlyAddedSort => SelectedSort.Mode == LibrarySortMode.RecentlyAdded;
+
+    public string CountText => $"{_items.Count} 部收藏 · {_items.Count(item => item.IsDisc)} 張 Blu-ray";
+    public string ResultText => $"{VisibleItems.Count} 部影片";
     public bool HasItems => _items.Count != 0;
     public bool IsEmpty => _loaded && _items.Count == 0;
     public bool HasNoResults => _loaded && _items.Count != 0 && VisibleItems.Count == 0;
-    public string CurrentFilterLabel => _discsOnly ? "藍光光碟" : "全部影片";
+    public string CurrentFilterLabel => _category switch
+    {
+        LibraryCategory.BluRay => "Blu-ray 光碟",
+        LibraryCategory.Videos => "本機影片",
+        _ => "所有收藏"
+    };
 
     public async Task LoadAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        _items = await _library.ListAsync(cancellationToken);
+        var items = await _library.ListAsync(cancellationToken);
         ObjectDisposedException.ThrowIf(_disposed, this);
+        _items = items;
         var identities = _items.Select(item => item.Id).ToHashSet();
         foreach (var stale in _cards.Keys.Where(key => !identities.Contains(key)).ToArray())
         {
@@ -66,8 +124,8 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         foreach (var item in _items)
             _cards.TryAdd(item.Id, new LibraryCardViewModel(item));
         _loaded = true;
-        OnPropertyChanged(nameof(CountText));
-        OnPropertyChanged(nameof(HasItems));
+        Notify(nameof(CountText));
+        Notify(nameof(HasItems));
         ApplyFilter();
     }
 
@@ -75,7 +133,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
     {
         var item = await _library.ImportAsync(source, cancellationToken);
         await LoadAsync(cancellationToken);
-        StatusText = $"已加入收藏：{item.Title}（不會複製原始影片）";
+        StatusText = $"已加入收藏：{item.Title}（未複製原始影片）";
     }
 
     public async Task RemoveAsync(MediaLibraryItem item, CancellationToken cancellationToken = default)
@@ -84,32 +142,69 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         if (await _library.RemoveAsync(item.Id, cancellationToken))
         {
             await LoadAsync(cancellationToken);
-            StatusText = $"已移出收藏庫：{item.Title}（原始檔案不受影響）";
+            StatusText = $"已移出收藏庫：{item.Title}（原始檔案未刪除）";
         }
     }
 
-    public void ShowAll() { _discsOnly = false; ApplyFilter(); }
-    public void ShowDiscs() { _discsOnly = true; ApplyFilter(); }
+    public void ShowAll() => SetCategory(LibraryCategory.All);
+    public void ShowDiscs() => SetCategory(LibraryCategory.BluRay);
+    public void ShowVideos() => SetCategory(LibraryCategory.Videos);
+    public void ShowRecentlyAdded()
+    {
+        SetCategory(LibraryCategory.All);
+        SelectedSort = SortChoices[0];
+    }
+
+    public void ShowGrid() => DisplayMode = LibraryDisplayMode.Grid;
+    public void ShowList() => DisplayMode = LibraryDisplayMode.List;
     public void ReportError(string message) => StatusText = message;
+
+    private void SetCategory(LibraryCategory category)
+    {
+        if (_category == category) return;
+        _category = category;
+        Notify(nameof(IsAllCategory));
+        Notify(nameof(IsBluRayCategory));
+        Notify(nameof(IsVideoCategory));
+        ApplyFilter();
+    }
 
     private void ApplyFilter()
     {
+        if (_disposed) return;
         var needle = _searchText.Trim();
-        VisibleItems.Clear();
-        foreach (var item in _items.OrderByDescending(item => item.ImportedAtUtc))
+        IEnumerable<MediaLibraryItem> filtered = _items.Where(item =>
+            (_category == LibraryCategory.All ||
+             (_category == LibraryCategory.BluRay && item.IsDisc) ||
+             (_category == LibraryCategory.Videos && !item.IsDisc)) &&
+            (needle.Length == 0 ||
+             item.Title.Contains(needle, StringComparison.OrdinalIgnoreCase) ||
+             item.SourcePath.Contains(needle, StringComparison.OrdinalIgnoreCase)));
+
+        filtered = SelectedSort.Mode switch
         {
-            if (_discsOnly && !item.IsDisc) continue;
-            if (needle.Length != 0 &&
-                !item.Title.Contains(needle, StringComparison.OrdinalIgnoreCase) &&
-                !item.SourcePath.Contains(needle, StringComparison.OrdinalIgnoreCase))
-                continue;
+            LibrarySortMode.TitleAscending => filtered
+                .OrderBy(item => item.Title, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item.Id),
+            LibrarySortMode.TitleDescending => filtered
+                .OrderByDescending(item => item.Title, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item.Id),
+            _ => filtered.OrderByDescending(item => item.ImportedAtUtc)
+                .ThenBy(item => item.Id)
+        };
+
+        VisibleItems.Clear();
+        foreach (var item in filtered)
+        {
             var card = _cards[item.Id];
             VisibleItems.Add(card);
             card.EnsurePosterLoaded();
         }
-        OnPropertyChanged(nameof(IsEmpty));
-        OnPropertyChanged(nameof(HasNoResults));
-        OnPropertyChanged(nameof(CurrentFilterLabel));
+        Notify(nameof(CurrentFilterLabel));
+        Notify(nameof(ResultText));
+        Notify(nameof(IsEmpty));
+        Notify(nameof(HasNoResults));
+        Notify(nameof(IsRecentlyAddedSort));
     }
 
     public void Dispose()
@@ -121,6 +216,6 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         VisibleItems.Clear();
     }
 
-    private void OnPropertyChanged([CallerMemberName] string property = "") =>
+    private void Notify([CallerMemberName] string property = "") =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(property));
 }

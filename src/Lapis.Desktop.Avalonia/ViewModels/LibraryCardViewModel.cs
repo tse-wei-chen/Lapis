@@ -28,6 +28,9 @@ public sealed class LibraryCardViewModel : INotifyPropertyChanged, IDisposable
     public string Title => Item.Title;
     public string KindLabel => Item.KindLabel;
     public string AvailabilityLabel => Item.AvailabilityLabel;
+    public string SourcePath => Item.SourcePath;
+    public string ImportedAtText => Item.ImportedAtUtc.ToLocalTime().ToString("yyyy/MM/dd");
+    public bool IsAvailable => Item.IsAvailable;
     public bool IsDisc => Item.IsDisc;
     public Bitmap? Poster => _poster;
     public bool HasPoster => _poster is not null;

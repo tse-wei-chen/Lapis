@@ -9,13 +9,57 @@
     <Style Selector="Button">
       <Setter Property="Cursor" Value="Hand"/>
     </Style>
-    <Style Selector="Button.primary">
-      <Setter Property="Background" Value="#6D99F4"/>
-      <Setter Property="Foreground" Value="#09111E"/>
+    <Style Selector="Button.subtle-action">
+      <Setter Property="Background" Value="#F5F6F7"/>
+      <Setter Property="Foreground" Value="#373E46"/>
+      <Setter Property="BorderBrush" Value="#DDDFE3"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="5"/>
+      <Setter Property="Padding" Value="14,9"/>
+      <Setter Property="FontSize" Value="12"/>
+    </Style>
+    <Style Selector="Button.accent-action">
+      <Setter Property="Background" Value="#B39557"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
       <Setter Property="BorderThickness" Value="0"/>
-      <Setter Property="CornerRadius" Value="10"/>
+      <Setter Property="CornerRadius" Value="5"/>
+      <Setter Property="Padding" Value="17,9"/>
+      <Setter Property="FontSize" Value="12"/>
       <Setter Property="FontWeight" Value="SemiBold"/>
-      <Setter Property="Padding" Value="20,11"/>
+    </Style>
+    <Style Selector="Button.library-nav">
+      <Setter Property="HorizontalContentAlignment" Value="Left"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="#4C545D"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="CornerRadius" Value="4"/>
+      <Setter Property="Padding" Value="13,11"/>
+      <Setter Property="FontSize" Value="13"/>
+    </Style>
+    <Style Selector="Button.library-nav:pointerover">
+      <Setter Property="Background" Value="#F1F2F4"/>
+    </Style>
+    <Style Selector="Button.library-nav.selected">
+      <Setter Property="Background" Value="#ECE8DE"/>
+      <Setter Property="Foreground" Value="#312D25"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+    <Style Selector="TextBlock.sidebar-section">
+      <Setter Property="Foreground" Value="#90959C"/>
+      <Setter Property="FontSize" Value="11"/>
+    </Style>
+    <Style Selector="Button.view-button">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="#777F88"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="BorderBrush" Value="Transparent"/>
+      <Setter Property="CornerRadius" Value="4"/>
+      <Setter Property="FontSize" Value="21"/>
+      <Setter Property="Padding" Value="9,4"/>
+    </Style>
+    <Style Selector="Button.view-button.active">
+      <Setter Property="Foreground" Value="#A78949"/>
+      <Setter Property="Background" Value="#EDEAE1"/>
     </Style>
     <Style Selector="Button.library-card">
       <Setter Property="Padding" Value="0"/>
@@ -24,160 +68,293 @@
       <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
     </Style>
     <Style Selector="Button.library-card:pointerover">
-      <Setter Property="Opacity" Value="0.86"/>
+      <Setter Property="Opacity" Value="0.87"/>
+    </Style>
+    <Style Selector="Button.library-row">
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="Background" Value="#FFFFFF"/>
+      <Setter Property="Foreground" Value="#333B43"/>
+      <Setter Property="BorderBrush" Value="#E9EBED"/>
+      <Setter Property="BorderThickness" Value="0,0,0,1"/>
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+      <Setter Property="CornerRadius" Value="0"/>
+    </Style>
+    <Style Selector="Button.library-row:pointerover">
+      <Setter Property="Background" Value="#F3F1EB"/>
+    </Style>
+    <Style Selector="TextBlock.column-label">
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="Foreground" Value="#727B83"/>
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="Margin" Value="10,0"/>
+    </Style>
+    <Style Selector="TextBlock.row-cell">
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="Foreground" Value="#4E565F"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Margin" Value="9,0"/>
     </Style>
   </Window.Styles>
 
   <Grid>
-  <!-- LIBRARY is the launch experience. No media session is opened here. -->
-  <Grid x:Name="LibraryPage" RowDefinitions="Auto,*" IsVisible="True"
-        Background="#0A0E15">
-    <Border Grid.Row="0" BorderBrush="#253042" BorderThickness="0,0,0,1"
-            Background="#111826" Padding="30,17">
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="13">
-        <StackPanel Spacing="1">
-          <TextBlock Text="L A P I S" FontWeight="Bold" FontSize="23"
-                     Foreground="#DCE9FF"/>
-          <TextBlock Text="YOUR CINEMA, YOUR COLLECTION" FontSize="9"
-                     Foreground="#91A8C6"/>
-        </StackPanel>
-        <TextBlock Grid.Column="1" Text="電影收藏庫" VerticalAlignment="Center"
-                   HorizontalAlignment="Center" FontSize="14" Foreground="#B2C4DF"/>
-        <Button Grid.Column="2" Content="＋ 匯入影片" Click="ImportFiles_Click"
-                Classes="primary" VerticalAlignment="Center"/>
-        <Button Grid.Column="3" Content="匯入 Blu-ray 資料夾"
-                Click="ImportDisc_Click" Padding="15,10" VerticalAlignment="Center"
-                Background="#24324B" Foreground="#DBE8FB" CornerRadius="10"/>
-      </Grid>
-    </Border>
+  <!-- The library uses a light theme; Watch keeps the dark app theme.
+       All data browsing is independent of the native playback session. -->
+  <ThemeVariantScope RequestedThemeVariant="Light">
+    <Grid x:Name="LibraryPage" RowDefinitions="Auto,*"
+          IsVisible="True" Background="#F6F7F8" Foreground="#22272D">
 
-    <Grid Grid.Row="1" ColumnDefinitions="214,*">
-      <Border Grid.Column="0" Background="#101723" BorderBrush="#202C3F"
-              BorderThickness="0,0,1,0" Padding="20,31">
-        <StackPanel Spacing="13">
-          <TextBlock Text="探索" Foreground="#6E85A4" FontSize="11"
-                     FontWeight="SemiBold" Margin="8,0,0,4"/>
-          <Button Content="▦  所有收藏" Click="ShowAll_Click"
-                  HorizontalContentAlignment="Left" Padding="13,11"
-                  Background="#283755" CornerRadius="10"/>
-          <Button Content="▣  Blu-ray 光碟" Click="ShowDiscs_Click"
-                  HorizontalContentAlignment="Left" Padding="13,11"
-                  Background="Transparent" CornerRadius="10"/>
-          <Border Height="1" Background="#273449" Margin="4,18"/>
-          <TextBlock Text="{Binding CountText}" Foreground="#A7BCD4"
-                     FontSize="12" Margin="8,0"/>
-          <TextBlock Text="片源留在原本的位置；收藏庫只保存索引，不佔用額外影片空間。"
-                     TextWrapping="Wrap" Foreground="#7489A4" FontSize="11"
-                     Margin="8,8" LineHeight="20"/>
-        </StackPanel>
+      <Border Grid.Row="0" Background="#FFFFFF" BorderBrush="#E2E4E7"
+              BorderThickness="0,0,0,1" Padding="23,12" MinHeight="64">
+        <Grid ColumnDefinitions="210,*,Auto" ColumnSpacing="16">
+          <StackPanel VerticalAlignment="Center" Spacing="2">
+            <TextBlock Text="LAPIS" FontWeight="SemiBold" FontSize="20"
+                       LetterSpacing="3" Foreground="#262B31"/>
+            <TextBlock Text="YOUR PERSONAL CINEMA" FontSize="9"
+                       Foreground="#838A92" LetterSpacing="1"/>
+          </StackPanel>
+          <TextBlock Grid.Column="1" Text="Cinema Library" FontSize="15"
+                     FontWeight="Medium" HorizontalAlignment="Center"
+                     VerticalAlignment="Center" Foreground="#31363D"/>
+          <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8"
+                      VerticalAlignment="Center">
+            <Button Classes="subtle-action" Content="匯入影片"
+                    Click="ImportFiles_Click"/>
+            <Button Classes="accent-action" Content="＋ 匯入 Blu-ray"
+                    Click="ImportDisc_Click"/>
+          </StackPanel>
+        </Grid>
       </Border>
 
-      <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Disabled"
-                    VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="32,30,32,45" Spacing="23">
-          <Border Background="#19263A" CornerRadius="19" MinHeight="186" Padding="30,23">
-            <Grid ColumnDefinitions="*,220">
-              <StackPanel VerticalAlignment="Center" Spacing="9">
-                <TextBlock Text="PERSONAL HOME CINEMA" FontSize="11"
-                           Foreground="#8FBDFF" FontWeight="Bold"/>
-                <TextBlock Text="每一部電影，都值得好好收藏。" FontWeight="SemiBold"
-                           FontSize="27" Foreground="#F2F6FF"/>
-                <TextBlock Text="整理你的影片與完整 Blu-ray 光碟，從這裡進入沉浸式觀影。"
-                           Foreground="#C1D0E4" FontSize="13" TextWrapping="Wrap"/>
-                <TextBlock Text="影片不會在啟動時自動播放" Foreground="#85A0BF" FontSize="11"/>
-              </StackPanel>
-              <Border Grid.Column="1" CornerRadius="15" Margin="15,0,0,0"
-                      Background="#283D5E">
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
-                            Spacing="6">
-                  <TextBlock Text="L" FontSize="82" Foreground="#739EEB"
-                             FontWeight="Light" HorizontalAlignment="Center"/>
-                  <TextBlock Text="CINEMA EDITION" FontSize="10"
-                             Foreground="#D4E1F5" LetterSpacing="2"/>
-                </StackPanel>
-              </Border>
-            </Grid>
-          </Border>
+      <Grid Grid.Row="1" ColumnDefinitions="208,*">
+        <Border Background="#FFFFFF" BorderBrush="#E6E8EB"
+                BorderThickness="0,0,1,0" Grid.Column="0">
+          <StackPanel Margin="14,24,14,18" Spacing="5">
+            <TextBlock Text="收藏庫" Classes="sidebar-section" Margin="11,0,0,11"/>
+            <Button Classes="library-nav" Classes.selected="{Binding IsAllCategory}"
+                    Content="▦   所有收藏" Click="ShowAll_Click"/>
+            <Button Classes="library-nav" Classes.selected="{Binding IsBluRayCategory}"
+                    Content="▤   Blu-ray 光碟" Click="ShowDiscs_Click"/>
+            <Button Classes="library-nav" Classes.selected="{Binding IsVideoCategory}"
+                    Content="▷   本機影片" Click="ShowVideos_Click"/>
+            <Border Height="1" Background="#E8EAED" Margin="6,19,6,16"/>
+            <TextBlock Text="快速存取" Classes="sidebar-section" Margin="11,0,0,10"/>
+            <Button Classes="library-nav" Content="◷   最近加入"
+                    Click="ShowRecentlyAdded_Click"/>
+            <Border Height="1" Background="#E8EAED" Margin="6,19,6,16"/>
+            <TextBlock Text="媒體來源" Classes="sidebar-section" Margin="11,0,0,10"/>
+            <Button Classes="library-nav" Content="＋   匯入影片"
+                    Click="ImportFiles_Click"/>
+            <Button Classes="library-nav" Content="＋   匯入光碟資料夾"
+                    Click="ImportDisc_Click"/>
+            <Border Height="1" Background="#E8EAED" Margin="6,20,6,10"/>
+            <TextBlock Text="{Binding CountText}" Margin="11,5"
+                       FontSize="11" Foreground="#737A82" TextWrapping="Wrap"/>
+            <TextBlock Text="僅建立收藏索引，不搬移原始影片。" Margin="11,3"
+                       FontSize="11" Foreground="#90959B" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
 
-          <Grid ColumnDefinitions="*,280" ColumnSpacing="20">
-            <StackPanel VerticalAlignment="Center" Spacing="3">
-              <TextBlock Text="{Binding CurrentFilterLabel}" FontSize="23"
-                         FontWeight="SemiBold"/>
-              <TextBlock Text="從封面進入播放；不必再尋找 BDMV 裡的片段檔。"
-                         FontSize="12" Foreground="#839BB9"/>
+        <Grid Grid.Column="1" Margin="32,30,32,16"
+              RowDefinitions="Auto,Auto,*,Auto" RowSpacing="18">
+          <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="16">
+            <StackPanel Spacing="6">
+              <TextBlock Text="{Binding CurrentFilterLabel}" FontSize="34"
+                         FontWeight="SemiBold" Foreground="#191D22"/>
+              <TextBlock Text="{Binding ResultText}" FontSize="12"
+                         Foreground="#777D84"/>
             </StackPanel>
-            <TextBox Grid.Column="1" Text="{Binding SearchText, Mode=TwoWay}"
-                     Watermark="搜尋電影名稱或檔案路徑…" Height="41"
-                     Background="#1B2638" BorderBrush="#36445B"
-                     CornerRadius="10" VerticalAlignment="Center"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7"
+                        VerticalAlignment="Bottom">
+              <Button Classes="view-button" Classes.active="{Binding IsGridView}"
+                      Content="▦" Click="ShowGrid_Click"
+                      ToolTip.Tip="封面格狀檢視" AutomationProperties.Name="格狀檢視"/>
+              <Button Classes="view-button" Classes.active="{Binding IsListView}"
+                      Content="☷" Click="ShowList_Click"
+                      ToolTip.Tip="清單檢視" AutomationProperties.Name="清單檢視"/>
+              <ComboBox ItemsSource="{Binding SortOptions}"
+                        SelectedItem="{Binding SelectedSort, Mode=TwoWay}"
+                        Width="134" Height="35" Margin="10,0,0,0">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding Label}" FontSize="12"/>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <TextBox Text="{Binding SearchText, Mode=TwoWay}"
+                       Watermark="搜尋名稱或來源路徑" Width="228" Height="35"
+                       Background="#FFFFFF" BorderBrush="#D6D9DE"
+                       CornerRadius="6"/>
+            </StackPanel>
           </Grid>
 
-          <Border IsVisible="{Binding IsEmpty}" Background="#152033"
-                  CornerRadius="16" Padding="48" MinHeight="205">
-            <StackPanel Spacing="12" VerticalAlignment="Center"
-                        HorizontalAlignment="Center">
-              <TextBlock Text="你的收藏庫還是空的" FontSize="20"
-                         HorizontalAlignment="Center" FontWeight="SemiBold"/>
-              <TextBlock Text="從右上角匯入影片或完整 Blu-ray 資料夾，建立第一張電影收藏卡。"
-                         Foreground="#9AB0CE" TextWrapping="Wrap" TextAlignment="Center"/>
-            </StackPanel>
-          </Border>
-          <TextBlock IsVisible="{Binding HasNoResults}"
-                     Text="沒有符合搜尋條件的收藏。" Foreground="#9AB0CE"
-                     FontSize="14" Margin="4,20"/>
+          <Border Grid.Row="1" Background="#E1E3E6" Height="1"/>
 
-          <ItemsControl ItemsSource="{Binding VisibleItems}">
-            <ItemsControl.ItemsPanel>
-              <ItemsPanelTemplate>
-                <WrapPanel Orientation="Horizontal"/>
-              </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-            <ItemsControl.ItemTemplate>
-              <DataTemplate>
-                <Button Classes="library-card" Click="PlayLibraryItem_Click"
-                        CommandParameter="{Binding}" Margin="0,0,18,24">
-                  <StackPanel Width="288" Spacing="8">
-                    <Border Width="288" Height="162" CornerRadius="13" Background="#202E46"
-                            BorderBrush="#384A67" BorderThickness="1" ClipToBounds="True">
-                      <Grid RowDefinitions="Auto,*,Auto">
-                        <!-- Real disc artwork is decoded to a thumbnail off
-                             thread. No video-frame/GPU presenter ownership. -->
-                        <Image Grid.RowSpan="3" Source="{Binding Poster}"
-                               IsVisible="{Binding HasPoster}"
-                               Stretch="Uniform"/>
-                        <TextBlock Grid.Row="1" Text="L" FontSize="74"
-                                   IsVisible="{Binding ShowPlaceholder}"
-                                   FontWeight="Light" VerticalAlignment="Center"
-                                   HorizontalAlignment="Center" Foreground="#455F86"/>
-                        <Border Grid.Row="0" HorizontalAlignment="Left" Margin="12"
-                                Background="#CC15233A" CornerRadius="5" Padding="7,4">
-                          <TextBlock Text="{Binding KindLabel}" FontSize="10"
-                                     Foreground="#D7E9FF" FontWeight="SemiBold"/>
+          <Grid Grid.Row="2">
+            <Border IsVisible="{Binding IsEmpty}" Background="#FFFFFF"
+                    BorderBrush="#E6E8EB" BorderThickness="1" CornerRadius="9"
+                    Padding="52" VerticalAlignment="Top">
+              <StackPanel Spacing="11" HorizontalAlignment="Center">
+                <TextBlock Text="收藏庫目前沒有影片" FontSize="20"
+                           FontWeight="Medium" HorizontalAlignment="Center"/>
+                <TextBlock Text="匯入本機影片或整個 Blu-ray 光碟資料夾，即可開始整理收藏。"
+                           Foreground="#767C84" TextWrapping="Wrap"
+                           HorizontalAlignment="Center" TextAlignment="Center"/>
+                <Button Content="＋ 匯入 Blu-ray" Classes="accent-action"
+                        Click="ImportDisc_Click" HorizontalAlignment="Center"
+                        Margin="0,12,0,0"/>
+              </StackPanel>
+            </Border>
+
+            <TextBlock Text="沒有符合條件的收藏，請調整搜尋或篩選。"
+                       IsVisible="{Binding HasNoResults}" Margin="4,18"
+                       FontSize="14" Foreground="#737B85"/>
+
+            <ScrollViewer IsVisible="{Binding IsGridView}"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+              <ItemsControl ItemsSource="{Binding VisibleItems}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <WrapPanel Orientation="Horizontal"/>
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Button Classes="library-card" Click="PlayLibraryItem_Click"
+                            CommandParameter="{Binding}" Margin="0,0,20,24">
+                      <Button.ContextMenu>
+                        <ContextMenu>
+                          <MenuItem Header="▶  播放" Click="ContextPlay_Click"
+                                    CommandParameter="{Binding}"/>
+                          <Separator/>
+                          <MenuItem Header="在檔案總管中顯示" Click="ContextReveal_Click"
+                                    CommandParameter="{Binding}"/>
+                          <MenuItem Header="複製來源路徑" Click="ContextCopyPath_Click"
+                                    CommandParameter="{Binding}"/>
+                          <MenuItem Header="檢視來源資訊" Click="ContextDetails_Click"
+                                    CommandParameter="{Binding}"/>
+                          <Separator/>
+                          <MenuItem Header="從收藏庫移除（保留檔案）"
+                                    Click="ContextRemove_Click"
+                                    CommandParameter="{Binding}"/>
+                        </ContextMenu>
+                      </Button.ContextMenu>
+                      <StackPanel Width="272" Spacing="7">
+                        <Border Width="272" Height="153" CornerRadius="5"
+                                Background="#E8EBEF" BorderBrush="#DDE1E5"
+                                BorderThickness="1" ClipToBounds="True">
+                          <Grid RowDefinitions="Auto,*,Auto">
+                            <Image Grid.RowSpan="3" Source="{Binding Poster}"
+                                   IsVisible="{Binding HasPoster}" Stretch="Uniform"/>
+                            <TextBlock Grid.Row="1" Text="L"
+                                       IsVisible="{Binding ShowPlaceholder}"
+                                       FontSize="68" FontWeight="Light"
+                                       Foreground="#B0B9C5"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"/>
+                            <Border Grid.Row="0" HorizontalAlignment="Left"
+                                    Margin="9" Background="#DDF9FAFB"
+                                    CornerRadius="3" Padding="7,3">
+                              <TextBlock Text="{Binding KindLabel}"
+                                         Foreground="#4A5059" FontSize="9"
+                                         FontWeight="SemiBold"/>
+                            </Border>
+                            <Border Grid.Row="2" Margin="9" Padding="9,5"
+                                    HorizontalAlignment="Right"
+                                    Background="#DDFDFDFD" CornerRadius="5">
+                              <TextBlock Text="▶ 播放" FontSize="11"
+                                         FontWeight="SemiBold" Foreground="#31383F"/>
+                            </Border>
+                          </Grid>
                         </Border>
-                        <Border Grid.Row="2" Background="#D9233654"
-                                HorizontalAlignment="Left" Margin="12"
-                                CornerRadius="6" Padding="10,6">
-                          <TextBlock Text="▶  觀賞" FontSize="11"
-                                     Foreground="#F2F7FF" FontWeight="SemiBold"/>
-                        </Border>
-                      </Grid>
-                    </Border>
-                    <TextBlock Text="{Binding Title}" FontSize="14"
-                               FontWeight="SemiBold" Foreground="#E7EFFB"
-                               TextTrimming="CharacterEllipsis"/>
-                    <TextBlock Text="{Binding AvailabilityLabel}" FontSize="11"
-                               Foreground="#8EA5C2" TextTrimming="CharacterEllipsis"/>
-                  </StackPanel>
-                </Button>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-          <TextBlock Text="{Binding StatusText}" Foreground="#95ADC8" FontSize="12"
-                     TextWrapping="Wrap"/>
-        </StackPanel>
-      </ScrollViewer>
+                        <TextBlock Text="{Binding Title}" FontSize="14"
+                                   FontWeight="Medium" Foreground="#24292F"
+                                   TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="{Binding AvailabilityLabel}"
+                                   Foreground="#7C838C" FontSize="11"
+                                   TextTrimming="CharacterEllipsis"/>
+                      </StackPanel>
+                    </Button>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+
+            <Border IsVisible="{Binding IsListView}"
+                    Background="#FFFFFF" BorderBrush="#E4E6E9"
+                    BorderThickness="1" CornerRadius="6">
+              <Grid RowDefinitions="42,*">
+                <Grid ColumnDefinitions="70,2*,122,2*,132,110"
+                      Background="#F0F1F3">
+                  <TextBlock Grid.Column="0" Text="#" Classes="column-label"/>
+                  <TextBlock Grid.Column="1" Text="片名" Classes="column-label"/>
+                  <TextBlock Grid.Column="2" Text="類型" Classes="column-label"/>
+                  <TextBlock Grid.Column="3" Text="來源" Classes="column-label"/>
+                  <TextBlock Grid.Column="4" Text="加入日期" Classes="column-label"/>
+                  <TextBlock Grid.Column="5" Text="狀態" Classes="column-label"/>
+                </Grid>
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Auto">
+                  <ItemsControl ItemsSource="{Binding VisibleItems}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Button Classes="library-row" Click="PlayLibraryItem_Click"
+                                CommandParameter="{Binding}">
+                          <Button.ContextMenu>
+                            <ContextMenu>
+                              <MenuItem Header="▶  播放" Click="ContextPlay_Click"
+                                        CommandParameter="{Binding}"/>
+                              <Separator/>
+                              <MenuItem Header="在檔案總管中顯示"
+                                        Click="ContextReveal_Click" CommandParameter="{Binding}"/>
+                              <MenuItem Header="複製來源路徑"
+                                        Click="ContextCopyPath_Click" CommandParameter="{Binding}"/>
+                              <MenuItem Header="檢視來源資訊"
+                                        Click="ContextDetails_Click" CommandParameter="{Binding}"/>
+                              <Separator/>
+                              <MenuItem Header="從收藏庫移除（保留檔案）"
+                                        Click="ContextRemove_Click" CommandParameter="{Binding}"/>
+                            </ContextMenu>
+                          </Button.ContextMenu>
+                          <Grid ColumnDefinitions="70,2*,122,2*,132,110"
+                                Height="59">
+                            <Border Grid.Column="0" Width="55" Height="32"
+                                    Background="#E5E8EC" CornerRadius="3"
+                                    VerticalAlignment="Center"
+                                    HorizontalAlignment="Left" Margin="9,0">
+                              <Image Source="{Binding Poster}" Stretch="Uniform"/>
+                            </Border>
+                            <TextBlock Grid.Column="1" Text="{Binding Title}"
+                                       Classes="row-cell" FontWeight="Medium"
+                                       TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Grid.Column="2" Text="{Binding KindLabel}"
+                                       Classes="row-cell" FontSize="11"/>
+                            <TextBlock Grid.Column="3" Text="{Binding SourcePath}"
+                                       Classes="row-cell" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Grid.Column="4" Text="{Binding ImportedAtText}"
+                                       Classes="row-cell"/>
+                            <TextBlock Grid.Column="5" Text="{Binding AvailabilityLabel}"
+                                       Classes="row-cell" FontSize="11"
+                                       TextTrimming="CharacterEllipsis"/>
+                          </Grid>
+                        </Button>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
+              </Grid>
+            </Border>
+          </Grid>
+          <Grid Grid.Row="3" ColumnDefinitions="*,Auto">
+            <TextBlock Text="{Binding StatusText}" FontSize="11" Foreground="#777E86"
+                       TextTrimming="CharacterEllipsis"/>
+            <TextBlock Grid.Column="1" Text="右鍵可檢視來源、複製路徑或移出收藏"
+                       FontSize="11" Foreground="#A1A6AB"/>
+          </Grid>
+        </Grid>
+      </Grid>
     </Grid>
-  </Grid>
+  </ThemeVariantScope>
 
   <!-- WATCH is opened only after explicitly selecting a library item.
        NativeControlHost cannot be covered with alpha overlays. -->

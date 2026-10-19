@@ -33,6 +33,62 @@ public sealed class LibraryViewModelTests
     }
 
     [Fact]
+    public async Task GridAndListShareTheSameCardsWithoutStartingPlayback()
+    {
+        var storage = new FakeLibrary();
+        using var view = new LibraryViewModel(storage);
+        await view.LoadAsync();
+        await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, @"C:\Videos\film.mkv"));
+        var item = Assert.Single(view.VisibleItems);
+
+        Assert.Equal(LibraryDisplayMode.Grid, view.DisplayMode);
+        Assert.True(view.IsGridView);
+        Assert.False(view.IsListView);
+        view.ShowList();
+        Assert.True(view.IsListView);
+        Assert.False(view.IsGridView);
+        Assert.Same(item, Assert.Single(view.VisibleItems));
+
+        view.ShowGrid();
+        Assert.True(view.IsGridView);
+        Assert.Same(item, Assert.Single(view.VisibleItems));
+        Assert.Equal(1, storage.ImportCount);
+    }
+
+    [Fact]
+    public async Task SearchSortAndCategoryStayConsistentAcrossViews()
+    {
+        var storage = new FakeLibrary();
+        using var view = new LibraryViewModel(storage);
+        await view.LoadAsync();
+        await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, "Zebra.mkv"));
+        await view.ImportAsync(new MediaLocator(MediaLocatorKind.Directory, "BluRay"));
+        await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, "Alpha.mp4"));
+
+        Assert.Equal(3, view.VisibleItems.Count);
+        view.SelectedSort = LibraryViewModel.SortChoices[1];
+        Assert.Equal(new[] { "Alpha", "Blu-ray", "Zebra" },
+            view.VisibleItems.Select(card => card.Title).ToArray());
+        view.ShowVideos();
+        Assert.True(view.IsVideoCategory);
+        Assert.Equal(new[] { "Alpha", "Zebra" },
+            view.VisibleItems.Select(card => card.Title).ToArray());
+
+        view.ShowList();
+        view.SearchText = "zebra";
+        Assert.Equal("1 部影片", view.ResultText);
+        Assert.Equal("Zebra", Assert.Single(view.VisibleItems).Title);
+        view.ShowRecentlyAdded();
+        Assert.Equal(LibraryDisplayMode.List, view.DisplayMode);
+        Assert.True(view.IsAllCategory);
+        Assert.True(view.IsRecentlyAddedSort);
+        Assert.Single(view.VisibleItems); // Search preserved.
+        view.SearchText = "";
+        Assert.Equal(new[] { "Alpha", "Blu-ray", "Zebra" },
+            view.VisibleItems.Select(card => card.Title).ToArray());
+    }
+
+    [Fact]
     public async Task RemoveOnlyUpdatesCatalogAndFiltering()
     {
         var storage = new FakeLibrary();
@@ -54,6 +110,7 @@ public sealed class LibraryViewModelTests
     {
         private readonly List<MediaLibraryItem> _items = [];
         public List<Guid> RemovedIds { get; } = [];
+        public int ImportCount { get; private set; }
         public Task<IReadOnlyList<MediaLibraryItem>> ListAsync(
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<MediaLibraryItem>>(_items.ToArray());
@@ -61,10 +118,13 @@ public sealed class LibraryViewModelTests
         public Task<MediaLibraryItem> ImportAsync(MediaLocator locator,
             CancellationToken cancellationToken = default)
         {
+            ImportCount++;
             var result = new MediaLibraryItem(
                 Guid.NewGuid(), locator.Kind, locator.Value,
-                locator.Kind == MediaLocatorKind.Directory ? "Blu-ray" : "Film",
-                DateTimeOffset.UtcNow);
+                locator.Kind == MediaLocatorKind.Directory ? "Blu-ray" :
+                Path.GetFileNameWithoutExtension(locator.Value) == "film" ? "Film" :
+                Path.GetFileNameWithoutExtension(locator.Value),
+                DateTimeOffset.UnixEpoch.AddMinutes(ImportCount));
             _items.Add(result);
             return Task.FromResult(result);
         }

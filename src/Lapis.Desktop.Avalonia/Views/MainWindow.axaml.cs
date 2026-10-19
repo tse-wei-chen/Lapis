@@ -1,4 +1,7 @@
+using System.Diagnostics;
 using Avalonia.Controls;
+using Avalonia.Layout;
+using Avalonia.Styling;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
@@ -139,10 +142,157 @@ public sealed partial class MainWindow : Window
 
     private void ShowAll_Click(object? sender, RoutedEventArgs args) => _library.ShowAll();
     private void ShowDiscs_Click(object? sender, RoutedEventArgs args) => _library.ShowDiscs();
+    private void ShowVideos_Click(object? sender, RoutedEventArgs args) => _library.ShowVideos();
+    private void ShowRecentlyAdded_Click(object? sender, RoutedEventArgs args) =>
+        _library.ShowRecentlyAdded();
+    private void ShowGrid_Click(object? sender, RoutedEventArgs args) => _library.ShowGrid();
+    private void ShowList_Click(object? sender, RoutedEventArgs args) => _library.ShowList();
 
     private async void PlayLibraryItem_Click(object? sender, RoutedEventArgs args)
     {
-        if (sender is not Button { CommandParameter: LibraryCardViewModel card }) return;
+        if (sender is Button { CommandParameter: LibraryCardViewModel card })
+            await PlayLibraryItemAsync(card);
+    }
+
+    private async void ContextPlay_Click(object? sender, RoutedEventArgs args)
+    {
+        if (sender is MenuItem { CommandParameter: LibraryCardViewModel card })
+            await PlayLibraryItemAsync(card);
+    }
+
+    private static LibraryCardViewModel? GetContextCard(object? sender) =>
+        (sender as MenuItem)?.CommandParameter as LibraryCardViewModel;
+
+    private async void ContextCopyPath_Click(object? sender, RoutedEventArgs args)
+    {
+        if (GetContextCard(sender) is not { } card) return;
+        try
+        {
+            var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+            if (clipboard is null)
+                throw new InvalidOperationException("剪貼簿尚未就緒。");
+            await clipboard.SetTextAsync(card.SourcePath);
+            _library.ReportError($"已複製來源路徑：{card.Title}");
+        }
+        catch (Exception exception)
+        {
+            _library.ReportError($"複製路徑失敗：{exception.Message}");
+        }
+    }
+
+    private void ContextReveal_Click(object? sender, RoutedEventArgs args)
+    {
+        if (GetContextCard(sender) is not { } card) return;
+        try
+        {
+            if (!card.IsAvailable)
+                throw new FileNotFoundException("來源已離線或不存在。", card.SourcePath);
+            var process = new ProcessStartInfo("explorer.exe")
+            {
+                UseShellExecute = false
+            };
+            // ArgumentList handles Windows quoting; no shell interpolation.
+            process.ArgumentList.Add("/select,");
+            process.ArgumentList.Add(card.SourcePath);
+            Process.Start(process);
+        }
+        catch (Exception exception)
+        {
+            _library.ReportError($"無法開啟檔案總管：{exception.Message}");
+        }
+    }
+
+    private async void ContextDetails_Click(object? sender, RoutedEventArgs args)
+    {
+        if (GetContextCard(sender) is not { } card) return;
+        var dialog = CreateLibraryDialog(
+            card.Title,
+            $"類型：{card.KindLabel}\n" +
+            $"加入日期：{card.ImportedAtText}\n" +
+            $"來源狀態：{card.AvailabilityLabel}\n\n" +
+            $"來源位置：\n{card.SourcePath}");
+        await dialog.ShowDialog(this);
+    }
+
+    private async void ContextRemove_Click(object? sender, RoutedEventArgs args)
+    {
+        if (GetContextCard(sender) is not { } card) return;
+        var dialog = CreateLibraryDialog(
+            "從收藏庫移除",
+            $"確定從 Lapis 收藏庫移除「{card.Title}」？\n\n" +
+            "只會刪除收藏紀錄，不會刪除或更動硬碟上的影片或 BDMV 資料夾。",
+            confirmRemoval: true);
+        if (await dialog.ShowDialog<bool>(this))
+        {
+            try { await _library.RemoveAsync(card.Item); }
+            catch (Exception exception)
+            {
+                _library.ReportError($"無法移除收藏：{exception.Message}");
+            }
+        }
+    }
+
+    private static Window CreateLibraryDialog(
+        string title, string content, bool confirmRemoval = false)
+    {
+        var dialog = new Window
+        {
+            Title = title,
+            Width = 480,
+            MinHeight = 210,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = false,
+            RequestedThemeVariant = ThemeVariant.Light,
+            Background = Avalonia.Media.Brushes.White
+        };
+        var cancel = new Button
+        {
+            Content = confirmRemoval ? "取消" : "關閉",
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Padding = new Avalonia.Thickness(16, 8)
+        };
+        cancel.Click += (_, _) => dialog.Close(false);
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Spacing = 8
+        };
+        buttons.Children.Add(cancel);
+        if (confirmRemoval)
+        {
+            var remove = new Button
+            {
+                Content = "移出收藏庫",
+                Background = Avalonia.Media.Brushes.Firebrick,
+                Foreground = Avalonia.Media.Brushes.White,
+                Padding = new Avalonia.Thickness(16, 8)
+            };
+            remove.Click += (_, _) => dialog.Close(true);
+            buttons.Children.Add(remove);
+        }
+        dialog.Content = new StackPanel
+        {
+            Margin = new Avalonia.Thickness(24),
+            Spacing = 18,
+            Children =
+            {
+                new TextBlock
+                {
+                    Text = content,
+                    TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                    FontSize = 13,
+                    Foreground = Avalonia.Media.Brushes.Black
+                },
+                buttons
+            }
+        };
+        return dialog;
+    }
+
+    private async Task PlayLibraryItemAsync(LibraryCardViewModel card)
+    {
         var item = card.Item;
         try
         {

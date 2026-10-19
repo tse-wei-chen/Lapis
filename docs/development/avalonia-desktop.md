@@ -7,6 +7,27 @@ This is a first vertical slice, not a claim of complete PowerDVD parity.
 UI/VM can be ported, but Native FFmpeg/D3D11/WASAPI and the Win32 HWND output
 remain Windows-specific.
 
+## Library interface (ADR 0042)
+
+The desktop starts with a light, compact media library inspired by a PC
+media-center interaction model. The player remains a separate dark Watch
+screen. No native session is constructed while browsing the library.
+
+Use the left navigation for **All / Blu-ray / local video** and **Recently
+Added**. The top bar switches between **16:9 jacket Grid** and **List**
+without recreating poster bitmaps or changing catalog identity. Both views
+use one live filtered collection with immediate title/path search and
+sorting (recently imported or title ascending/descending). The List only
+shows known catalog fields: title, source type/path, import date and
+source availability; year, duration and codecs are not fabricated.
+
+Right-click either a card or a list row to Play, reveal its source in
+Explorer, copy its path, inspect source metadata, or remove only its catalog
+record after confirmation. The removal action never touches on-disk video,
+BDMV, certificate or MakeMKV files. Grid/List, sort and category preferences
+are currently in-memory; persistent UI preferences, virtualized large
+libraries and real Title/Playlist/Chapter menus are subsequent milestones.
+
 ## Run
 
 Build the Native runtime with CMake/vcpkg per the repository README, then:
