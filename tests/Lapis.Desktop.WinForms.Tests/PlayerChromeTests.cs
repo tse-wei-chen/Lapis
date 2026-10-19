@@ -33,6 +33,11 @@ public sealed class PlayerChromeTests
                 Assert.True(chrome.EmptySurface.Visible);
                 Assert.False(chrome.Progress.Enabled);
                 Assert.NotNull(chrome.PlayButton.AccessibleName);
+                Assert.Equal("開啟 BDMV", chrome.OpenBdmvButton.AccessibleName);
+                Assert.Equal("BDMV 資料夾（預覽）",
+                    chrome.ChooseBdmvButton.AccessibleName);
+                Assert.True(chrome.OpenBdmvButton.Enabled);
+                Assert.True(chrome.ChooseBdmvButton.Visible);
                 Assert.NotNull(chrome.Progress.AccessibleName);
                 Assert.Equal("00:00", chrome.CurrentPosition.Text);
                 Assert.Equal("--:--", chrome.Duration.Text);

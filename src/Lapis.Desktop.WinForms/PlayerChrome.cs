@@ -45,6 +45,8 @@ internal sealed class PlayerChrome : UserControl
 
     public Button OpenButton { get; } = MakeButton("＋ 開啟影片", true, 128);
     public Button ChooseMediaButton { get; } = MakeButton("選擇本機影片", true, 176);
+    public Button OpenBdmvButton { get; } = MakeButton("開啟 BDMV", false, 137);
+    public Button ChooseBdmvButton { get; } = MakeButton("BDMV 資料夾（預覽）", false, 199);
     public Button PlayButton { get; } = MakeButton("▶  播放", true, 95);
     public Button BackButton { get; } = MakeButton("↶ 10", false, 69);
     public Button ForwardButton { get; } = MakeButton("10 ↷", false, 69);
@@ -110,6 +112,10 @@ internal sealed class PlayerChrome : UserControl
 
         _tips.SetToolTip(PlayButton, "播放／暫停（Space）");
         _tips.SetToolTip(OpenButton, "開啟本機影片（Ctrl+O）");
+        _tips.SetToolTip(OpenBdmvButton,
+            "開啟未加密 BDMV 資料夾（Ctrl+Shift+O，需 opt-in libbluray Native 建置）");
+        _tips.SetToolTip(ChooseBdmvButton,
+            "Blu-ray 預覽：未加密 BDMV 目錄，尚不支援 BD-J／選單／受保護光碟");
         _tips.SetToolTip(BackButton, "向後跳 10 秒（←）");
         _tips.SetToolTip(ForwardButton, "向前跳 10 秒（→）");
         _tips.SetToolTip(FullScreenButton, "切換全螢幕（F11）");
@@ -225,12 +231,13 @@ internal sealed class PlayerChrome : UserControl
             BackColor = Surface,
             Padding = new Padding(18, 10, 18, 10),
             Margin = Padding.Empty,
-            ColumnCount = 5
+            ColumnCount = 6
         };
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 52));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 142));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 172));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 143));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 144));
 
         header.Controls.Add(new Label
@@ -283,9 +290,12 @@ internal sealed class PlayerChrome : UserControl
         futureAi.Margin = new Padding(9, 7, 9, 7);
         futureAi.AccessibleName = "AI 雙語字幕尚未實作";
         header.Controls.Add(futureAi, 3, 0);
+        OpenBdmvButton.Dock = DockStyle.Fill;
+        OpenBdmvButton.Margin = new Padding(6, 3, 0, 3);
+        header.Controls.Add(OpenBdmvButton, 4, 0);
         OpenButton.Dock = DockStyle.Fill;
         OpenButton.Margin = new Padding(6, 3, 0, 3);
-        header.Controls.Add(OpenButton, 4, 0);
+        header.Controls.Add(OpenButton, 5, 0);
         return header;
     }
 
@@ -333,7 +343,7 @@ internal sealed class PlayerChrome : UserControl
         }, 0, 1);
         welcome.Controls.Add(new Label
         {
-            Text = "開啟本機影片，或把檔案直接拖曳到此處。",
+            Text = "開啟影片或未加密 BDMV 目錄，也可拖曳至此。",
             ForeColor = MutedText,
             Font = new Font("Segoe UI", 11f),
             TextAlign = ContentAlignment.MiddleCenter,
@@ -351,10 +361,13 @@ internal sealed class PlayerChrome : UserControl
         var spaceLeft = new Panel { Width = 1, Height = 1 };
         buttonRow.Controls.Add(spaceLeft);
         buttonRow.Controls.Add(ChooseMediaButton);
+        ChooseBdmvButton.Margin = new Padding(12, 0, 0, 0);
+        buttonRow.Controls.Add(ChooseBdmvButton);
         welcome.Controls.Add(buttonRow, 0, 3);
         buttonRow.Resize += (_, _) =>
             spaceLeft.Width = Math.Max(0, (buttonRow.ClientSize.Width -
-                ChooseMediaButton.Width - ChooseMediaButton.Margin.Horizontal) / 2);
+                ChooseMediaButton.Width - ChooseMediaButton.Margin.Horizontal -
+                ChooseBdmvButton.Width - ChooseBdmvButton.Margin.Horizontal) / 2);
         _emptySurface.Controls.Add(welcome);
         stage.Controls.Add(_emptySurface);
         _emptySurface.BringToFront();

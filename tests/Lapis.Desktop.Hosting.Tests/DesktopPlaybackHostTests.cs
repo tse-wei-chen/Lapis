@@ -145,6 +145,29 @@ public sealed class DesktopPlaybackHostTests
     }
 
     [Fact]
+    public async Task DirectoryLocatorFlowsThroughSameActorAndFreshPlaybackEpochs()
+    {
+        var calls = new List<string>();
+        var runtime = new FakeRuntime(calls);
+        await using var host = new DesktopPlaybackHost(
+            runtime, new FakeSurfaceBinding(calls));
+        var disc = new MediaLocator(MediaLocatorKind.Directory, @"C:\clear-disc\BDMV");
+
+        await host.OpenAndPlayAsync(disc, (nint)21);
+        Assert.Same(disc, runtime.LastLocator);
+        Assert.Equal(TransportState.Playing, host.Snapshot.Transport);
+        await host.SeekAsync(TimeSpan.FromSeconds(5));
+        await host.OpenAndPlayAsync(disc, (nint)22);
+        Assert.Same(disc, runtime.LastLocator);
+        Assert.Equal(new[]
+        {
+            "open:1", "surface:Win32Window:1", "play:1",
+            "seek:2:5000000000",
+            "open:3", "surface:Win32Window:3", "play:3"
+        }, calls);
+    }
+
+    [Fact]
     public async Task RejectsInvalidHostInputBeforeCreatingNativeSession()
     {
         var calls = new List<string>();
@@ -155,6 +178,11 @@ public sealed class DesktopPlaybackHostTests
             host.OpenAndPlayAsync("", (nint)123));
         await Assert.ThrowsAsync<ArgumentException>(() =>
             host.OpenAndPlayAsync("movie.mkv", 0));
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            host.OpenAndPlayAsync((MediaLocator)null!, (nint)10));
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            host.OpenAndPlayAsync(
+                new MediaLocator(MediaLocatorKind.Directory, "BDMV"), 0));
         await Assert.ThrowsAsync<ArgumentException>(() =>
             host.ReplaceWindowAsync(0));
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
@@ -209,13 +237,15 @@ public sealed class DesktopPlaybackHostTests
 
     private sealed class FakeRuntime(List<string> calls) : IPlaybackRuntime
     {
+        public MediaLocator? LastLocator { get; private set; }
+
         public ValueTask<RuntimeOpenResult> OpenAsync(
             MediaLocator locator,
             RuntimeCommandContext context,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            Assert.Equal(MediaLocatorKind.File, locator.Kind);
+            LastLocator = locator;
             calls.Add($"open:{context.Epoch.Value}");
             return ValueTask.FromResult(new RuntimeOpenResult(MediaCapability.None));
         }

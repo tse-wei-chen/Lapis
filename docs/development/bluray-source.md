@@ -4,7 +4,9 @@ Lapis's native media runtime can optionally open an **unprotected** Blu-ray
 directory as a virtual MPEG-TS stream through libbluray. This is NOT full
 PowerDVD-equivalent disc playback: there is no BD-J, menu rendering, actor-
 coordinated title/chapter switching, optical drive access, ISO support, or
-AACS/BD+ decryption. The WinForms Open dialog is still file-only.
+AACS/BD+ decryption. The WinForms desktop shell has a separate **Open BDMV** folder picker
+and Ctrl+Shift+O shortcut. Only a native build with libbluray enabled can
+actually open that Directory locator.
 
 ## Enable explicitly (Windows, x64)
 
@@ -57,7 +59,9 @@ MediaLocator(Directory, "<disc root>")
 
 The C ABI v2 already models Directory locators, but only a build with
 `LAPIS_ENABLE_LIBBLURAY=ON` registers this real source by default.
-Directory input is not yet wired to the desktop file-selection UI.
+DesktopPlaybackHost routes Directory locators through the same PlaybackSession
+actor and HWND binding as File locators; it never calls the disc API from
+WinForms. The desktop shell also supports dropping a valid BDMV directory.
 Point to a disc root with `BDMV/index.bdmv`, `BDMV/PLAYLIST`
 and `BDMV/STREAM`, or to its `BDMV` subdirectory.
 

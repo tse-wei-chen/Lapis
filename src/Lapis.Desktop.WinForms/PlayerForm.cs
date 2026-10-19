@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Text.Json;
 using System.Windows.Forms;
+using Lapis.Contracts.Media;
 using Lapis.Contracts.Playback;
 using Lapis.Desktop.Hosting;
 using Lapis.Runtime.Native;
@@ -44,7 +45,9 @@ public sealed class PlayerForm : Form
 
     private DesktopPlaybackHost? _host;
     private NativePlaybackRuntime? _nativeRuntime;
-    private string? _openedFile;
+    // Replay preserves the source type (File vs BDMV Directory), never
+    // converts a disc root into an ordinary file path.
+    private MediaLocator? _openedMedia;
     private bool _busy;
     private bool _closing;
     private bool _closeApproved;
@@ -77,13 +80,15 @@ public sealed class PlayerForm : Form
 
         _open.Click += async (_, _) => await ChooseFileAsync();
         _chrome.ChooseMediaButton.Click += async (_, _) => await ChooseFileAsync();
+        _chrome.OpenBdmvButton.Click += async (_, _) => await ChooseBdmvAsync();
+        _chrome.ChooseBdmvButton.Click += async (_, _) => await ChooseBdmvAsync();
         _diagnostics.Click += async (_, _) => await ExportDiagnosticsAsync();
         _playPause.Click += async (_, _) => await TogglePlayPauseAsync();
         _closeMedia.Click += async (_, _) => await RunUiCommandAsync(
             async (host, token) =>
             {
                 await host.CloseMediaAsync(token);
-                _openedFile = null;
+                _openedMedia = null;
                 Text = "Lapis — Desktop Player";
                 _chrome.SetMedia(null);
                 _chrome.SetTimeline("00:00", "--:--");
@@ -235,9 +240,9 @@ public sealed class PlayerForm : Form
     {
         // Native EOF is terminal: replay must open a new decoder generation.
         if (_host?.Snapshot.Transport == TransportState.Ended &&
-            _openedFile is { } replayFile)
+            _openedMedia is { } replayLocator)
         {
-            await OpenFileAsync(replayFile);
+            await OpenMediaAsync(replayLocator);
         }
         else
         {
@@ -275,11 +280,20 @@ public sealed class PlayerForm : Form
 
     private async void OnDragDrop(object? sender, DragEventArgs eventArgs)
     {
-        if (!_closing && !_busy &&
-            eventArgs.Data?.GetData(DataFormats.FileDrop) is string[] files &&
-            files.Length > 0 && File.Exists(files[0]))
+        if (_closing || _busy ||
+            eventArgs.Data?.GetData(DataFormats.FileDrop) is not string[] paths ||
+            paths.Length == 0)
         {
-            await OpenFileAsync(files[0]);
+            return;
+        }
+
+        if (File.Exists(paths[0]))
+        {
+            await OpenFileAsync(paths[0]);
+        }
+        else if (Directory.Exists(paths[0]))
+        {
+            await OpenBdmvAsync(paths[0]);
         }
     }
 
@@ -333,6 +347,39 @@ public sealed class PlayerForm : Form
         }
     }
 
+    private async Task ChooseBdmvAsync()
+    {
+        if (_busy || _closing)
+        {
+            return;
+        }
+
+        using var dialog = new FolderBrowserDialog
+        {
+            Description = "選擇未加密 Blu-ray 光碟根目錄或 BDMV 資料夾（預覽）",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = false
+        };
+        if (dialog.ShowDialog(this) == DialogResult.OK)
+        {
+            await OpenBdmvAsync(dialog.SelectedPath);
+        }
+    }
+
+    private Task OpenBdmvAsync(string directory)
+    {
+        if (!BdmvDirectorySelection.TryCreate(directory, out var locator))
+        {
+            ShowFailure(new ArgumentException(
+                "這不是有效的 BDMV 資料夾；請選擇包含 BDMV/PLAYLIST、" +
+                "BDMV/STREAM 和 index.bdmv 的未加密光碟根目錄，" +
+                "或直接選擇 BDMV 子資料夾。"));
+            return Task.CompletedTask;
+        }
+
+        return OpenMediaAsync(locator!);
+    }
+
     private Task ExportDiagnosticsAsync() =>
         RunUiCommandAsync(async (_, token) =>
         {
@@ -379,19 +426,29 @@ public sealed class PlayerForm : Form
             await File.WriteAllTextAsync(dialog.FileName, json, token);
         });
 
-    private Task OpenFileAsync(string file) => RunUiCommandAsync(
+    private Task OpenFileAsync(string file) =>
+        OpenMediaAsync(new MediaLocator(MediaLocatorKind.File, file));
+
+    private Task OpenMediaAsync(MediaLocator locator) => RunUiCommandAsync(
         async (host, token) =>
         {
             // The rendering HWND is independently owned and parked across
             // WinForms Panel handle recreation. Do not lend the Panel HWND.
             var hwnd = _video.GetOutputHandle();
-            _openedFile = null;
+            _openedMedia = null;
             Text = "Lapis — Desktop Player";
             _chrome.SetMedia(null);
-            await host.OpenAndPlayAsync(file, hwnd, token);
-            _openedFile = file;
-            _chrome.SetMedia(Path.GetFileName(file));
-            Text = $"Lapis — {Path.GetFileName(file)}";
+            await host.OpenAndPlayAsync(locator, hwnd, token);
+            _openedMedia = locator;
+            var label = Path.GetFileName(Path.TrimEndingDirectorySeparator(locator.Value));
+            if (string.IsNullOrEmpty(label))
+            {
+                label = locator.Value;
+            }
+            var title = locator.Kind == MediaLocatorKind.Directory
+                ? $"BDMV · {label}" : label;
+            _chrome.SetMedia(title);
+            Text = $"Lapis — {title}";
         });
 
     private async Task RunUiCommandAsync(
@@ -539,7 +596,8 @@ public sealed class PlayerForm : Form
         };
         _chrome.SetState(snapshot.LastError is null
             ? $"{stateLabel}  ·  {positionText} / {durationText}" +
-              (_openedFile is null ? "" : $"  ·  {Path.GetFileName(_openedFile)}")
+              (_openedMedia is null ? "" :
+                  $"  ·  {Path.GetFileName(Path.TrimEndingDirectorySeparator(_openedMedia.Value))}")
             : $"播放錯誤：{(snapshot.LastError.Context ?? snapshot.LastError.Code)}",
             snapshot.LastError is not null);
         RefreshControls();
@@ -556,10 +614,12 @@ public sealed class PlayerForm : Form
         var canInteract = !_busy && !_closing;
         _open.Enabled = canInteract;
         _chrome.ChooseMediaButton.Enabled = canInteract;
+        _chrome.OpenBdmvButton.Enabled = canInteract;
+        _chrome.ChooseBdmvButton.Enabled = canInteract;
         _diagnostics.Enabled = canInteract && _nativeRuntime is not null;
         _playPause.Enabled = canInteract &&
             (state is TransportState.Ready or TransportState.Playing or TransportState.Paused ||
-             (state == TransportState.Ended && _openedFile is not null));
+             (state == TransportState.Ended && _openedMedia is not null));
         _playPause.Text = state == TransportState.Playing ? "Ⅱ  暫停" :
             state == TransportState.Ended ? "↻  重播" : "▶  播放";
         _closeMedia.Enabled = canInteract && state != TransportState.Closed;
@@ -620,7 +680,13 @@ public sealed class PlayerForm : Form
             e.SuppressKeyPress = true;
             ToggleFullScreen();
         }
-        else if (e.Control && e.KeyCode == Keys.O)
+        else if (e.Control && e.Shift && e.KeyCode == Keys.O)
+        {
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            await ChooseBdmvAsync();
+        }
+        else if (e.Control && !e.Shift && e.KeyCode == Keys.O)
         {
             e.Handled = true;
             e.SuppressKeyPress = true;

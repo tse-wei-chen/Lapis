@@ -46,19 +46,23 @@ non-UI application and media contracts.
 
 Visual structure (desktop landscape, dark theme):
 
-- **Header:** Lapis identity, current media filename, native Open button and
-  an accurately labelled `AI 雙語字幕 · 規劃中` status. The AI indicator is
+- **Header:** Lapis identity, current media name, file Open button, separate
+  opt-in BDMV directory picker and an accurately labelled
+  `AI 雙語字幕 · 規劃中` status. The AI indicator is
   informational only: live translation/subtitles are not implemented yet.
 - **Stage:** the existing persistent D3D11 output HWND behind a first-run
-  empty-state overlay; both the idle surface and playing surface accept local
-  file drag-and-drop. Overlay visibility does not change the GPU lease.
+  empty-state overlay; both the idle surface and playing surface accept file
+  or valid BDMV directory drag-and-drop. The empty state includes a dedicated
+  BDMV preview choice. Overlay visibility does not change the GPU lease.
 - **Playback deck:** current/total time, seek slider, backward 10 seconds,
   Play/Pause/Replay, forward 10 seconds, Stop, absolute-time Seek and full
   screen. Buttons disable correctly when no media is seekable.
 - **Status bar:** human-readable Traditional Chinese transport/failure text
   and on-demand diagnostic JSON export.
 
-Keyboard actions: `Ctrl+O` open, `Space` Play/Pause/Replay,
+Keyboard actions: `Ctrl+O` open a file, `Ctrl+Shift+O` select an
+unprotected BDMV directory (requires libbluray-on Native build),
+`Space` Play/Pause/Replay,
 `←` / `→` seek ±10s with 0/duration clamping, `F11` fullscreen,
 `Esc` exit fullscreen and `Ctrl+Shift+H` recreate Panel HWND for
 diagnostics. Shortcuts avoid stealing numeric input focus. Fullscreen hides
@@ -113,7 +117,18 @@ milestone.
 
 Open a local `.mkv`, `.mp4`, `.m2ts`, `.ts`, `.avi`, `.mov`, `.webm`
 or similar FFmpeg-supported file through **開啟影片**, Ctrl+O, or drag and drop.
-The host opens the media through the playback actor, binds its HWND through
+Use **開啟 BDMV** or **Ctrl+Shift+O** for a local, unencrypted Blu-ray folder
+containing `BDMV/index.bdmv`, `BDMV/PLAYLIST`, and `BDMV/STREAM`.
+You may select either the disc root or its `BDMV` child folder. The WinForms
+picker validates only the directory shape; the native Source Provider checks
+the source before opening it. Ordinary/default Native builds do **not** include
+the libbluray backend, and the BDMV preview requires a separate opt-in build.
+BD-J menus, Blu-ray protection, optical drives, ISO images, and actor-mediated
+title/chapter switching remain unsupported. The picker does not imply those
+capabilities exist.
+
+The host opens either a File or Directory `MediaLocator` through the same
+playback actor, binds its HWND through
 `IVideoOutputSurfaceBinding`, then starts playback. A separate optional
 `IPlaybackRuntimeObserver` polls the existing native C ABI snapshot away from
 the UI thread, and only matching session/epoch updates reach the actor state.
@@ -127,8 +142,9 @@ A stalled UI therefore does not accumulate an unbounded BeginInvoke backlog,
 and old playback epochs cannot repaint newer command results. Space or K toggles pause.
 **跳至** seeks to an absolute time in seconds. Playback controls also offer ±10s jumps and F11 fullscreen. **停止** closes the media
 generation and detaches the output target. After natural **Ended**, pressing
-**重播** (or Space) reopens the same file with a fresh playback generation.
-Opening another file likewise retires the previous pipeline.
+**重播** (or Space) reopens the same typed media locator with a fresh
+playback generation, preserving File vs Directory. Opening another source
+likewise retires the previous pipeline.
 
 The Native D3D11 swap chain now targets an independently owned child HWND
 rather than the WinForms video Panel HWND. When Windows/WinForms destroys the
