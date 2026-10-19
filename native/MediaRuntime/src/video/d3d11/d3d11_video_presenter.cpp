@@ -13,6 +13,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdio>
 #include <cstddef>
@@ -27,17 +28,16 @@ namespace {
 
 using Microsoft::WRL::ComPtr;
 
-// Vertexless fullscreen triangle: no input-layout or vertex-buffer ownership.
 constexpr char vertex_shader_source[] = R"(
+struct Input {
+    float2 position : POSITION;
+};
 struct Output {
     float4 position : SV_POSITION;
-    float2 uv : TEXCOORD0;
 };
-Output main(uint id : SV_VertexID) {
-    float2 uv = float2((id << 1) & 2, id & 2);
+Output main(Input input) {
     Output o;
-    o.position = float4(uv.x * 2.0f - 1.0f, 1.0f - uv.y * 2.0f, 0.0f, 1.0f);
-    o.uv = uv;
+    o.position = float4(input.position, 0.0f, 1.0f);
     return o;
 }
 )";
@@ -45,10 +45,27 @@ Output main(uint id : SV_VertexID) {
 constexpr char pixel_shader_source[] = R"(
 Texture2D video_frame : register(t0);
 SamplerState linear_sampler : register(s0);
-float4 main(float2 uv : TEXCOORD0) : SV_TARGET {
+cbuffer ViewportConstants : register(b0) {
+    float4 video_viewport;
+};
+float4 main(float4 position : SV_POSITION) : SV_TARGET {
+    float2 uv = (position.xy - video_viewport.xy) / video_viewport.zw;
     return video_frame.Sample(linear_sampler, uv);
 }
 )";
+
+struct VideoVertex final {
+    float position[2];
+};
+
+constexpr std::array<VideoVertex, 6> video_vertices{{
+    {{-1.0f, 1.0f}},
+    {{1.0f, 1.0f}},
+    {{-1.0f, -1.0f}},
+    {{-1.0f, -1.0f}},
+    {{1.0f, 1.0f}},
+    {{1.0f, -1.0f}}
+}};
 
 [[nodiscard]] bool device_removed(HRESULT hr) noexcept {
     return hr == DXGI_ERROR_DEVICE_REMOVED ||
@@ -152,6 +169,9 @@ public:
         render_target_.Reset();
         swap_chain_.Reset();
         sampler_.Reset();
+        vertex_buffer_.Reset();
+        viewport_buffer_.Reset();
+        input_layout_.Reset();
         pixel_shader_.Reset();
         vertex_shader_.Reset();
         context_.Reset();
@@ -261,8 +281,31 @@ public:
             0.0f,
             1.0f
         };
+        D3D11_MAPPED_SUBRESOURCE mapped_viewport{};
+        const auto viewport_map_hr = context_->Map(
+            viewport_buffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0,
+            &mapped_viewport);
+        if (FAILED(viewport_map_hr)) {
+            record_failure(
+                VideoPresenterFailureStage::TextureMap, viewport_map_hr);
+            return failed_present(viewport_map_hr);
+        }
+        const std::array<float, 4> viewport_values{
+            viewport.TopLeftX, viewport.TopLeftY,
+            viewport.Width, viewport.Height
+        };
+        std::memcpy(
+            mapped_viewport.pData, viewport_values.data(),
+            sizeof(viewport_values));
+        context_->Unmap(viewport_buffer_.Get(), 0);
+
         context_->RSSetViewports(1, &viewport);
-        context_->IASetInputLayout(nullptr);
+        constexpr UINT vertex_stride = sizeof(VideoVertex);
+        constexpr UINT vertex_offset{};
+        ID3D11Buffer* vertex_buffer = vertex_buffer_.Get();
+        context_->IASetInputLayout(input_layout_.Get());
+        context_->IASetVertexBuffers(
+            0, 1, &vertex_buffer, &vertex_stride, &vertex_offset);
         context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         context_->VSSetShader(vertex_shader_.Get(), nullptr, 0);
         context_->PSSetShader(pixel_shader_.Get(), nullptr, 0);
@@ -270,7 +313,9 @@ public:
         ID3D11SamplerState* sampler = sampler_.Get();
         context_->PSSetShaderResources(0, 1, &view);
         context_->PSSetSamplers(0, 1, &sampler);
-        context_->Draw(3, 0);
+        ID3D11Buffer* viewport_buffer = viewport_buffer_.Get();
+        context_->PSSetConstantBuffers(0, 1, &viewport_buffer);
+        context_->Draw(static_cast<UINT>(video_vertices.size()), 0);
 
         // Unbind the input texture before reusing/replacing it on the next frame.
         ID3D11ShaderResourceView* empty_view = nullptr;
@@ -498,6 +543,42 @@ private:
         if (FAILED(hr)) {
             return hr;
         }
+        constexpr D3D11_INPUT_ELEMENT_DESC input_elements[]{
+            {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0,
+                D3D11_INPUT_PER_VERTEX_DATA, 0}
+        };
+        hr = device_->CreateInputLayout(
+            input_elements,
+            static_cast<UINT>(std::size(input_elements)),
+            vertex_blob->GetBufferPointer(), vertex_blob->GetBufferSize(),
+            input_layout_.GetAddressOf());
+        if (FAILED(hr)) {
+            return hr;
+        }
+        D3D11_BUFFER_DESC viewport_buffer_desc{};
+        viewport_buffer_desc.ByteWidth = sizeof(float) * 4;
+        viewport_buffer_desc.Usage = D3D11_USAGE_DYNAMIC;
+        viewport_buffer_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        viewport_buffer_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        hr = device_->CreateBuffer(
+            &viewport_buffer_desc, nullptr,
+            viewport_buffer_.GetAddressOf());
+        if (FAILED(hr)) {
+            return hr;
+        }
+        D3D11_BUFFER_DESC vertex_buffer_desc{};
+        vertex_buffer_desc.ByteWidth =
+            static_cast<UINT>(sizeof(video_vertices));
+        vertex_buffer_desc.Usage = D3D11_USAGE_IMMUTABLE;
+        vertex_buffer_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA vertex_data{};
+        vertex_data.pSysMem = video_vertices.data();
+        hr = device_->CreateBuffer(
+            &vertex_buffer_desc, &vertex_data,
+            vertex_buffer_.GetAddressOf());
+        if (FAILED(hr)) {
+            return hr;
+        }
         hr = device_->CreatePixelShader(
             pixel_blob->GetBufferPointer(), pixel_blob->GetBufferSize(),
             nullptr, pixel_shader_.GetAddressOf());
@@ -574,8 +655,11 @@ private:
     ComPtr<ID3D11DeviceContext> context_;
     ComPtr<IDXGISwapChain1> swap_chain_;
     ComPtr<ID3D11RenderTargetView> render_target_;
+    ComPtr<ID3D11InputLayout> input_layout_;
     ComPtr<ID3D11VertexShader> vertex_shader_;
     ComPtr<ID3D11PixelShader> pixel_shader_;
+    ComPtr<ID3D11Buffer> vertex_buffer_;
+    ComPtr<ID3D11Buffer> viewport_buffer_;
     ComPtr<ID3D11SamplerState> sampler_;
     ComPtr<ID3D11Texture2D> upload_texture_;
     ComPtr<ID3D11ShaderResourceView> upload_view_;
