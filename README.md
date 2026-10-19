@@ -55,10 +55,14 @@ For a **BDMV-capable player**, use the isolated opt-in build instead:
 .\build\Lapis.BdmvPlayer\Lapis.Desktop.Avalonia.exe
 ```
 
-Use `-VcpkgRoot C:\vcpkg` if `VCPKG_ROOT` is not set.
+The script uses `VCPKG_ROOT`, then `vcpkg` on `PATH`, then the vcpkg root
+recorded in `build/native/CMakeCache.txt`. Use `-VcpkgRoot C:\vcpkg` if none
+of those locations apply.
 The script enables libbluray with a separate `build/native-bdmv` tree and
-publishes its Native and transitive DLLs together. Standard file playback
-builds are not overwritten. Manual `dotnet publish` can select the variant
+publishes its Native and transitive DLLs together. vcpkg's installed packages
+are kept under the current user's local application data directory so MSYS
+dependency builds do not inherit a non-ASCII workspace path. Standard file
+playback builds are not overwritten. Manual `dotnet publish` can select the variant
 via `-p:LapisNativeRuntimeDir=<absolute native Release path>`. It opens on a cinema **library home**; users import local videos or an entire BDMV disc root without copying bytes, then select a library card to enter a distinct Watch page with Play/Pause, Stop and seek. A disc sidebar previews MPLS filenames without claiming supported playlist selection or BD-J navigation. The renderer still uses a D3D11 child HWND hosted by Avalonia NativeControlHost: no transparent Avalonia subtitle or BD-J overlay is supported yet. BDMV requires the separate opt-in libbluray Native build; HDR, AI subtitles, packaging and real-disc hardware acceptance remain future milestones. Real Avalonia GPU acceptance and native Win32 soak tests cover HWND lifecycle regression. See [Avalonia desktop development notes](docs/development/avalonia-desktop.md) and [desktop-host notes](docs/development/desktop-host.md).
 
 ## Repository layout

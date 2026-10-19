@@ -32,7 +32,22 @@ if ([string]::IsNullOrWhiteSpace($VcpkgRoot)) {
     }
 }
 if ([string]::IsNullOrWhiteSpace($VcpkgRoot)) {
-    throw "Set VCPKG_ROOT or provide -VcpkgRoot <path>."
+    $nativeCache = Join-Path $root "build/native/CMakeCache.txt"
+    if (Test-Path -LiteralPath $nativeCache -PathType Leaf) {
+        $cachedRoot = Select-String -LiteralPath $nativeCache `
+            -Pattern "^Z_VCPKG_ROOT_DIR:INTERNAL=(.+)$" |
+            Select-Object -First 1
+        if ($null -ne $cachedRoot) {
+            $candidateRoot = $cachedRoot.Matches[0].Groups[1].Value.Trim()
+            $candidateToolchain = Join-Path $candidateRoot "scripts/buildsystems/vcpkg.cmake"
+            if (Test-Path -LiteralPath $candidateToolchain -PathType Leaf) {
+                $VcpkgRoot = $candidateRoot
+            }
+        }
+    }
+}
+if ([string]::IsNullOrWhiteSpace($VcpkgRoot)) {
+    throw "Could not locate vcpkg. Set VCPKG_ROOT or provide -VcpkgRoot <path>."
 }
 $toolchain = Join-Path $VcpkgRoot "scripts/buildsystems/vcpkg.cmake"
 if (-not (Test-Path -LiteralPath $toolchain -PathType Leaf)) {
@@ -40,6 +55,7 @@ if (-not (Test-Path -LiteralPath $toolchain -PathType Leaf)) {
 }
 $nativeBuild = Join-Path $root "build/native-bdmv"
 $nativeOutput = Join-Path $nativeBuild "Release"
+$nativeDependencies = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "lapis-vcpkg-installed-bdmv"
 $published = Join-Path $root "build/Lapis.BdmvPlayer"
 $triplets = Join-Path $root "native/MediaRuntime/vcpkg-triplets"
 $nativeSource = Join-Path $root "native/MediaRuntime"
@@ -57,6 +73,7 @@ Write-Host "Configuring the opt-in unprotected BDMV adapter..."
 Invoke-Checked "cmake" @(
     "-S", $nativeSource, "-B", $nativeBuild, "-A", "x64",
     "-DCMAKE_TOOLCHAIN_FILE=$toolchain",
+    "-DVCPKG_INSTALLED_DIR=$nativeDependencies",
     "-DVCPKG_OVERLAY_TRIPLETS=$triplets",
     "-DVCPKG_TARGET_TRIPLET=x64-windows-release",
     "-DVCPKG_MANIFEST_FEATURES=bluray",

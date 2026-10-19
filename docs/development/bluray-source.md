@@ -10,18 +10,22 @@ actually open the Directory locator.
 
 ## Windows x64: build and publish the BDMV player
 
-With `VCPKG_ROOT` configured, run from the repository root:
+Run from the repository root. The script locates vcpkg from `VCPKG_ROOT`,
+`vcpkg` on `PATH`, or the root recorded in `build/native/CMakeCache.txt`:
 
 ```powershell
 .\scripts\build-bdmv-player.ps1
 .\build\Lapis.BdmvPlayer\Lapis.Desktop.Avalonia.exe
 ```
 
-Use `-VcpkgRoot C:\vcpkg` if needed. The script explicitly enables both
-`VCPKG_MANIFEST_FEATURES=bluray` and `LAPIS_ENABLE_LIBBLURAY=ON`, builds
-the adapter, validates its source contract, then publishes all relevant
-Native DLLs to an isolated executable folder. No overwriting the ordinary
-file-only Native build or system PATH modifications.
+Use `-VcpkgRoot C:\vcpkg` if none of those locations apply. The script
+explicitly enables both `VCPKG_MANIFEST_FEATURES=bluray` and
+`LAPIS_ENABLE_LIBBLURAY=ON`, builds the adapter, validates its source contract,
+then publishes all relevant Native DLLs to an isolated executable folder.
+vcpkg's installed packages are kept under the current user's local application
+data directory to avoid non-ASCII workspace path problems in MSYS dependency
+builds. No overwriting the ordinary file-only Native build or system PATH
+modifications.
 
 Manual equivalent for the Native build only:
 
