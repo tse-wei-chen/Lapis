@@ -67,6 +67,16 @@ Even if a disc advertises top menus or BD-J, Lapis does not claim to
 support them. Any navigation command returns NotReady while active,
 rather than mutating the native stream outside PlaybackEpoch control.
 
+## Source override ordering
+
+Native composition can register a custom `IMediaSourceProvider` before
+opening any media. Explicit providers are evaluated first, most recently
+registered first. When one claims a locator, a failure is returned directly;
+the runtime does not silently retry through a different provider. This
+also allows test fixtures to inject a fake Directory source while the real
+libbluray provider is compiled in. Do not register providers while a source
+or decoder generation is open.
+
 ## Verification boundaries
 
 Default CI runs `bluray_source_contract` against a fake disc backend and

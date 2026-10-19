@@ -74,7 +74,7 @@ void PlaybackMediaSession::register_source_provider(
         throw std::logic_error(
             "Register a media source provider before opening media.");
     }
-    impl_->sources.add(std::move(provider));
+    impl_->sources.add_override(std::move(provider));
 }
 
 std::optional<NavigationSnapshot> PlaybackMediaSession::navigation_snapshot() const {

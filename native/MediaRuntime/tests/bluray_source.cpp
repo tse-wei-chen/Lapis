@@ -2,6 +2,7 @@
 #include "source/bluray/bluray_source.hpp"
 #include "source/bluray/title_selection.hpp"
 #include "source/file/file_source.hpp"
+#include "source/media_source_registry.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -10,6 +11,7 @@
 #include <iostream>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -51,6 +53,23 @@ struct TemporaryDisc final {
         std::error_code error;
         std::filesystem::remove_all(root, error);
     }
+};
+
+class FailingDirectoryProvider final : public lapis::media::IMediaSourceProvider {
+public:
+    explicit FailingDirectoryProvider(int& called) : called_(called) {}
+    [[nodiscard]] bool can_open(
+        const lapis::media::MediaLocator& locator) const noexcept override {
+        return locator.kind == lapis::media::MediaLocatorKind::Directory;
+    }
+    [[nodiscard]] lapis::media::SourceOpenResult open(
+        const lapis::media::MediaLocator&) const override {
+        ++called_;
+        return {lapis::media::SourceError::OpenFailed, nullptr};
+    }
+
+private:
+    int& called_;
 };
 
 class FakeDisc final : public lapis::media::bluray::IBlurayDisc {
@@ -148,6 +167,24 @@ int main() {
           SourceError::NotFound);
     CHECK(attempted == 0);
 
+    // Explicitly installed providers must win over built-in libbluray
+    // even when LAPIS_ENABLE_LIBBLURAY is ON. Failure must not fallback.
+    int blocked_opens = 0;
+    {
+        PlaybackMediaSession overridden;
+        overridden.register_source_provider(
+            std::make_unique<BluraySourceProvider>(
+                [probe](const std::filesystem::path&) {
+                    return std::make_unique<FakeDisc>(probe);
+                }));
+        overridden.register_source_provider(
+            std::make_unique<FailingDirectoryProvider>(blocked_opens));
+        CHECK(overridden.open({MediaLocatorKind::Directory, name}).error ==
+              MediaOpenError::SourceOpenFailed);
+        CHECK(blocked_opens == 1);
+        CHECK(probe->opens == 0);
+    }
+
     const auto bdmv_path = utf8_path(disc.root / "BDMV");
     {
         auto direct = provider.open({MediaLocatorKind::Directory, bdmv_path});
@@ -201,5 +238,15 @@ int main() {
     }
     CHECK(probe->opens == 2);
     CHECK(probe->closes == 2);
+
+    // Registry composition must reject null overrides as early as built-ins.
+    MediaSourceRegistry registry;
+    bool rejected_null_override = false;
+    try {
+        registry.add_override(nullptr);
+    } catch (const std::invalid_argument&) {
+        rejected_null_override = true;
+    }
+    CHECK(rejected_null_override);
     return 0;
 }

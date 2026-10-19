@@ -39,12 +39,18 @@ C ABI or GUI to `BLURAY*` and `BLURAY_TITLE_INFO`.
    the live virtual MPEG-TS cursor behind a running FFmpeg demuxer. Actor
    coordination, epoch bumps, stream replacement, and menu events are
    deferred.
-7. Compile and register the real backend only with
+7. Explicitly registered source providers take precedence over the built-in
+   providers, most recently registered first. Once a provider claims a
+   locator, a failed Open is returned without fallback to another provider;
+   transparent fallback could bypass a deliberate transport or protection
+   policy. This resolves opt-in test backend injection, where both the real
+   and fake Blu-ray providers claimed Directory locators.
+8. Compile and register the real backend only with
    `LAPIS_ENABLE_LIBBLURAY=ON`. vcpkg manifest feature `bluray`
    supplies the external library; the normal/default dependency graph and
    CI remain FFmpeg-only. `BluraySourceProvider` itself always compiles,
    permitting fake disc backends in deterministic native regression tests.
-8. The already existing C ABI v2 Directory locator can reach this provider
+9. The already existing C ABI v2 Directory locator can reach this provider
    **when** the opt-in backend is compiled. No new ABI exports, frontend
    directory picker or misleading BD-J controls are added.
 
@@ -62,6 +68,9 @@ C ABI or GUI to `BLURAY*` and `BLURAY_TITLE_INFO`.
   feature PR via a description edit containing `[verify-libbluray]`.
   After merge, it also supports `workflow_dispatch`. It is deliberately
   not part of regular PR CI and does not prove physical-disc playback.
+- An opt-in Windows run compiled and linked libbluray 1.5.1, but its fake
+  source integration test exposed built-in/explicit provider precedence.
+  The override fix is covered in both default and libbluray-enabled tests.
 - **Not yet verified by default CI:** the optional libbluray ON build and
   real unprotected BDMV playback. A manual workflow run is required for the
   former; the latter requires a legal test disc and playback acceptance.
