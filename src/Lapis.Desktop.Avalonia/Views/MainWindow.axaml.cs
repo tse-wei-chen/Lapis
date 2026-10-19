@@ -127,7 +127,7 @@ public sealed partial class MainWindow : Window
 
     private bool CanAcceptFiles(DragEventArgs args) =>
         !_dropBusy && _libraryPage.IsVisible &&
-        args.Data.Contains(DataFormats.Files);
+        args.DataTransfer.Contains(DataFormat.File);
 
     private void LibraryDragEnter(object? sender, DragEventArgs args) =>
         LibraryDragOver(sender, args);
@@ -171,7 +171,7 @@ public sealed partial class MainWindow : Window
         if (!accept) return;
 
         // Read the paths before the platform disposes its drop data.
-        var paths = args.Data.GetFiles()
+        var paths = args.DataTransfer.TryGetFiles()
             ?.Select(item => item.TryGetLocalPath())
             .ToArray() ?? [];
         if (paths.Length == 0)
