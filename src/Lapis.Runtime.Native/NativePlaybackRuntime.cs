@@ -36,6 +36,13 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
     private PlaybackSessionId? _boundSessionId;
     private bool _disposed;
 
+    /// <summary>
+    /// null = pre-feature-query DLL (unknown), false = file-only build,
+    /// true = the libbluray Directory provider was compiled into this DLL.
+    /// This does not assert that a protected disc can be opened.
+    /// </summary>
+    public bool? SupportsBdmvDirectory { get; }
+
     public NativePlaybackRuntime()
         : this(PInvokeNativeMediaRuntimeApi.Instance) {}
 
@@ -48,6 +55,15 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
         {
             throw new NotSupportedException(
                 $"Lapis.MediaRuntime ABI {actualAbi} is incompatible with managed ABI {NativeAbi.Version}.");
+        }
+
+        try
+        {
+            SupportsBdmvDirectory = (_api.GetSourceFeatures() & 0x2u) != 0;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            SupportsBdmvDirectory = null; // Older compatible DLL.
         }
 
         var result = _api.RuntimeCreate(out var runtime);
@@ -72,6 +88,16 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
         {
             cancellationToken.ThrowIfCancellationRequested();
             ThrowIfDisposed();
+            if (locator.Kind == MediaLocatorKind.Directory &&
+                SupportsBdmvDirectory == false)
+            {
+                throw new NotSupportedException(
+                    "目前載入的是一般影片播放版 Lapis.MediaRuntime.dll，未編入 libbluray。 " +
+                    "請執行 scripts/build-bdmv-player.ps1，然後啟動 " +
+                    "build/Lapis.BdmvPlayer/Lapis.Desktop.Avalonia.exe。 " +
+                    "目前程式執行目錄：" + AppContext.BaseDirectory);
+            }
+
             var session = EnsureSession(context.SessionId);
             var kind = ToNativeLocatorKind(locator.Kind);
             var epoch = new NativePlaybackEpoch { Value = context.Epoch.Value };

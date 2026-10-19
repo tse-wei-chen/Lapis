@@ -5,6 +5,7 @@ namespace Lapis.Runtime.Native.Interop;
 internal interface INativeMediaRuntimeApi
 {
     uint GetAbiVersion();
+    uint GetSourceFeatures();
     uint GetDiagnosticsApiVersion();
     uint GetNavigationApiVersion();
     NativeResult SessionResolveChapter(
@@ -48,6 +49,8 @@ internal sealed class PInvokeNativeMediaRuntimeApi : INativeMediaRuntimeApi
     private PInvokeNativeMediaRuntimeApi() {}
 
     public uint GetAbiVersion() => NativeMethods.RuntimeGetAbiVersion();
+
+    public uint GetSourceFeatures() => NativeMethods.RuntimeGetSourceFeatures();
 
     public uint GetDiagnosticsApiVersion() =>
         NativeMethods.RuntimeGetDiagnosticsApiVersion();

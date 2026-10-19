@@ -86,12 +86,14 @@ if (-not (Select-String -LiteralPath $cache -Pattern "^LAPIS_ENABLE_LIBBLURAY:BO
 
 Invoke-Checked "cmake" @(
     "--build", $nativeBuild, "--config", "Release",
-    "--target", "Lapis.MediaRuntime", "Lapis.MediaRuntime.BluraySourceTests"
+    "--target", "Lapis.MediaRuntime", "Lapis.MediaRuntime.BluraySourceTests",
+    "Lapis.MediaRuntime.SourceFeatureTests"
 )
 if (-not $SkipTests) {
     Invoke-Checked "ctest" @(
         "--test-dir", $nativeBuild, "-C", "Release",
-        "-R", "^bluray_source_contract$", "--output-on-failure"
+        "-R", "^(bluray_source_contract|source_features_contract)$",
+        "--output-on-failure"
     )
 }
 

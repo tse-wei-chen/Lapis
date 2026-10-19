@@ -40,6 +40,14 @@ Get-ChildItem src/Lapis.Desktop.Avalonia/bin/Release/net10.0-windows/*dll |
 dotnet run --project src/Lapis.Desktop.Avalonia -c Release --no-build
 ```
 
+Library cards now show BDMV `*_L.jpg` in a **16:9 landscape frame**
+(288×162 logical pixels, `Stretch=Uniform`), rather than forcing the
+disc's wide artwork into a portrait crop. Playback source feature flags are
+exposed by the optional native `lapis_runtime_get_source_features` API:
+file-only builds report no BDMV provider and the C# adapter rejects BDMV
+early with the loaded application's path. An older native build without
+the new extension remains usable and is treated as unknown support.
+
 If `session_open` returns Unsupported for BDMV, check that you launched
 the **BDMV-specific published executable**; it is not interchangeable
 with the normal file-only build. The extra `MAKEMKV` directory may remain

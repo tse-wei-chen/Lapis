@@ -23,6 +23,11 @@ extern "C" {
 #define LAPIS_NAVIGATION_API_VERSION 1u
 #define LAPIS_DIAGNOSTIC_RING_CAPACITY 128u
 
+/* Optional source-provider feature mask. This is build capability, not
+ * proof that a particular BDMV disc is readable or decrypted. */
+#define LAPIS_SOURCE_FEATURE_FILE 0x1u
+#define LAPIS_SOURCE_FEATURE_BDMV_DIRECTORY 0x2u
+
 typedef struct lapis_runtime lapis_runtime;
 typedef struct lapis_session lapis_session;
 
@@ -146,6 +151,10 @@ typedef enum lapis_video_output_surface_binding {
  * - lapis_runtime_destroy requires that all child sessions have already been destroyed.
  */
 LAPIS_API uint32_t lapis_runtime_get_abi_version(void);
+
+/* ABI-v2-compatible read-only extension; an older DLL without the export
+ * means UNKNOWN capability. No session or runtime initialization required. */
+LAPIS_API uint32_t lapis_runtime_get_source_features(void);
 
 /* Optional diagnostics v1 extension, discover before use with dlsym/GetProcAddress.
  * Read an ordered bounded journal. since_sequence is exclusive. If the reader

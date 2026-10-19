@@ -339,6 +339,14 @@ uint32_t lapis_runtime_get_abi_version(void) {
     return LAPIS_MEDIA_RUNTIME_ABI_VERSION;
 }
 
+uint32_t lapis_runtime_get_source_features(void) {
+    uint32_t features = LAPIS_SOURCE_FEATURE_FILE;
+#if defined(LAPIS_ENABLE_LIBBLURAY)
+    features |= LAPIS_SOURCE_FEATURE_BDMV_DIRECTORY;
+#endif
+    return features;
+}
+
 uint32_t lapis_runtime_get_diagnostics_api_version(void) {
     return LAPIS_DIAGNOSTICS_API_VERSION;
 }

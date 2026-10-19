@@ -136,16 +136,16 @@
               <DataTemplate>
                 <Button Classes="library-card" Click="PlayLibraryItem_Click"
                         CommandParameter="{Binding}" Margin="0,0,18,24">
-                  <StackPanel Width="186" Spacing="8">
-                    <Border Height="245" CornerRadius="13" Background="#202E46"
+                  <StackPanel Width="288" Spacing="8">
+                    <Border Width="288" Height="162" CornerRadius="13" Background="#202E46"
                             BorderBrush="#384A67" BorderThickness="1" ClipToBounds="True">
                       <Grid RowDefinitions="Auto,*,Auto">
                         <!-- Real disc artwork is decoded to a thumbnail off
                              thread. No video-frame/GPU presenter ownership. -->
                         <Image Grid.RowSpan="3" Source="{Binding Poster}"
                                IsVisible="{Binding HasPoster}"
-                               Stretch="UniformToFill"/>
-                        <TextBlock Grid.Row="1" Text="L" FontSize="94"
+                               Stretch="Uniform"/>
+                        <TextBlock Grid.Row="1" Text="L" FontSize="74"
                                    IsVisible="{Binding ShowPlaceholder}"
                                    FontWeight="Light" VerticalAlignment="Center"
                                    HorizontalAlignment="Center" Foreground="#455F86"/>

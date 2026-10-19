@@ -55,9 +55,26 @@ jobs:
         shell: pwsh
         run: |
           cmake --build build/native-bdmv --config Release `
-            --target Lapis.MediaRuntime Lapis.MediaRuntime.BluraySourceTests
+            --target Lapis.MediaRuntime Lapis.MediaRuntime.BluraySourceTests Lapis.MediaRuntime.SourceFeatureTests
       - name: Exercise source adapter contract
         shell: pwsh
         run: |
           ctest --test-dir build/native-bdmv -C Release `
-            -R "^bluray_source_contract$" --output-on-failure
+            -R "^(bluray_source_contract|source_features_contract)$" --output-on-failure
+      - name: Verify packaged BDMV player resolves its native DLL set
+        shell: pwsh
+        run: |
+          dotnet publish src/Lapis.Desktop.Avalonia/Lapis.Desktop.Avalonia.csproj `
+            -c Release -r win-x64 --self-contained false `
+            -o build/bdmv-publish-test `
+            "-p:LapisNativeRuntimeDir=${{ github.workspace }}/build/native-bdmv/Release"
+          $native = @(Get-ChildItem build/native-bdmv/Release/*.dll)
+          foreach ($dll in $native) {
+            if (-not (Test-Path (Join-Path "build/bdmv-publish-test" $dll.Name))) {
+              throw "BDMV publish is missing $($dll.Name)"
+            }
+          }
+          $blurayDll = @(Get-ChildItem build/bdmv-publish-test/*bluray*.dll)
+          if ($blurayDll.Count -eq 0) {
+            throw "BDMV publisher did not include libbluray dependency"
+          }

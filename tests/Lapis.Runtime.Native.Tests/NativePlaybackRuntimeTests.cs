@@ -24,6 +24,46 @@ public sealed class NativePlaybackRuntimeTests
     }
 
     [Fact]
+    public async Task FileOnlyRuntimeRejectsDirectoryWithoutCreatingSession()
+    {
+        var api = new FakeNativeApi { SourceFeatures = 1 };
+        await using var runtime = new NativePlaybackRuntime(api);
+        Assert.False(runtime.SupportsBdmvDirectory);
+        var error = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await runtime.OpenAsync(
+                new MediaLocator(MediaLocatorKind.Directory, @"C:\Disc"),
+                new RuntimeCommandContext(new PlaybackSessionId(Guid.NewGuid()),
+                    new PlaybackEpoch(1)), CancellationToken.None));
+        Assert.Contains("build-bdmv-player.ps1", error.Message);
+        Assert.DoesNotContain("session_open", api.Calls);
+        Assert.Equal(0, api.SessionCreateCount);
+    }
+
+    [Fact]
+    public async Task BdmvEnabledRuntimeStillDelegatesValidationToNative()
+    {
+        var api = new FakeNativeApi { SourceFeatures = 3 };
+        await using var runtime = new NativePlaybackRuntime(api);
+        Assert.True(runtime.SupportsBdmvDirectory);
+        await runtime.OpenAsync(new MediaLocator(MediaLocatorKind.Directory, @"C:\Disc"),
+            new RuntimeCommandContext(new PlaybackSessionId(Guid.NewGuid()),
+                new PlaybackEpoch(1)), CancellationToken.None);
+        Assert.Equal(NativeMediaLocatorKind.Directory, api.LastLocatorKind);
+    }
+
+    [Fact]
+    public async Task OlderRuntimeWithoutFeatureQueryRemainsCompatible()
+    {
+        var api = new FakeNativeApi { HasFeatureQuery = false };
+        await using var runtime = new NativePlaybackRuntime(api);
+        Assert.Null(runtime.SupportsBdmvDirectory);
+        await runtime.OpenAsync(new MediaLocator(MediaLocatorKind.Directory, @"C:\Disc"),
+            new RuntimeCommandContext(new PlaybackSessionId(Guid.NewGuid()),
+                new PlaybackEpoch(1)), CancellationToken.None);
+        Assert.Contains("session_open", api.Calls);
+    }
+
+    [Fact]
     public async Task UnsupportedBdmvOpenProvidesBuildGuidance()
     {
         var api = new FakeNativeApi { SessionOpenResult = NativeResult.Unsupported };
@@ -472,6 +512,8 @@ public sealed class NativePlaybackRuntimeTests
     private sealed class FakeNativeApi : INativeMediaRuntimeApi
     {
         internal uint AbiVersion { get; set; } = NativeAbi.Version;
+        internal uint SourceFeatures { get; set; } = 3;
+        internal bool HasFeatureQuery { get; set; } = true;
         internal uint DiagnosticVersion { get; set; } = NativeAbi.DiagnosticsVersion;
         internal uint NavigationVersion { get; set; } = NativeAbi.NavigationVersion;
         internal NativeResult ChapterResult { get; set; } = NativeResult.Ok;
@@ -497,6 +539,9 @@ public sealed class NativePlaybackRuntimeTests
         internal NativeMediaTime LastPosition { get; private set; }
 
         public uint GetAbiVersion() => AbiVersion;
+        public uint GetSourceFeatures() =>
+            HasFeatureQuery ? SourceFeatures :
+                throw new EntryPointNotFoundException("Feature query unsupported");
         public uint GetDiagnosticsApiVersion() => DiagnosticVersion;
         public uint GetNavigationApiVersion() => NavigationVersion;
         public NativeResult SessionResolveChapter(

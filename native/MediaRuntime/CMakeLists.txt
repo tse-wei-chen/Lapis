@@ -90,6 +90,10 @@ add_library(Lapis.MediaRuntime SHARED
 
 target_compile_features(Lapis.MediaRuntime PRIVATE cxx_std_20)
 target_compile_definitions(Lapis.MediaRuntime PRIVATE LAPIS_MEDIA_RUNTIME_EXPORTS)
+# Share the CMake provider choice with the C ABI export implementation.
+if(LAPIS_ENABLE_LIBBLURAY)
+    target_compile_definitions(Lapis.MediaRuntime PRIVATE LAPIS_ENABLE_LIBBLURAY=1)
+endif()
 target_include_directories(Lapis.MediaRuntime
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -143,6 +147,21 @@ if(BUILD_TESTING)
         )
     endif()
     add_test(NAME c_abi_header_smoke COMMAND Lapis.MediaRuntime.CAbiHeaderTests)
+
+    add_executable(Lapis.MediaRuntime.SourceFeatureTests tests/source_feature_flags.c)
+    target_compile_features(Lapis.MediaRuntime.SourceFeatureTests PRIVATE c_std_17)
+    target_include_directories(Lapis.MediaRuntime.SourceFeatureTests
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(Lapis.MediaRuntime.SourceFeatureTests PRIVATE Lapis.MediaRuntime)
+    if(LAPIS_ENABLE_LIBBLURAY)
+        target_compile_definitions(Lapis.MediaRuntime.SourceFeatureTests PRIVATE LAPIS_ENABLE_LIBBLURAY=1)
+    endif()
+    if(MSVC)
+        target_compile_options(Lapis.MediaRuntime.SourceFeatureTests PRIVATE /W4 /WX)
+    else()
+        target_compile_options(Lapis.MediaRuntime.SourceFeatureTests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(NAME source_features_contract COMMAND Lapis.MediaRuntime.SourceFeatureTests)
 
     # Pure deterministic contract for the soak runner's growth evaluator.
     # Does not require FFmpeg, D3D11, Windows or a real playback device.
