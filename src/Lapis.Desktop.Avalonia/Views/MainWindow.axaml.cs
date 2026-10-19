@@ -28,6 +28,8 @@ public sealed partial class MainWindow : Window
     private readonly Grid _playerPage;
     private readonly Border _discMenuPanel;
     private readonly ItemsControl _discPlaylistList;
+    private readonly ScrollViewer _gridSurface;
+    private readonly Border _listSurface;
     private readonly PlayerViewModel _player;
     private readonly LibraryViewModel _library;
     private bool _closeStarted;
@@ -48,6 +50,10 @@ public sealed partial class MainWindow : Window
             ?? throw new InvalidOperationException("Missing D3D11 surface host.");
         _timeline = this.FindControl<Slider>("PlaybackTimeline")
             ?? throw new InvalidOperationException("Missing playback timeline.");
+        _gridSurface = this.FindControl<ScrollViewer>("LibraryGridSurface")
+            ?? throw new InvalidOperationException("Missing library grid viewport.");
+        _listSurface = this.FindControl<Border>("LibraryListSurface")
+            ?? throw new InvalidOperationException("Missing library list viewport.");
 
         var libraryFile = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -145,8 +151,31 @@ public sealed partial class MainWindow : Window
     private void ShowVideos_Click(object? sender, RoutedEventArgs args) => _library.ShowVideos();
     private void ShowRecentlyAdded_Click(object? sender, RoutedEventArgs args) =>
         _library.ShowRecentlyAdded();
-    private void ShowGrid_Click(object? sender, RoutedEventArgs args) => _library.ShowGrid();
-    private void ShowList_Click(object? sender, RoutedEventArgs args) => _library.ShowList();
+    private void ShowGrid_Click(object? sender, RoutedEventArgs args)
+    {
+        if (_library.IsGridView) return;
+        _library.ShowGrid();
+        Dispatcher.UIThread.Post(() => LibraryMotion.Enter(_gridSurface),
+            DispatcherPriority.Loaded);
+    }
+
+    private void ShowList_Click(object? sender, RoutedEventArgs args)
+    {
+        if (_library.IsListView) return;
+        _library.ShowList();
+        Dispatcher.UIThread.Post(() => LibraryMotion.Enter(_listSurface),
+            DispatcherPriority.Loaded);
+    }
+
+    private void LibraryItem_PointerEntered(object? sender, PointerEventArgs args)
+    {
+        if (sender is Control item) LibraryMotion.Hover(item, true);
+    }
+
+    private void LibraryItem_PointerExited(object? sender, PointerEventArgs args)
+    {
+        if (sender is Control item) LibraryMotion.Hover(item, false);
+    }
 
     private async void PlayLibraryItem_Click(object? sender, RoutedEventArgs args)
     {
