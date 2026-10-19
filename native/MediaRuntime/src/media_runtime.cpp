@@ -1,5 +1,7 @@
 #include "lapis/media_runtime.h"
 
+#include "core/diagnostic_events.hpp"
+#include "navigation/chapter_seek.hpp"
 #include "execution/playback_execution.hpp"
 #include "process/ffmpeg/ffmpeg_audio_frame_converter.hpp"
 #include "process/ffmpeg/ffmpeg_video_frame_converter.hpp"
@@ -62,6 +64,9 @@ struct lapis_session final {
     lapis_transport_state transport{LAPIS_TRANSPORT_CLOSED};
     std::shared_ptr<RuntimePlaybackPipeline> pipeline;
     lapis::media::VideoOutputSurfaceDescriptor desired_output_surface{};
+    std::shared_ptr<lapis::media::DiagnosticEventJournal> diagnostics{
+        std::make_shared<lapis::media::DiagnosticEventJournal>()
+    };
 };
 
 namespace {
@@ -209,7 +214,8 @@ lapis_result map_execution_error(
 }
 
 std::unique_ptr<lapis::media::PlaybackExecution> create_execution(
-    lapis::media::PlaybackMediaSession& media) {
+    lapis::media::PlaybackMediaSession& media,
+    std::shared_ptr<lapis::media::DiagnosticEventJournal> journal) {
     auto video_processor =
         std::make_unique<lapis::media::ffmpeg::FfmpegVideoFrameConverter>();
     #if defined(_WIN32)
@@ -234,20 +240,25 @@ std::unique_ptr<lapis::media::PlaybackExecution> create_execution(
         std::move(video_processor),
         std::move(presenter),
         std::move(audio_provider),
-        std::move(audio_processor_factory));
+        std::move(audio_processor_factory),
+        lapis::media::PlaybackExecutionConfig{},
+        std::move(journal));
 #else
     return std::make_unique<lapis::media::PlaybackExecution>(
         media,
         std::move(video_processor),
-        std::move(presenter));
+        std::move(presenter),
+        lapis::media::PlaybackExecutionConfig{},
+        std::move(journal));
 #endif
 }
 
 std::shared_ptr<RuntimePlaybackPipeline> create_pipeline(
-    std::shared_ptr<lapis::media::PlaybackMediaSession> media) {
+    std::shared_ptr<lapis::media::PlaybackMediaSession> media,
+    std::shared_ptr<lapis::media::DiagnosticEventJournal> journal) {
     auto pipeline = std::make_shared<RuntimePlaybackPipeline>();
     pipeline->media = std::move(media);
-    pipeline->execution = create_execution(*pipeline->media);
+    pipeline->execution = create_execution(*pipeline->media, std::move(journal));
     return pipeline;
 }
 
@@ -326,6 +337,106 @@ void refresh_terminal_transport(lapis_session* session) {
 
 uint32_t lapis_runtime_get_abi_version(void) {
     return LAPIS_MEDIA_RUNTIME_ABI_VERSION;
+}
+
+uint32_t lapis_runtime_get_source_features(void) {
+    uint32_t features = LAPIS_SOURCE_FEATURE_FILE;
+#if defined(LAPIS_ENABLE_LIBBLURAY)
+    features |= LAPIS_SOURCE_FEATURE_BDMV_DIRECTORY;
+#endif
+    return features;
+}
+
+uint32_t lapis_runtime_get_diagnostics_api_version(void) {
+    return LAPIS_DIAGNOSTICS_API_VERSION;
+}
+
+uint32_t lapis_runtime_get_navigation_api_version(void) {
+    return LAPIS_NAVIGATION_API_VERSION;
+}
+
+lapis_result lapis_session_resolve_chapter(
+    lapis_session* session,
+    uint32_t chapter_id,
+    lapis_playback_epoch expected_epoch,
+    lapis_media_time* out_position) {
+    return guarded_result([&]() -> lapis_result {
+        if (session == nullptr || out_position == nullptr) {
+            return LAPIS_E_INVALID_ARGUMENT;
+        }
+        *out_position = {};
+
+        // Serialize with Open/Seek/Close so the source cannot be retired
+        // while its navigation metadata is being copied.
+        std::scoped_lock command_lock(session->command_mutex);
+        std::shared_ptr<RuntimePlaybackPipeline> pipeline;
+        {
+            std::scoped_lock lock(session->mutex);
+            if (!matches_epoch(*session, expected_epoch)) {
+                return LAPIS_E_STALE_EPOCH;
+            }
+            if (session->transport != LAPIS_TRANSPORT_READY &&
+                session->transport != LAPIS_TRANSPORT_PLAYING &&
+                session->transport != LAPIS_TRANSPORT_PAUSED) {
+                return LAPIS_E_INVALID_STATE;
+            }
+            pipeline = session->pipeline;
+        }
+        if (pipeline == nullptr || pipeline->media == nullptr) {
+            return LAPIS_E_UNSUPPORTED;
+        }
+
+        const auto state = pipeline->media->navigation_snapshot();
+        if (!state.has_value() ||
+            !lapis::media::supports_navigation(
+                state->capabilities, lapis::media::NavigationCapability::Chapters)) {
+            return LAPIS_E_UNSUPPORTED;
+        }
+        const auto start = lapis::media::selected_chapter_start(*state, chapter_id);
+        if (!start.has_value()) {
+            return LAPIS_E_INVALID_ARGUMENT;
+        }
+        out_position->nanoseconds = start->nanoseconds;
+        return LAPIS_OK;
+    });
+}
+
+lapis_result lapis_session_read_diagnostic_events(
+    lapis_session* session,
+    uint64_t since_sequence,
+    lapis_diagnostic_event* events,
+    uint32_t capacity,
+    uint32_t* out_count,
+    uint64_t* out_next_sequence,
+    uint64_t* out_dropped) {
+    return guarded_result([&]() -> lapis_result {
+        if (session == nullptr || out_count == nullptr ||
+            out_next_sequence == nullptr || out_dropped == nullptr ||
+            capacity > LAPIS_DIAGNOSTIC_RING_CAPACITY ||
+            (capacity != 0 && events == nullptr)) {
+            return LAPIS_E_INVALID_ARGUMENT;
+        }
+        // No dependency on command_mutex, media decode or D3D locks.
+        // This session-scoped journal persists over close/open generations.
+        lapis::media::DiagnosticEvent buffer[
+            lapis::media::DiagnosticEventJournal::capacity]{};
+        uint64_t next{};
+        uint64_t dropped{};
+        const auto count = session->diagnostics->read_after(
+            since_sequence, buffer, capacity, next, dropped);
+        for (uint32_t i = 0; i < count; ++i) {
+            const auto& source = buffer[i];
+            events[i] = {
+                source.sequence, source.epoch, source.monotonic_milliseconds,
+                static_cast<uint32_t>(source.kind), source.failure_stage,
+                source.hresult, source.removed_reason, source.detail
+            };
+        }
+        *out_count = count;
+        *out_next_sequence = next;
+        *out_dropped = dropped;
+        return LAPIS_OK;
+    });
 }
 
 lapis_result lapis_runtime_create(lapis_runtime** out_runtime) {
@@ -413,7 +524,7 @@ lapis_result lapis_session_open(
             };
             media_open_result = media->open(core_locator);
             if (media_open_result.ok()) {
-                pipeline = create_pipeline(media);
+                pipeline = create_pipeline(media, session->diagnostics);
                 // The desired host window belongs to the logical session,
                 // not to a particular media-open or decode generation.
                 const auto surface_status = pipeline->execution->set_video_output_surface(

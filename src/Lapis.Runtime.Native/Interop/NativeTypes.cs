@@ -6,6 +6,23 @@ namespace Lapis.Runtime.Native.Interop;
 internal static class NativeAbi
 {
     internal const uint Version = 2;
+    internal const uint DiagnosticsVersion = 1;
+    internal const uint NavigationVersion = 1;
+    internal const int DiagnosticRingCapacity = 128;
+}
+
+// 48-byte, all-blittable diagnostics v1 wire format.
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeDiagnosticEvent
+{
+    public ulong Sequence;
+    public ulong Epoch;
+    public ulong MonotonicMilliseconds;
+    public uint Kind;
+    public uint FailureStage;
+    public uint Hresult;
+    public uint RemovedReason;
+    public ulong Detail;
 }
 
 internal enum NativeResult : int

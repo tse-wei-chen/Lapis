@@ -27,7 +27,7 @@ public sealed class NativeMediaRuntimeException : Exception
 /// In-process adapter from the Application playback-runtime port to the stable
 /// native C ABI. One adapter instance binds to exactly one PlaybackSessionId.
 /// </summary>
-public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfaceBinding, IPlaybackRuntimeObserver
+public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfaceBinding, IPlaybackRuntimeObserver, IChapterNavigationRuntime
 {
     private readonly object _gate = new();
     private readonly INativeMediaRuntimeApi _api;
@@ -35,6 +35,13 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
     private SessionLease? _session;
     private PlaybackSessionId? _boundSessionId;
     private bool _disposed;
+
+    /// <summary>
+    /// null = pre-feature-query DLL (unknown), false = file-only build,
+    /// true = the libbluray Directory provider was compiled into this DLL.
+    /// This does not assert that a protected disc can be opened.
+    /// </summary>
+    public bool? SupportsBdmvDirectory { get; }
 
     public NativePlaybackRuntime()
         : this(PInvokeNativeMediaRuntimeApi.Instance) {}
@@ -48,6 +55,15 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
         {
             throw new NotSupportedException(
                 $"Lapis.MediaRuntime ABI {actualAbi} is incompatible with managed ABI {NativeAbi.Version}.");
+        }
+
+        try
+        {
+            SupportsBdmvDirectory = (_api.GetSourceFeatures() & 0x2u) != 0;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            SupportsBdmvDirectory = null; // Older compatible DLL.
         }
 
         var result = _api.RuntimeCreate(out var runtime);
@@ -72,6 +88,16 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
         {
             cancellationToken.ThrowIfCancellationRequested();
             ThrowIfDisposed();
+            if (locator.Kind == MediaLocatorKind.Directory &&
+                SupportsBdmvDirectory == false)
+            {
+                throw new NotSupportedException(
+                    "目前載入的是一般影片播放版 Lapis.MediaRuntime.dll，未編入 libbluray。 " +
+                    "請執行 scripts/build-bdmv-player.ps1，然後啟動 " +
+                    "build/Lapis.BdmvPlayer/Lapis.Desktop.Avalonia.exe。 " +
+                    "目前程式執行目錄：" + AppContext.BaseDirectory);
+            }
+
             var session = EnsureSession(context.SessionId);
             var kind = ToNativeLocatorKind(locator.Kind);
             var epoch = new NativePlaybackEpoch { Value = context.Epoch.Value };
@@ -81,6 +107,18 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
                 locator.Value,
                 epoch,
                 out var openResult);
+            if (result == NativeResult.Unsupported &&
+                locator.Kind == MediaLocatorKind.Directory)
+            {
+                // Generic source rejection can mean a build without the
+                // opt-in provider or a rejected disc. Never infer DRM state.
+                throw new NotSupportedException(
+                    "無法開啟完整 BDMV 光碟。Lapis.MediaRuntime.dll 可能沒有編入 " +
+                    "libbluray，或 Native 不接受目前的光碟結構。" +
+                    "請使用 scripts/build-bdmv-player.ps1 建立 Blu-ray 版本，" +
+                    "並確認播放器載入的是該版本的 DLL。" +
+                    "目前只支援可讀取的未受保護 BDMV，不支援 AACS/BD+ 或 BD-J 選單。");
+            }
             ThrowForResult(result, "session_open");
 
             MediaTime? duration = null;
@@ -139,6 +177,73 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
         }
 
         return ValueTask.CompletedTask;
+    }
+
+    public ValueTask<MediaTime> ResolveChapterAsync(
+        uint chapterId,
+        RuntimeCommandContext context,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ThrowIfDisposed();
+            uint version;
+            try
+            {
+                version = _api.GetNavigationApiVersion();
+            }
+            catch (EntryPointNotFoundException exception)
+            {
+                throw new NotSupportedException(
+                    "The installed native runtime has no chapter-navigation extension.",
+                    exception);
+            }
+
+            if (version != NativeAbi.NavigationVersion)
+            {
+                throw new NotSupportedException(
+                    $"Native navigation API version {version} is not supported.");
+            }
+
+            // Do not create a session just to resolve a chapter: the caller
+            // must already have opened a media source in this exact session.
+            if (_session is null || _boundSessionId != context.SessionId)
+            {
+                throw new InvalidOperationException(
+                    "Chapter resolution requires the active playback session.");
+            }
+
+            NativeResult result;
+            NativeMediaTime position;
+            try
+            {
+                result = _api.SessionResolveChapter(
+                    _session.Handle,
+                    chapterId,
+                    new NativePlaybackEpoch { Value = context.Epoch.Value },
+                    out position);
+            }
+            catch (EntryPointNotFoundException exception)
+            {
+                throw new NotSupportedException(
+                    "The installed native runtime cannot resolve chapter locations.",
+                    exception);
+            }
+            if (result == NativeResult.InvalidArgument)
+            {
+                throw new InvalidOperationException(
+                    $"Chapter {chapterId} does not exist in the selected title.");
+            }
+            ThrowForResult(result, "session_resolve_chapter");
+            if (position.Nanoseconds < 0)
+            {
+                throw new InvalidOperationException(
+                    "Native navigation returned a negative chapter time.");
+            }
+            return ValueTask.FromResult(new MediaTime(position.Nanoseconds));
+        }
     }
 
     public ValueTask SeekAsync(
@@ -274,6 +379,77 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
                 new PlaybackEpoch(snapshot.Epoch.Value),
                 new MediaTime(snapshot.Position.Nanoseconds),
                 transport));
+        }
+    }
+
+    /// <summary>
+    /// Explicit on-demand diagnostics export. This optional API is separately
+    /// versioned from playback ABI v2 and is not used in the frame loop.
+    /// It captures the most recent 128 events (with overwrite accounting)
+    /// without collecting the local media path or changing playback state.
+    /// </summary>
+    public NativeDiagnosticsReport CaptureDiagnostics()
+    {
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            uint version;
+            try
+            {
+                version = _api.GetDiagnosticsApiVersion();
+            }
+            catch (EntryPointNotFoundException exception)
+            {
+                throw new NotSupportedException(
+                    "The installed native DLL does not provide diagnostics v1.",
+                    exception);
+            }
+            if (version != NativeAbi.DiagnosticsVersion)
+            {
+                throw new NotSupportedException(
+                    $"Native diagnostics API {version} is not supported.");
+            }
+
+            if (_session is null)
+            {
+                return new NativeDiagnosticsReport([], 0);
+            }
+
+            var native = new NativeDiagnosticEvent[NativeAbi.DiagnosticRingCapacity];
+            NativeResult result;
+            uint count;
+            ulong next;
+            ulong dropped;
+            try
+            {
+                result = _api.SessionReadDiagnosticEvents(
+                    _session.Handle, 0, native, out count, out next, out dropped);
+            }
+            catch (EntryPointNotFoundException exception)
+            {
+                throw new NotSupportedException(
+                    "The installed native DLL is missing diagnostics v1 exports.",
+                    exception);
+            }
+            ThrowForResult(result, "session_read_diagnostic_events");
+            if (count > native.Length)
+            {
+                throw new NativeMediaRuntimeException(
+                    "session_read_diagnostic_events.count", NativeResult.Internal);
+            }
+            var events = new List<NativeDiagnosticsEvent>((int)count);
+            for (var index = 0; index < count; index++)
+            {
+                var entry = native[index];
+                events.Add(new NativeDiagnosticsEvent(
+                    entry.Sequence, entry.Epoch,
+                    entry.MonotonicMilliseconds,
+                    entry.Kind, entry.FailureStage,
+                    $"0x{entry.Hresult:X8}",
+                    $"0x{entry.RemovedReason:X8}",
+                    entry.Detail));
+            }
+            return new NativeDiagnosticsReport(events, dropped);
         }
     }
 

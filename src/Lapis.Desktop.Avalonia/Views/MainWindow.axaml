@@ -1,0 +1,549 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:video="clr-namespace:Lapis.Desktop.Avalonia.Controls"
+        x:Class="Lapis.Desktop.Avalonia.Views.MainWindow"
+        Title="Lapis — Cinema Library" Width="1320" Height="810"
+        MinWidth="980" MinHeight="580"
+        Background="#0A0E15" Foreground="#EDF3FB">
+  <Window.Resources>
+    <!-- Cinema dark palette. Single set of brush tokens shared across grid,
+         list, context menus, navigation, and animated states. -->
+    <SolidColorBrush x:Key="LibraryCanvas" Color="#0C1118"/>
+    <SolidColorBrush x:Key="LibrarySurface" Color="#151C26"/>
+    <SolidColorBrush x:Key="LibrarySurfaceAlt" Color="#202B37"/>
+    <SolidColorBrush x:Key="LibraryAccent" Color="#60B9CC"/>
+    <SolidColorBrush x:Key="LibraryAccentHover" Color="#78CDD9"/>
+    <SolidColorBrush x:Key="LibraryAccentSoft" Color="#1C3844"/>
+    <SolidColorBrush x:Key="LibraryText" Color="#ECF3F9"/>
+    <SolidColorBrush x:Key="LibrarySubtext" Color="#9BAAB9"/>
+    <SolidColorBrush x:Key="LibraryBorder" Color="#2B3949"/>
+    <SolidColorBrush x:Key="LibraryHover" Color="#243340"/>
+  </Window.Resources>
+
+  <Window.Styles>
+    <Style Selector="Button">
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style Selector="Button.subtle-action">
+      <Setter Property="Background" Value="{StaticResource LibrarySurfaceAlt}"/>
+      <Setter Property="Foreground" Value="#D6E2EC"/>
+      <Setter Property="BorderBrush" Value="{StaticResource LibraryBorder}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="5"/>
+      <Setter Property="Padding" Value="14,9"/>
+      <Setter Property="FontSize" Value="12"/>
+    </Style>
+    <Style Selector="Button.accent-action">
+      <Setter Property="Background" Value="{StaticResource LibraryAccent}"/>
+      <Setter Property="Foreground" Value="#0A171D"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="CornerRadius" Value="5"/>
+      <Setter Property="Padding" Value="17,9"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+    <Style Selector="Button.accent-action:pointerover">
+      <Setter Property="Background" Value="{StaticResource LibraryAccentHover}"/>
+    </Style>
+    <Style Selector="Button.library-nav">
+      <Setter Property="Width" Value="180"/>
+      <Setter Property="Height" Value="42"/>
+      <Setter Property="HorizontalAlignment" Value="Left"/>
+      <Setter Property="HorizontalContentAlignment" Value="Left"/>
+      <Setter Property="Transitions">
+        <Transitions>
+          <BrushTransition Property="Background" Duration="0:0:0.17"/>
+          <BrushTransition Property="Foreground" Duration="0:0:0.17"/>
+        </Transitions>
+      </Setter>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="{StaticResource LibrarySubtext}"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="CornerRadius" Value="4"/>
+      <Setter Property="Padding" Value="13,11"/>
+      <Setter Property="FontSize" Value="13"/>
+    </Style>
+    <Style Selector="Button.library-nav:pointerover">
+      <Setter Property="Background" Value="{StaticResource LibraryHover}"/>
+    </Style>
+    <Style Selector="Button.library-nav.selected">
+      <Setter Property="Background" Value="{StaticResource LibraryAccentSoft}"/>
+      <Setter Property="Foreground" Value="{StaticResource LibraryText}"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+    <Style Selector="Button.library-nav.selected:pointerover">
+      <Setter Property="Background" Value="#254753"/>
+    </Style>
+    <Style Selector="Button.library-nav:pressed">
+      <Setter Property="Background" Value="#315564"/>
+    </Style>
+    <Style Selector="Button.library-nav:focus-visible">
+      <Setter Property="BorderBrush" Value="{StaticResource LibraryAccent}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+    </Style>
+    <Style Selector="TextBlock.sidebar-section">
+      <Setter Property="Foreground" Value="#8E9BAA"/>
+      <Setter Property="FontSize" Value="11"/>
+    </Style>
+    <Style Selector="Button.view-button">
+      <Setter Property="Transitions">
+        <Transitions>
+          <BrushTransition Property="Background" Duration="0:0:0.16"/>
+          <BrushTransition Property="Foreground" Duration="0:0:0.16"/>
+        </Transitions>
+      </Setter>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="{StaticResource LibrarySubtext}"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="BorderBrush" Value="Transparent"/>
+      <Setter Property="CornerRadius" Value="4"/>
+      <Setter Property="FontSize" Value="21"/>
+      <Setter Property="Padding" Value="9,4"/>
+    </Style>
+    <Style Selector="Button.view-button:pointerover">
+      <Setter Property="Background" Value="{StaticResource LibraryHover}"/>
+    </Style>
+    <Style Selector="Button.view-button.active">
+      <Setter Property="Foreground" Value="{StaticResource LibraryAccent}"/>
+      <Setter Property="Background" Value="{StaticResource LibraryAccentSoft}"/>
+    </Style>
+    <Style Selector="Button.library-card">
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    </Style>
+    <!-- Hover opacity is handled by the render-thread compositor;
+         opacity styles here would race those animations. -->
+    <Style Selector="Button.library-card:focus-visible">
+      <Setter Property="BorderBrush" Value="{StaticResource LibraryAccent}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+    </Style>
+    <Style Selector="Button.library-row">
+      <Setter Property="Transitions">
+        <Transitions>
+          <BrushTransition Property="Background" Duration="0:0:0.14"/>
+        </Transitions>
+      </Setter>
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="Background" Value="{StaticResource LibrarySurface}"/>
+      <Setter Property="Foreground" Value="#DCE6F0"/>
+      <Setter Property="BorderBrush" Value="{StaticResource LibraryBorder}"/>
+      <Setter Property="BorderThickness" Value="0,0,0,1"/>
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+      <Setter Property="CornerRadius" Value="0"/>
+    </Style>
+    <Style Selector="Button.library-row:pointerover">
+      <Setter Property="Background" Value="{StaticResource LibraryHover}"/>
+    </Style>
+    <Style Selector="Button.library-row:focus-visible">
+      <Setter Property="BorderBrush" Value="{StaticResource LibraryAccent}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+    </Style>
+    <Style Selector="TextBlock.column-label">
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="Foreground" Value="{StaticResource LibrarySubtext}"/>
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="Margin" Value="10,0"/>
+    </Style>
+    <Style Selector="TextBlock.row-cell">
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="Foreground" Value="{StaticResource LibrarySubtext}"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Margin" Value="9,0"/>
+    </Style>
+  </Window.Styles>
+
+  <Grid>
+  <!-- Library and Watch are dark; Native video host remains isolated. -->
+  <ThemeVariantScope RequestedThemeVariant="Dark">
+    <Grid x:Name="LibraryPage" RowDefinitions="Auto,*"
+          IsVisible="True" DragDrop.AllowDrop="True"
+          Background="{StaticResource LibraryCanvas}">
+
+      <Border Grid.Row="0" Background="{StaticResource LibrarySurface}" BorderBrush="{StaticResource LibraryBorder}"
+              BorderThickness="0,0,0,1" Padding="23,12" MinHeight="64">
+        <Grid ColumnDefinitions="210,*,Auto" ColumnSpacing="16">
+          <StackPanel VerticalAlignment="Center" Spacing="2">
+            <TextBlock Text="LAPIS" FontWeight="SemiBold" FontSize="20"
+                       LetterSpacing="3" Foreground="{StaticResource LibraryText}"/>
+            <TextBlock Text="YOUR PERSONAL CINEMA" FontSize="9"
+                       Foreground="#8191A5" LetterSpacing="1"/>
+          </StackPanel>
+          <TextBlock Grid.Column="1" Text="Cinema Library" FontSize="15"
+                     FontWeight="Medium" HorizontalAlignment="Center"
+                     VerticalAlignment="Center" Foreground="{StaticResource LibraryText}"/>
+          <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8"
+                      VerticalAlignment="Center">
+            <Button Classes="subtle-action" Content="匯入影片"
+                    Click="ImportFiles_Click"/>
+            <Button Classes="accent-action" Content="＋ 匯入 Blu-ray"
+                    Click="ImportDisc_Click"/>
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <Grid Grid.Row="1" ColumnDefinitions="208,*">
+        <Border Background="{StaticResource LibrarySurface}" BorderBrush="{StaticResource LibraryBorder}"
+                BorderThickness="0,0,1,0" Grid.Column="0">
+          <Grid x:Name="LibraryNavigationHost">
+          <StackPanel Margin="14,24,14,18" Spacing="5">
+            <TextBlock Text="收藏庫" Classes="sidebar-section" Margin="11,0,0,11"/>
+            <Button x:Name="NavigationAll" Classes="library-nav" Classes.selected="{Binding IsAllCategory}"
+                    Content="▦   所有收藏" Click="ShowAll_Click"/>
+            <Button x:Name="NavigationBluRay" Classes="library-nav" Classes.selected="{Binding IsBluRayCategory}"
+                    Content="▤   Blu-ray 光碟" Click="ShowDiscs_Click"/>
+            <Button x:Name="NavigationVideos" Classes="library-nav" Classes.selected="{Binding IsVideoCategory}"
+                    Content="▷   本機影片" Click="ShowVideos_Click"/>
+            <Border Height="1" Background="{StaticResource LibraryBorder}" Margin="6,19,6,16"/>
+            <TextBlock Text="快速存取" Classes="sidebar-section" Margin="11,0,0,10"/>
+            <Button x:Name="NavigationRecent" Classes="library-nav"
+                    Classes.selected="{Binding IsRecentlyAddedCategory}"
+                    Content="◷   最近加入" Click="ShowRecentlyAdded_Click"/>
+            <Border Height="1" Background="{StaticResource LibraryBorder}" Margin="6,19,6,16"/>
+            <TextBlock Text="匯入" Classes="sidebar-section" Margin="11,0,0,10"/>
+            <TextBlock Text="使用右上角按鈕或拖曳影片、BDMV 資料夾匯入。"
+                       Foreground="{StaticResource LibrarySubtext}"
+                       Margin="11,0" FontSize="11" TextWrapping="Wrap"/>
+            <Border Height="1" Background="{StaticResource LibraryBorder}" Margin="6,20,6,10"/>
+            <TextBlock Text="{Binding CountText}" Margin="11,5"
+                       FontSize="11" Foreground="{StaticResource LibrarySubtext}" TextWrapping="Wrap"/>
+            <TextBlock Text="僅建立收藏索引，不搬移原始影片。" Margin="11,3"
+                       FontSize="11" Foreground="#8191A5" TextWrapping="Wrap"/>
+          </StackPanel>
+          <!-- One compositor-driven selection marker, not one per button. -->
+          <Canvas IsHitTestVisible="False" ZIndex="2">
+            <Border x:Name="LibraryNavigationIndicator" Width="3" Height="27"
+                    Canvas.Left="16" Canvas.Top="0" CornerRadius="2"
+                    Background="{StaticResource LibraryAccent}"/>
+          </Canvas>
+          </Grid>
+        </Border>
+
+        <Grid Grid.Column="1" Margin="32,30,32,16"
+              RowDefinitions="Auto,Auto,*,Auto" RowSpacing="18">
+          <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="16">
+            <StackPanel Spacing="6">
+              <TextBlock x:Name="LibraryCurrentHeading" Text="{Binding CurrentFilterLabel}" FontSize="34"
+                         FontWeight="SemiBold" Foreground="{StaticResource LibraryText}"/>
+              <TextBlock Text="{Binding ResultText}" FontSize="12"
+                         Foreground="{StaticResource LibrarySubtext}"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7"
+                        VerticalAlignment="Bottom">
+              <Button Classes="view-button" Classes.active="{Binding IsGridView}"
+                      Content="▦" Click="ShowGrid_Click"
+                      ToolTip.Tip="封面格狀檢視" AutomationProperties.Name="格狀檢視"/>
+              <Button Classes="view-button" Classes.active="{Binding IsListView}"
+                      Content="☷" Click="ShowList_Click"
+                      ToolTip.Tip="清單檢視" AutomationProperties.Name="清單檢視"/>
+              <ComboBox ItemsSource="{Binding SortOptions}"
+                        SelectedItem="{Binding SelectedSort, Mode=TwoWay}"
+                        Width="134" Height="35" Margin="10,0,0,0">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding Label}" FontSize="12"/>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <TextBox Text="{Binding SearchText, Mode=TwoWay}"
+                       Watermark="搜尋名稱或來源路徑" Width="228" Height="35"
+                       Background="{StaticResource LibrarySurface}" BorderBrush="{StaticResource LibraryBorder}"
+                       CornerRadius="6"/>
+            </StackPanel>
+          </Grid>
+
+          <Border Grid.Row="1" Background="{StaticResource LibraryBorder}" Height="1"/>
+
+          <Grid Grid.Row="2" x:Name="LibraryContentArea">
+            <Border IsVisible="{Binding IsEmpty}" Background="{StaticResource LibrarySurface}"
+                    BorderBrush="{StaticResource LibraryBorder}" BorderThickness="1" CornerRadius="9"
+                    Padding="52" VerticalAlignment="Top">
+              <StackPanel Spacing="11" HorizontalAlignment="Center">
+                <TextBlock Text="收藏庫目前沒有影片" FontSize="20"
+                           FontWeight="Medium" HorizontalAlignment="Center"/>
+                <TextBlock Text="把影片、Blu-ray 根目錄或 BDMV 資料夾拖到視窗，或使用右上角匯入按鈕。"
+                           Foreground="#A7B3C0" TextWrapping="Wrap"
+                           HorizontalAlignment="Center" TextAlignment="Center"/>
+                <Button Content="＋ 匯入 Blu-ray" Classes="accent-action"
+                        Click="ImportDisc_Click" HorizontalAlignment="Center"
+                        Margin="0,12,0,0"/>
+              </StackPanel>
+            </Border>
+
+            <TextBlock Text="沒有符合條件的收藏，請調整搜尋或篩選。"
+                       IsVisible="{Binding HasNoResults}" Margin="4,18"
+                       FontSize="14" Foreground="#95A7B9"/>
+
+            <ScrollViewer x:Name="LibraryGridSurface" IsVisible="{Binding IsGridView}"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+              <ItemsControl ItemsSource="{Binding VisibleItems}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <WrapPanel Orientation="Horizontal"/>
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Button Classes="library-card" Click="PlayLibraryItem_Click"
+                            PointerEntered="LibraryItem_PointerEntered"
+                            PointerExited="LibraryItem_PointerExited"
+                            CommandParameter="{Binding}" Margin="0,0,20,24">
+                      <Button.ContextMenu>
+                        <ContextMenu>
+                          <MenuItem Header="▶  播放" Click="ContextPlay_Click"
+                                    CommandParameter="{Binding}"/>
+                          <Separator/>
+                          <MenuItem Header="在檔案總管中顯示" Click="ContextReveal_Click"
+                                    CommandParameter="{Binding}"/>
+                          <MenuItem Header="複製來源路徑" Click="ContextCopyPath_Click"
+                                    CommandParameter="{Binding}"/>
+                          <MenuItem Header="檢視來源資訊" Click="ContextDetails_Click"
+                                    CommandParameter="{Binding}"/>
+                          <Separator/>
+                          <MenuItem Header="從收藏庫移除（保留檔案）"
+                                    Click="ContextRemove_Click"
+                                    CommandParameter="{Binding}"/>
+                        </ContextMenu>
+                      </Button.ContextMenu>
+                      <StackPanel Width="272" Spacing="7">
+                        <Border Width="272" Height="153" CornerRadius="5"
+                                Background="#1A2735" BorderBrush="{StaticResource LibraryBorder}"
+                                BorderThickness="1" ClipToBounds="True">
+                          <Grid RowDefinitions="Auto,*,Auto">
+                            <Image Grid.RowSpan="3" Source="{Binding Poster}"
+                                   IsVisible="{Binding HasPoster}" Stretch="Uniform"/>
+                            <TextBlock Grid.Row="1" Text="L"
+                                       IsVisible="{Binding ShowPlaceholder}"
+                                       FontSize="68" FontWeight="Light"
+                                       Foreground="#536578"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"/>
+                            <Border Grid.Row="0" HorizontalAlignment="Left"
+                                    Margin="9" Background="#DA162534"
+                                    CornerRadius="3" Padding="7,3">
+                              <TextBlock Text="{Binding KindLabel}"
+                                         Foreground="#E0ECF3" FontSize="9"
+                                         FontWeight="SemiBold"/>
+                            </Border>
+                            <Border Grid.Row="2" Margin="9" Padding="9,5"
+                                    HorizontalAlignment="Right"
+                                    Background="#E019303D" CornerRadius="5">
+                              <TextBlock Text="▶ 播放" FontSize="11"
+                                         FontWeight="SemiBold" Foreground="#EAF5FA"/>
+                            </Border>
+                          </Grid>
+                        </Border>
+                        <TextBlock Text="{Binding Title}" FontSize="14"
+                                   FontWeight="Medium" Foreground="{StaticResource LibraryText}"
+                                   TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="{Binding AvailabilityLabel}"
+                                   Foreground="{StaticResource LibrarySubtext}" FontSize="11"
+                                   TextTrimming="CharacterEllipsis"/>
+                      </StackPanel>
+                    </Button>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+
+            <Border x:Name="LibraryListSurface" IsVisible="{Binding IsListView}"
+                    Background="{StaticResource LibrarySurface}" BorderBrush="{StaticResource LibraryBorder}"
+                    BorderThickness="1" CornerRadius="6">
+              <Grid RowDefinitions="42,*">
+                <Grid ColumnDefinitions="70,2*,122,2*,132,110"
+                      Background="#1B2531">
+                  <TextBlock Grid.Column="0" Text="#" Classes="column-label"/>
+                  <TextBlock Grid.Column="1" Text="片名" Classes="column-label"/>
+                  <TextBlock Grid.Column="2" Text="類型" Classes="column-label"/>
+                  <TextBlock Grid.Column="3" Text="來源" Classes="column-label"/>
+                  <TextBlock Grid.Column="4" Text="加入日期" Classes="column-label"/>
+                  <TextBlock Grid.Column="5" Text="狀態" Classes="column-label"/>
+                </Grid>
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Auto">
+                  <ItemsControl ItemsSource="{Binding VisibleItems}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Button Classes="library-row" Click="PlayLibraryItem_Click"
+                                PointerEntered="LibraryItem_PointerEntered"
+                                PointerExited="LibraryItem_PointerExited"
+                                CommandParameter="{Binding}">
+                          <Button.ContextMenu>
+                            <ContextMenu>
+                              <MenuItem Header="▶  播放" Click="ContextPlay_Click"
+                                        CommandParameter="{Binding}"/>
+                              <Separator/>
+                              <MenuItem Header="在檔案總管中顯示"
+                                        Click="ContextReveal_Click" CommandParameter="{Binding}"/>
+                              <MenuItem Header="複製來源路徑"
+                                        Click="ContextCopyPath_Click" CommandParameter="{Binding}"/>
+                              <MenuItem Header="檢視來源資訊"
+                                        Click="ContextDetails_Click" CommandParameter="{Binding}"/>
+                              <Separator/>
+                              <MenuItem Header="從收藏庫移除（保留檔案）"
+                                        Click="ContextRemove_Click" CommandParameter="{Binding}"/>
+                            </ContextMenu>
+                          </Button.ContextMenu>
+                          <Grid ColumnDefinitions="70,2*,122,2*,132,110"
+                                Height="59">
+                            <Border Grid.Column="0" Width="55" Height="32"
+                                    Background="#253444" CornerRadius="3"
+                                    VerticalAlignment="Center"
+                                    HorizontalAlignment="Left" Margin="9,0">
+                              <Image Source="{Binding Poster}" Stretch="Uniform"/>
+                            </Border>
+                            <TextBlock Grid.Column="1" Text="{Binding Title}"
+                                       Classes="row-cell" FontWeight="Medium"
+                                       TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Grid.Column="2" Text="{Binding KindLabel}"
+                                       Classes="row-cell" FontSize="11"/>
+                            <TextBlock Grid.Column="3" Text="{Binding SourcePath}"
+                                       Classes="row-cell" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Grid.Column="4" Text="{Binding ImportedAtText}"
+                                       Classes="row-cell"/>
+                            <TextBlock Grid.Column="5" Text="{Binding AvailabilityLabel}"
+                                       Classes="row-cell" FontSize="11"
+                                       TextTrimming="CharacterEllipsis"/>
+                          </Grid>
+                        </Button>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
+              </Grid>
+            </Border>
+          </Grid>
+          <Grid Grid.Row="3" ColumnDefinitions="*,Auto">
+            <TextBlock Text="{Binding StatusText}" FontSize="11" Foreground="#91A1B1"
+                       TextTrimming="CharacterEllipsis"/>
+            <TextBlock Grid.Column="1" Text="右鍵可檢視來源、複製路徑或移出收藏"
+                       FontSize="11" Foreground="#788A9B"/>
+          </Grid>
+        </Grid>
+      </Grid>
+      <!-- Non-interactive drag preview over the entire library surface.
+           Do not overlay NativeControlHost; drop only indexes the catalog. -->
+      <Grid x:Name="LibraryDropOverlay" Grid.RowSpan="2" ZIndex="100"
+            Background="#E80A121B" IsVisible="False"
+            IsHitTestVisible="False">
+        <Border BorderBrush="{StaticResource LibraryAccent}"
+                BorderThickness="2" CornerRadius="14" Margin="24"
+                Background="#D7172836">
+          <StackPanel VerticalAlignment="Center"
+                      HorizontalAlignment="Center" Spacing="14">
+            <TextBlock Text="＋" FontSize="50" Foreground="{StaticResource LibraryAccent}"
+                       HorizontalAlignment="Center"/>
+            <TextBlock Text="拖曳到這裡，加入收藏庫" FontSize="25"
+                       FontWeight="SemiBold" Foreground="{StaticResource LibraryText}"
+                       HorizontalAlignment="Center"/>
+            <TextBlock Text="影片檔案 · 完整 Blu-ray 光碟根目錄 · BDMV 資料夾"
+                       FontSize="13" Foreground="{StaticResource LibrarySubtext}"
+                       HorizontalAlignment="Center"/>
+            <TextBlock Text="只建立索引，不複製檔案、不會立即播放"
+                       FontSize="12" Foreground="{StaticResource LibraryAccent}"
+                       HorizontalAlignment="Center"/>
+          </StackPanel>
+        </Border>
+      </Grid>
+    </Grid>
+  </ThemeVariantScope>
+
+  <!-- WATCH is opened only after explicitly selecting a library item.
+       NativeControlHost cannot be covered with alpha overlays. -->
+  <Grid x:Name="PlayerPage" IsVisible="False" RowDefinitions="Auto,*,Auto,Auto"
+        ColumnDefinitions="*,Auto" Margin="17" RowSpacing="12" ColumnSpacing="13">
+    <Border Grid.Row="0" Grid.ColumnSpan="2" Background="#141D2C"
+            CornerRadius="13" Padding="12">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <Button Content="← 返回收藏庫" Click="BackToLibrary_Click"
+                Background="#263651" Foreground="#E4EDF9" Padding="18,10"
+                CornerRadius="9"/>
+        <TextBlock Grid.Column="1" Text="{Binding MediaTitle}" FontSize="17"
+                   Foreground="#ECF2FA" VerticalAlignment="Center"
+                   Margin="20,0" TextTrimming="CharacterEllipsis"/>
+        <TextBlock Grid.Column="2" Text="LAPIS / WATCH" VerticalAlignment="Center"
+                   Foreground="#8198B6" FontSize="11" Margin="12"/>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1" Grid.Column="0" Background="#030508"
+            CornerRadius="12" BorderBrush="#24334A" BorderThickness="1"
+            ClipToBounds="True">
+      <video:WindowsVideoSurface x:Name="VideoSurface"/>
+    </Border>
+
+    <Border Grid.Row="1" Grid.Column="1" x:Name="DiscMenuPanel"
+            Width="286" IsVisible="False" Background="#161F2E"
+            CornerRadius="12" Padding="17">
+      <ScrollViewer>
+        <StackPanel Spacing="12">
+          <TextBlock Text="BLU-RAY DISC" Foreground="#91B9F2"
+                     FontSize="11" FontWeight="Bold"/>
+          <TextBlock Text="光碟導覽" FontSize="22" FontWeight="SemiBold"/>
+          <TextBlock Text="目前預設播放主影片。光碟 Playlist 檔案列於下方；切換 Title / Playlist / Chapter、原始選單及 BD-J 需要後續 Native 導覽整合。"
+                     Foreground="#9FB1CA" FontSize="12" TextWrapping="Wrap"
+                     LineHeight="20"/>
+          <Border Height="1" Background="#34445A" Margin="0,5"/>
+          <TextBlock Text="PLAYLIST / MPLS 索引" FontSize="12"
+                     Foreground="#D3E2F7" FontWeight="SemiBold"/>
+          <ItemsControl x:Name="DiscPlaylistList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Background="#21304A" CornerRadius="6"
+                        Padding="10,7" Margin="0,0,0,5">
+                  <TextBlock Text="{Binding}" Foreground="#D0DFF2" FontSize="12"/>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock Text="僅顯示檔名索引，不代表已解析或可切換播放。"
+                     FontSize="11" Foreground="#7F92B0" TextWrapping="Wrap"/>
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+
+    <Border Grid.Row="2" Grid.Column="0" Background="#151E2C"
+            CornerRadius="12" Padding="14">
+      <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="10">
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Text="{Binding PositionText}" Foreground="#B8CDE6"
+                     FontSize="13"/>
+          <TextBlock Grid.Column="1" Text="{Binding TransportText}"
+                     Foreground="#9EC9FF" FontSize="12"/>
+        </Grid>
+        <Slider x:Name="PlaybackTimeline" Grid.Row="1" Minimum="0"
+                Maximum="{Binding SeekDurationSeconds}"
+                Value="{Binding SeekPositionSeconds, Mode=TwoWay}"
+                IsEnabled="{Binding CanScrub}" TickFrequency="1"
+                IsSnapToTickEnabled="False"
+                AutomationProperties.Name="播放進度時間軸"/>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="11">
+          <Button Content="◀ 10 秒" Command="{Binding BackCommand}"
+                  IsEnabled="{Binding CanSeek}" MinWidth="88"/>
+          <Button Content="{Binding PlayPauseLabel}" Command="{Binding ToggleCommand}"
+                  IsEnabled="{Binding CanTransport}" MinWidth="120"
+                  Background="#2D456A" Foreground="#EAF3FF"/>
+          <Button Content="10 秒 ▶" Command="{Binding ForwardCommand}"
+                  IsEnabled="{Binding CanSeek}" MinWidth="88"/>
+          <Button Content="停止" Command="{Binding StopCommand}"
+                  IsEnabled="{Binding CanTransport}" MinWidth="75"/>
+          <TextBlock Text="劇院播放 · D3D11 原生輸出"
+                     VerticalAlignment="Center" Foreground="#829BB8"
+                     Margin="14,0,0,0" FontSize="11"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+    <Border Grid.Row="3" Grid.ColumnSpan="2" Background="#101826"
+            CornerRadius="9" Padding="12,9">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Text="{Binding StatusText}" Foreground="#BACBE0"
+                   TextTrimming="CharacterEllipsis" FontSize="12"/>
+        <TextBlock Grid.Column="1" Text="AI 雙字幕 / BD-J 選單 · 尚待整合"
+                   Foreground="#8198B5" FontSize="11"/>
+      </Grid>
+    </Border>
+  </Grid>
+  </Grid>
+</Window>

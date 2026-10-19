@@ -28,13 +28,17 @@ struct VideoRenderStats final {
     std::uint64_t stale_epoch_drops{};
     std::uint64_t inactive_clock_drops{};
     std::uint64_t presenter_failures{};
+    std::uint64_t recovery_attempts{};
+    std::uint64_t recovery_bind_successes{};
+    std::uint64_t recovered_presents{};
 };
 
 class VideoRenderWorker final {
 public:
     VideoRenderWorker(
         PlaybackClock& clock,
-        std::unique_ptr<IVideoPresenter> presenter);
+        std::unique_ptr<IVideoPresenter> presenter,
+        std::shared_ptr<DiagnosticEventJournal> journal = nullptr);
     ~VideoRenderWorker();
 
     VideoRenderWorker(const VideoRenderWorker&) = delete;
@@ -51,6 +55,12 @@ public:
     }
 
     [[nodiscard]] VideoRenderStats stats() const noexcept;
+
+    // The presenter owns thread-safe cumulative DXGI counters and the last
+    // HRESULT; reading never calls graphics methods off the render thread.
+    [[nodiscard]] VideoPresenterDiagnostics presenter_diagnostics() const noexcept {
+        return presenter_->diagnostics();
+    }
 
     [[nodiscard]] VideoPresenterBeginStatus last_begin_status() const noexcept {
         return last_begin_status_.load(std::memory_order_acquire);
@@ -80,6 +90,7 @@ private:
 
     PlaybackClock& clock_;
     std::unique_ptr<IVideoPresenter> presenter_;
+    std::shared_ptr<DiagnosticEventJournal> journal_;
     std::atomic<VideoRenderWorkerState> state_{VideoRenderWorkerState::Idle};
     std::atomic<VideoPresenterBeginStatus> last_begin_status_{
         VideoPresenterBeginStatus::Ready
@@ -94,6 +105,9 @@ private:
     std::atomic<std::uint64_t> stale_epoch_drops_{};
     std::atomic<std::uint64_t> inactive_clock_drops_{};
     std::atomic<std::uint64_t> presenter_failures_{};
+    std::atomic<std::uint64_t> recovery_attempts_{};
+    std::atomic<std::uint64_t> recovery_bind_successes_{};
+    std::atomic<std::uint64_t> recovered_presents_{};
 
     mutable std::mutex lifecycle_mutex_;
     std::mutex surface_command_mutex_;

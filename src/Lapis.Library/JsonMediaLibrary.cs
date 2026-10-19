@@ -1,0 +1,110 @@
+using System.Text.Json;
+using Lapis.Contracts.Media;
+
+namespace Lapis.Library;
+
+/// <summary>
+/// Local single-process v1 catalog. Durable atomic same-volume replace keeps
+/// a failed write from silently truncating the existing library.
+/// IMediaLibrary permits a future SQLite adapter without UI or player changes.
+/// </summary>
+public sealed class JsonMediaLibrary(string catalogFilePath) : IMediaLibrary
+{
+    private const int SchemaVersion = 1;
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true
+    };
+    private static readonly StringComparer PathComparer =
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+    private readonly string _path = Path.GetFullPath(catalogFilePath);
+    private readonly SemaphoreSlim _gate = new(1, 1);
+
+    public async Task<IReadOnlyList<MediaLibraryItem>> ListAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try { return (await ReadAsync(cancellationToken)).Items.ToArray(); }
+        finally { _gate.Release(); }
+    }
+
+    public async Task<MediaLibraryItem> ImportAsync(
+        MediaLocator locator, CancellationToken cancellationToken = default)
+    {
+        var source = LibrarySourcePaths.Normalize(locator);
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var catalog = await ReadAsync(cancellationToken);
+            var existing = catalog.Items.FirstOrDefault(item =>
+                item.Kind == source.Kind && PathComparer.Equals(item.SourcePath, source.Value));
+            if (existing is not null) return existing;
+
+            var title = Path.GetFileName(source.Value);
+            if (source.Kind == MediaLocatorKind.File)
+                title = Path.GetFileNameWithoutExtension(source.Value);
+            if (string.IsNullOrWhiteSpace(title)) title = source.Value;
+            var imported = new MediaLibraryItem(
+                Guid.NewGuid(), source.Kind, source.Value, title, DateTimeOffset.UtcNow);
+            catalog.Items.Add(imported);
+            await SaveAsync(catalog, cancellationToken);
+            return imported;
+        }
+        finally { _gate.Release(); }
+    }
+
+    public async Task<bool> RemoveAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var catalog = await ReadAsync(cancellationToken);
+            if (catalog.Items.RemoveAll(item => item.Id == id) == 0) return false;
+            await SaveAsync(catalog, cancellationToken);
+            return true;
+        }
+        finally { _gate.Release(); }
+    }
+
+    private async Task<Catalog> ReadAsync(CancellationToken ct)
+    {
+        if (!File.Exists(_path)) return new Catalog(SchemaVersion, []);
+        try
+        {
+            await using var file = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.Read,
+                bufferSize: 4096, useAsync: true);
+            var data = await JsonSerializer.DeserializeAsync<Catalog>(file, JsonOptions, ct);
+            if (data is null || data.Version != SchemaVersion || data.Items is null)
+                throw new InvalidDataException("收藏庫資料版本不相容，沒有覆寫原始資料。");
+            return data;
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidDataException("收藏庫資料損壞，沒有覆寫原始資料。", exception);
+        }
+    }
+
+    private async Task SaveAsync(Catalog catalog, CancellationToken ct)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        var temp = _path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await using (var file = new FileStream(temp, FileMode.CreateNew,
+                FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true))
+            {
+                await JsonSerializer.SerializeAsync(file, catalog, JsonOptions, ct);
+                await file.FlushAsync(ct);
+                file.Flush(flushToDisk: true);
+            }
+            ct.ThrowIfCancellationRequested();
+            File.Move(temp, _path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temp)) File.Delete(temp);
+        }
+    }
+
+    private sealed record Catalog(int Version, List<MediaLibraryItem> Items);
+}

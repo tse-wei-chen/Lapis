@@ -1,5 +1,6 @@
 #include "execution/playback_execution.hpp"
 
+#include "core/execution_graph_plan.hpp"
 #include "core/monotonic_time.hpp"
 #include "session/playback_media_session.hpp"
 
@@ -22,14 +23,16 @@ PlaybackExecution::PlaybackExecution(
     PlaybackMediaSession& media,
     std::unique_ptr<IVideoFrameProcessor> processor,
     std::unique_ptr<IVideoPresenter> presenter,
-    PlaybackExecutionConfig config)
+    PlaybackExecutionConfig config,
+    std::shared_ptr<DiagnosticEventJournal> journal)
     : PlaybackExecution(
           media,
           std::move(processor),
           std::move(presenter),
           nullptr,
           {},
-          config) {}
+          config,
+          std::move(journal)) {}
 
 PlaybackExecution::PlaybackExecution(
     PlaybackMediaSession& media,
@@ -37,7 +40,8 @@ PlaybackExecution::PlaybackExecution(
     std::unique_ptr<IVideoPresenter> presenter,
     std::unique_ptr<IAudioOutputProvider> audio_output_provider,
     AudioFrameProcessorFactory audio_processor_factory,
-    PlaybackExecutionConfig config)
+    PlaybackExecutionConfig config,
+    std::shared_ptr<DiagnosticEventJournal> journal)
     : media_(media),
       decoder_(media_, config.decode_queue_capacity),
       processor_(std::move(processor), config.process_queue_capacity),
@@ -45,7 +49,7 @@ PlaybackExecution::PlaybackExecution(
           clock_,
           config.scheduler,
           config.presentation_queue_capacity),
-      renderer_(clock_, std::move(presenter)),
+      renderer_(clock_, std::move(presenter), std::move(journal)),
       audio_decoder_(media_, config.audio_decode_queue_capacity),
       audio_output_provider_(std::move(audio_output_provider)),
       audio_processor_factory_(std::move(audio_processor_factory)),
@@ -302,6 +306,7 @@ PlaybackExecutionSnapshot PlaybackExecution::snapshot() const {
     result.render_state = renderer_.state();
     result.scheduling = scheduler_.stats();
     result.rendering = renderer_.stats();
+    result.presenter_diagnostics = renderer_.presenter_diagnostics();
     result.audio_decode_state = audio_decoder_.state();
     if (audio_processor_ != nullptr) {
         result.audio_process_state = audio_processor_->state();
@@ -317,6 +322,11 @@ PlaybackExecutionSnapshot PlaybackExecution::snapshot() const {
         result.audio_clock_sync = audio_clock_sync_->stats();
     }
     return result;
+}
+
+std::optional<GraphPlan> PlaybackExecution::active_graph_plan() const {
+    std::scoped_lock lock(control_mutex_);
+    return active_graph_plan_;
 }
 
 PlaybackExecutionResult PlaybackExecution::fault_unlocked(
@@ -411,18 +421,29 @@ bool PlaybackExecution::workers_drained_unlocked() const noexcept {
 }
 
 bool PlaybackExecution::start_generation_unlocked(PlaybackEpoch epoch) {
-    if (video_generation_active_ || audio_generation_active_) {
+    if (video_generation_active_ || audio_generation_active_ ||
+        active_graph_plan_.has_value()) {
         return false;
     }
 
-    const bool use_video = media_.has_video();
     const bool audio_configured =
         audio_output_provider_ != nullptr &&
         static_cast<bool>(audio_processor_factory_);
-    const bool use_audio = media_.has_audio() && audio_configured;
-    if (!use_video && !use_audio) {
+
+    // Source discovery is not the executable topology: audio decoding may be
+    // available but the product has no configured output consumer. Compile the
+    // selected branches before allocating output resources or starting workers.
+    const auto* discovered = media_.graph_plan();
+    if (discovered == nullptr) {
         return false;
     }
+    auto execution_plan = compile_execution_graph(
+        *discovered, {media_.has_video(), media_.has_audio() && audio_configured});
+    if (!execution_plan.has_value()) {
+        return false;
+    }
+    const bool use_video = execution_plan->contains(GraphNodeKind::VideoSink);
+    const bool use_audio = execution_plan->contains(GraphNodeKind::AudioSink);
 
     try {
         if (use_audio) {
@@ -484,6 +505,9 @@ bool PlaybackExecution::start_generation_unlocked(PlaybackEpoch epoch) {
             pending_audio_render_stream_ = std::move(audio_processed);
         }
 
+        // Commit only after every selected worker generation was prepared.
+        // Seek/Close will retire this plan after stopping all its workers.
+        active_graph_plan_.emplace(std::move(*execution_plan));
         return true;
     } catch (...) {
         try {
@@ -604,6 +628,7 @@ void PlaybackExecution::stop_generation_unlocked() {
     audio_processor_.reset();
     audio_generation_active_ = false;
     video_generation_active_ = false;
+    active_graph_plan_.reset();
 }
 
 } // namespace lapis::media

@@ -13,6 +13,9 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <cstdio>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -25,17 +28,16 @@ namespace {
 
 using Microsoft::WRL::ComPtr;
 
-// Vertexless fullscreen triangle: no input-layout or vertex-buffer ownership.
 constexpr char vertex_shader_source[] = R"(
+struct Input {
+    float2 position : POSITION;
+};
 struct Output {
     float4 position : SV_POSITION;
-    float2 uv : TEXCOORD0;
 };
-Output main(uint id : SV_VertexID) {
-    float2 uv = float2((id << 1) & 2, id & 2);
+Output main(Input input) {
     Output o;
-    o.position = float4(uv.x * 2.0f - 1.0f, 1.0f - uv.y * 2.0f, 0.0f, 1.0f);
-    o.uv = uv;
+    o.position = float4(input.position, 0.0f, 1.0f);
     return o;
 }
 )";
@@ -43,10 +45,27 @@ Output main(uint id : SV_VertexID) {
 constexpr char pixel_shader_source[] = R"(
 Texture2D video_frame : register(t0);
 SamplerState linear_sampler : register(s0);
-float4 main(float2 uv : TEXCOORD0) : SV_TARGET {
+cbuffer ViewportConstants : register(b0) {
+    float4 video_viewport;
+};
+float4 main(float4 position : SV_POSITION) : SV_TARGET {
+    float2 uv = (position.xy - video_viewport.xy) / video_viewport.zw;
     return video_frame.Sample(linear_sampler, uv);
 }
 )";
+
+struct VideoVertex final {
+    float position[2];
+};
+
+constexpr std::array<VideoVertex, 6> video_vertices{{
+    {{-1.0f, 1.0f}},
+    {{1.0f, 1.0f}},
+    {{-1.0f, -1.0f}},
+    {{-1.0f, -1.0f}},
+    {{1.0f, 1.0f}},
+    {{1.0f, -1.0f}}
+}};
 
 [[nodiscard]] bool device_removed(HRESULT hr) noexcept {
     return hr == DXGI_ERROR_DEVICE_REMOVED ||
@@ -60,11 +79,49 @@ float4 main(float2 uv : TEXCOORD0) : SV_TARGET {
         : VideoPresentStatus::Failed;
 }
 
+[[nodiscard]] const char* failure_stage_name(
+    VideoPresenterFailureStage stage) noexcept {
+    switch (stage) {
+        case VideoPresenterFailureStage::DeviceCreation: return "device_create";
+        case VideoPresenterFailureStage::AdapterDiscovery: return "adapter_lookup";
+        case VideoPresenterFailureStage::WindowQuery: return "window_query";
+        case VideoPresenterFailureStage::SwapChainCreation: return "swapchain_create";
+        case VideoPresenterFailureStage::RenderTargetCreation: return "render_target";
+        case VideoPresenterFailureStage::ShaderCreation: return "shader_create";
+        case VideoPresenterFailureStage::ResizeBuffers: return "swapchain_resize";
+        case VideoPresenterFailureStage::TextureUpload: return "texture_upload";
+        case VideoPresenterFailureStage::TextureMap: return "texture_map";
+        case VideoPresenterFailureStage::Present: return "present";
+        case VideoPresenterFailureStage::None: return "none";
+    }
+    return "unknown";
+}
+
 } // namespace
 
 class D3D11VideoPresenter::Impl final {
 public:
     ~Impl() { release(); }
+
+    void set_journal(std::shared_ptr<DiagnosticEventJournal> journal) noexcept {
+        journal_ = std::move(journal);
+    }
+
+    void set_epoch(std::uint64_t epoch) noexcept {
+        current_epoch_.store(epoch, std::memory_order_relaxed);
+    }
+
+    [[nodiscard]] VideoPresenterDiagnostics diagnostics() const noexcept {
+        return {
+            device_creations_.load(std::memory_order_relaxed),
+            swap_chain_creations_.load(std::memory_order_relaxed),
+            swap_chain_resizes_.load(std::memory_order_relaxed),
+            device_loss_events_.load(std::memory_order_relaxed),
+            last_hresult_.load(std::memory_order_relaxed),
+            last_removed_reason_.load(std::memory_order_relaxed),
+            last_stage_.load(std::memory_order_acquire)
+        };
+    }
 
     [[nodiscard]] VideoOutputSurfaceApplyStatus bind(
         VideoOutputSurfaceDescriptor surface) {
@@ -89,6 +146,9 @@ public:
         // This is called only on the worker's rendering thread, never the UI.
         release();
         if (!IsWindow(next_hwnd)) {
+            record_failure(
+                VideoPresenterFailureStage::WindowQuery,
+                HRESULT_FROM_WIN32(ERROR_INVALID_WINDOW_HANDLE));
             return VideoOutputSurfaceApplyStatus::Unavailable;
         }
 
@@ -109,6 +169,9 @@ public:
         render_target_.Reset();
         swap_chain_.Reset();
         sampler_.Reset();
+        vertex_buffer_.Reset();
+        viewport_buffer_.Reset();
+        input_layout_.Reset();
         pixel_shader_.Reset();
         vertex_shader_.Reset();
         context_.Reset();
@@ -126,6 +189,9 @@ public:
             return VideoPresentStatus::Presented;
         }
         if (!IsWindow(hwnd_)) {
+            record_failure(
+                VideoPresenterFailureStage::WindowQuery,
+                HRESULT_FROM_WIN32(ERROR_INVALID_WINDOW_HANDLE));
             return VideoPresentStatus::DeviceLost;
         }
         if (frame.surface == nullptr ||
@@ -150,6 +216,9 @@ public:
 
         RECT client{};
         if (!GetClientRect(hwnd_, &client)) {
+            record_failure(
+                VideoPresenterFailureStage::WindowQuery,
+                HRESULT_FROM_WIN32(GetLastError()));
             return VideoPresentStatus::DeviceLost;
         }
         if (client.right <= client.left || client.bottom <= client.top) {
@@ -168,6 +237,7 @@ public:
 
         const auto texture_hr = ensure_upload(source->width(), source->height());
         if (FAILED(texture_hr)) {
+            record_failure(VideoPresenterFailureStage::TextureUpload, texture_hr);
             return failed_present(texture_hr);
         }
 
@@ -175,6 +245,7 @@ public:
         const auto map_hr = context_->Map(
             upload_texture_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
         if (FAILED(map_hr)) {
+            record_failure(VideoPresenterFailureStage::TextureMap, map_hr);
             return failed_present(map_hr);
         }
 
@@ -210,8 +281,31 @@ public:
             0.0f,
             1.0f
         };
+        D3D11_MAPPED_SUBRESOURCE mapped_viewport{};
+        const auto viewport_map_hr = context_->Map(
+            viewport_buffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0,
+            &mapped_viewport);
+        if (FAILED(viewport_map_hr)) {
+            record_failure(
+                VideoPresenterFailureStage::TextureMap, viewport_map_hr);
+            return failed_present(viewport_map_hr);
+        }
+        const std::array<float, 4> viewport_values{
+            viewport.TopLeftX, viewport.TopLeftY,
+            viewport.Width, viewport.Height
+        };
+        std::memcpy(
+            mapped_viewport.pData, viewport_values.data(),
+            sizeof(viewport_values));
+        context_->Unmap(viewport_buffer_.Get(), 0);
+
         context_->RSSetViewports(1, &viewport);
-        context_->IASetInputLayout(nullptr);
+        constexpr UINT vertex_stride = sizeof(VideoVertex);
+        constexpr UINT vertex_offset{};
+        ID3D11Buffer* vertex_buffer = vertex_buffer_.Get();
+        context_->IASetInputLayout(input_layout_.Get());
+        context_->IASetVertexBuffers(
+            0, 1, &vertex_buffer, &vertex_stride, &vertex_offset);
         context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         context_->VSSetShader(vertex_shader_.Get(), nullptr, 0);
         context_->PSSetShader(pixel_shader_.Get(), nullptr, 0);
@@ -219,18 +313,65 @@ public:
         ID3D11SamplerState* sampler = sampler_.Get();
         context_->PSSetShaderResources(0, 1, &view);
         context_->PSSetSamplers(0, 1, &sampler);
-        context_->Draw(3, 0);
+        ID3D11Buffer* viewport_buffer = viewport_buffer_.Get();
+        context_->PSSetConstantBuffers(0, 1, &viewport_buffer);
+        context_->Draw(static_cast<UINT>(video_vertices.size()), 0);
 
         // Unbind the input texture before reusing/replacing it on the next frame.
         ID3D11ShaderResourceView* empty_view = nullptr;
         context_->PSSetShaderResources(0, 1, &empty_view);
         const auto present_hr = swap_chain_->Present(1, 0);
+        if (FAILED(present_hr)) {
+            record_failure(VideoPresenterFailureStage::Present, present_hr);
+        }
         return SUCCEEDED(present_hr)
             ? VideoPresentStatus::Presented
             : failed_present(present_hr);
     }
 
 private:
+    // Deliberately keep counters after release() so diagnostics describe a
+    // complete playback generation, including failed resource rebuilds.
+    // All mutations except diagnostics() occur on the render thread.
+    void record_failure(
+        VideoPresenterFailureStage stage,
+        HRESULT hresult) noexcept {
+        const auto reason = device_.Get() != nullptr
+            ? device_->GetDeviceRemovedReason()
+            : S_OK;
+        if (device_removed(hresult) || device_removed(reason)) {
+            device_loss_events_.fetch_add(1, std::memory_order_relaxed);
+        }
+        last_hresult_.store(static_cast<std::uint32_t>(hresult),
+            std::memory_order_relaxed);
+        last_removed_reason_.store(static_cast<std::uint32_t>(reason),
+            std::memory_order_relaxed);
+        last_stage_.store(stage, std::memory_order_release);
+        if (journal_ != nullptr) {
+            journal_->record(current_epoch_.load(std::memory_order_relaxed),
+                DiagnosticEventKind::DeviceFailure,
+                static_cast<std::uint32_t>(stage),
+                static_cast<std::uint32_t>(hresult),
+                static_cast<std::uint32_t>(reason));
+        }
+
+        char line[224]{};
+        (void)std::snprintf(
+            line, sizeof(line),
+            "Lapis.D3D11 | stage=%s | hr=0x%08X | device_removed_reason=0x%08X"
+            " | device_creations=%llu | swap_chains=%llu | resizes=%llu\n",
+            failure_stage_name(stage),
+            static_cast<unsigned>(static_cast<std::uint32_t>(hresult)),
+            static_cast<unsigned>(static_cast<std::uint32_t>(reason)),
+            static_cast<unsigned long long>(
+                device_creations_.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                swap_chain_creations_.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                swap_chain_resizes_.load(std::memory_order_relaxed)));
+        OutputDebugStringA(line);
+    }
+
     [[nodiscard]] VideoOutputSurfaceApplyStatus initialize(HWND hwnd) {
         constexpr D3D_FEATURE_LEVEL levels[]{
             D3D_FEATURE_LEVEL_11_0,
@@ -258,7 +399,14 @@ private:
             hr = create(D3D_DRIVER_TYPE_WARP);
         }
         if (FAILED(hr)) {
+            record_failure(VideoPresenterFailureStage::DeviceCreation, hr);
             return VideoOutputSurfaceApplyStatus::Unavailable;
+        }
+        const auto devices = device_creations_.fetch_add(
+            1, std::memory_order_relaxed) + 1;
+        if (journal_ != nullptr) {
+            journal_->record(current_epoch_.load(std::memory_order_relaxed),
+                DiagnosticEventKind::DeviceCreated, 0, 0, 0, devices);
         }
 
         ComPtr<IDXGIDevice> dxgi_device;
@@ -272,11 +420,15 @@ private:
             hr = adapter->GetParent(IID_PPV_ARGS(factory.GetAddressOf()));
         }
         if (FAILED(hr)) {
+            record_failure(VideoPresenterFailureStage::AdapterDiscovery, hr);
             return VideoOutputSurfaceApplyStatus::Unavailable;
         }
 
         RECT client{};
         if (!GetClientRect(hwnd, &client)) {
+            record_failure(
+                VideoPresenterFailureStage::WindowQuery,
+                HRESULT_FROM_WIN32(GetLastError()));
             return VideoOutputSurfaceApplyStatus::Unavailable;
         }
         const auto width = static_cast<UINT>(std::max<LONG>(
@@ -300,19 +452,28 @@ private:
             device_.Get(), hwnd, &description, nullptr, nullptr,
             swap_chain_.GetAddressOf());
         if (FAILED(hr)) {
+            record_failure(VideoPresenterFailureStage::SwapChainCreation, hr);
             return VideoOutputSurfaceApplyStatus::Unavailable;
+        }
+        const auto chains = swap_chain_creations_.fetch_add(
+            1, std::memory_order_relaxed) + 1;
+        if (journal_ != nullptr) {
+            journal_->record(current_epoch_.load(std::memory_order_relaxed),
+                DiagnosticEventKind::SwapChainCreated, 0, 0, 0, chains);
         }
         // We own fullscreen policy; DXGI must not steal Alt+Enter.
         (void)factory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER);
 
         hr = create_target();
         if (FAILED(hr)) {
+            record_failure(VideoPresenterFailureStage::RenderTargetCreation, hr);
             return VideoOutputSurfaceApplyStatus::Failed;
         }
         back_width_ = width;
         back_height_ = height;
         hr = create_shaders();
         if (FAILED(hr)) {
+            record_failure(VideoPresenterFailureStage::ShaderCreation, hr);
             return VideoOutputSurfaceApplyStatus::Failed;
         }
 
@@ -337,11 +498,20 @@ private:
         const auto hr = swap_chain_->ResizeBuffers(
             0, width, height, DXGI_FORMAT_UNKNOWN, 0);
         if (FAILED(hr)) {
+            record_failure(VideoPresenterFailureStage::ResizeBuffers, hr);
             return hr;
         }
         const auto target_hr = create_target();
         if (FAILED(target_hr)) {
+            record_failure(
+                VideoPresenterFailureStage::RenderTargetCreation, target_hr);
             return target_hr;
+        }
+        const auto resizes = swap_chain_resizes_.fetch_add(
+            1, std::memory_order_relaxed) + 1;
+        if (journal_ != nullptr) {
+            journal_->record(current_epoch_.load(std::memory_order_relaxed),
+                DiagnosticEventKind::SwapChainResized, 0, 0, 0, resizes);
         }
         back_width_ = width;
         back_height_ = height;
@@ -370,6 +540,42 @@ private:
         hr = device_->CreateVertexShader(
             vertex_blob->GetBufferPointer(), vertex_blob->GetBufferSize(),
             nullptr, vertex_shader_.GetAddressOf());
+        if (FAILED(hr)) {
+            return hr;
+        }
+        constexpr D3D11_INPUT_ELEMENT_DESC input_elements[]{
+            {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0,
+                D3D11_INPUT_PER_VERTEX_DATA, 0}
+        };
+        hr = device_->CreateInputLayout(
+            input_elements,
+            static_cast<UINT>(std::size(input_elements)),
+            vertex_blob->GetBufferPointer(), vertex_blob->GetBufferSize(),
+            input_layout_.GetAddressOf());
+        if (FAILED(hr)) {
+            return hr;
+        }
+        D3D11_BUFFER_DESC viewport_buffer_desc{};
+        viewport_buffer_desc.ByteWidth = sizeof(float) * 4;
+        viewport_buffer_desc.Usage = D3D11_USAGE_DYNAMIC;
+        viewport_buffer_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        viewport_buffer_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        hr = device_->CreateBuffer(
+            &viewport_buffer_desc, nullptr,
+            viewport_buffer_.GetAddressOf());
+        if (FAILED(hr)) {
+            return hr;
+        }
+        D3D11_BUFFER_DESC vertex_buffer_desc{};
+        vertex_buffer_desc.ByteWidth =
+            static_cast<UINT>(sizeof(video_vertices));
+        vertex_buffer_desc.Usage = D3D11_USAGE_IMMUTABLE;
+        vertex_buffer_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA vertex_data{};
+        vertex_data.pSysMem = video_vertices.data();
+        hr = device_->CreateBuffer(
+            &vertex_buffer_desc, &vertex_data,
+            vertex_buffer_.GetAddressOf());
         if (FAILED(hr)) {
             return hr;
         }
@@ -428,6 +634,18 @@ private:
         return S_OK;
     }
 
+    std::shared_ptr<DiagnosticEventJournal> journal_;
+    std::atomic<std::uint64_t> current_epoch_{};
+    std::atomic<std::uint64_t> device_creations_{};
+    std::atomic<std::uint64_t> swap_chain_creations_{};
+    std::atomic<std::uint64_t> swap_chain_resizes_{};
+    std::atomic<std::uint64_t> device_loss_events_{};
+    std::atomic<std::uint32_t> last_hresult_{};
+    std::atomic<std::uint32_t> last_removed_reason_{};
+    std::atomic<VideoPresenterFailureStage> last_stage_{
+        VideoPresenterFailureStage::None
+    };
+
     HWND hwnd_{};
     UINT back_width_{};
     UINT back_height_{};
@@ -437,8 +655,11 @@ private:
     ComPtr<ID3D11DeviceContext> context_;
     ComPtr<IDXGISwapChain1> swap_chain_;
     ComPtr<ID3D11RenderTargetView> render_target_;
+    ComPtr<ID3D11InputLayout> input_layout_;
     ComPtr<ID3D11VertexShader> vertex_shader_;
     ComPtr<ID3D11PixelShader> pixel_shader_;
+    ComPtr<ID3D11Buffer> vertex_buffer_;
+    ComPtr<ID3D11Buffer> viewport_buffer_;
     ComPtr<ID3D11SamplerState> sampler_;
     ComPtr<ID3D11Texture2D> upload_texture_;
     ComPtr<ID3D11ShaderResourceView> upload_view_;
@@ -453,7 +674,8 @@ VideoOutputSurfaceApplyStatus D3D11VideoPresenter::set_output_surface(
     return impl_->bind(surface);
 }
 
-VideoPresenterBeginStatus D3D11VideoPresenter::begin(PlaybackEpoch) {
+VideoPresenterBeginStatus D3D11VideoPresenter::begin(PlaybackEpoch epoch) {
+    impl_->set_epoch(epoch.value());
     // Binding and device creation are handled by set_output_surface on this
     // same render thread. An unbound session deliberately remains headless.
     return VideoPresenterBeginStatus::Ready;
@@ -462,6 +684,15 @@ VideoPresenterBeginStatus D3D11VideoPresenter::begin(PlaybackEpoch) {
 VideoPresentStatus D3D11VideoPresenter::present(
     const VideoFrame& frame, const VideoPresentContext&) {
     return impl_->draw(frame);
+}
+
+void D3D11VideoPresenter::set_diagnostics_journal(
+    std::shared_ptr<DiagnosticEventJournal> journal) noexcept {
+    impl_->set_journal(std::move(journal));
+}
+
+VideoPresenterDiagnostics D3D11VideoPresenter::diagnostics() const noexcept {
+    return impl_->diagnostics();
 }
 
 void D3D11VideoPresenter::end() noexcept {

@@ -1,0 +1,80 @@
+name: libbluray opt-in build
+
+# The optional BD library is deliberately NOT installed on every PR.
+# Run manually when validating upstream libbluray/vcpkg integration.
+on:
+  # While this workflow exists only on the feature branch (PR #35), an
+  # explicit PR-body marker can run it without merging into develop.
+  pull_request:
+    types: [edited]
+  # After the file reaches the default branch, the Actions UI can run it.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-bluray:
+    # Deliberate opt-in. Edit the PR description to include
+    # [verify-libbluray], or use workflow_dispatch after default-branch merge.
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.body, '[verify-libbluray]')
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite
+    steps:
+      - uses: actions/checkout@v7
+      - name: Restore optional dependency cache
+        uses: actions/cache@v6
+        with:
+          path: .vcpkg-cache
+          key: vcpkg-bluray-${{ runner.os }}-${{ hashFiles('native/MediaRuntime/vcpkg.json', 'native/MediaRuntime/vcpkg-triplets/*.cmake') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+      - name: Prepare pinned vcpkg baseline
+        shell: pwsh
+        run: |
+          $vcpkgExe = (Get-Command vcpkg).Source
+          $vcpkgRoot = Split-Path -Parent $vcpkgExe
+          git -C $vcpkgRoot fetch origin a5f736224e85b32e25a8ffc52562333180396642 --depth=1
+          # The manifest baseline resolves versions against this registry
+          # revision. Fetch alone leaves the runner's newer registry checked
+          # out and can fail on libiconv@1.19#1 (missing port-version entry).
+          git -C $vcpkgRoot -c advice.detachedHead=false checkout --detach a5f736224e85b32e25a8ffc52562333180396642
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Configure actual libbluray backend
+        shell: pwsh
+        run: |
+          cmake -S native/MediaRuntime -B build/native-bdmv -A x64 `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            "-DVCPKG_OVERLAY_TRIPLETS=${{ github.workspace }}/native/MediaRuntime/vcpkg-triplets" `
+            "-DVCPKG_TARGET_TRIPLET=x64-windows-release" `
+            "-DVCPKG_MANIFEST_FEATURES=bluray" `
+            "-DLAPIS_ENABLE_LIBBLURAY=ON"
+      - name: Compile and link real libbluray adapter
+        shell: pwsh
+        run: |
+          cmake --build build/native-bdmv --config Release `
+            --target Lapis.MediaRuntime Lapis.MediaRuntime.BluraySourceTests Lapis.MediaRuntime.SourceFeatureTests
+      - name: Exercise source adapter contract
+        shell: pwsh
+        run: |
+          ctest --test-dir build/native-bdmv -C Release `
+            -R "^(bluray_source_contract|source_features_contract)$" --output-on-failure
+      - name: Verify packaged BDMV player resolves its native DLL set
+        shell: pwsh
+        run: |
+          dotnet publish src/Lapis.Desktop.Avalonia/Lapis.Desktop.Avalonia.csproj `
+            -c Release -r win-x64 --self-contained false `
+            -o build/bdmv-publish-test `
+            "-p:LapisNativeRuntimeDir=${{ github.workspace }}/build/native-bdmv/Release"
+          $native = @(Get-ChildItem build/native-bdmv/Release/*.dll)
+          foreach ($dll in $native) {
+            if (-not (Test-Path (Join-Path "build/bdmv-publish-test" $dll.Name))) {
+              throw "BDMV publish is missing $($dll.Name)"
+            }
+          }
+          $blurayDll = @(Get-ChildItem build/bdmv-publish-test/*bluray*.dll)
+          if ($blurayDll.Count -eq 0) {
+            throw "BDMV publisher did not include libbluray dependency"
+          }

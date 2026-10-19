@@ -75,6 +75,8 @@ int main() {
     using lapis::media::d3d11::D3D11VideoPresenter;
 
     D3D11VideoPresenter presenter;
+    auto journal = std::make_shared<DiagnosticEventJournal>();
+    presenter.set_diagnostics_journal(journal);
     const auto good = VideoFrame{
         std::make_shared<BgraTestSurface>(VideoPixelFormat::Bgra8),
         MediaTime{}, std::nullopt
@@ -94,6 +96,22 @@ int main() {
     CHECK(presenter.set_output_surface(
         {VideoOutputSurfaceKind::Win32Window, 0x1234}) ==
         VideoOutputSurfaceApplyStatus::Unavailable);
+    const auto initial_diagnostics = presenter.diagnostics();
+    CHECK(initial_diagnostics.last_failure_stage ==
+        VideoPresenterFailureStage::WindowQuery);
+    CHECK(initial_diagnostics.last_hresult != 0);
+    CHECK(initial_diagnostics.last_device_removed_reason == 0);
+    CHECK(initial_diagnostics.swap_chain_creations == 0);
+    DiagnosticEvent events[DiagnosticEventJournal::capacity]{};
+    std::uint64_t next_sequence{};
+    std::uint64_t dropped{};
+    const auto recorded = journal->read_after(0, events,
+        DiagnosticEventJournal::capacity, next_sequence, dropped);
+    CHECK(recorded >= 1);
+    CHECK(events[recorded - 1].kind == DiagnosticEventKind::DeviceFailure);
+    CHECK(events[recorded - 1].failure_stage ==
+        static_cast<std::uint32_t>(VideoPresenterFailureStage::WindowQuery));
+    CHECK(events[recorded - 1].hresult != 0);
 
     HWND first = make_window();
     CHECK(first != nullptr);
@@ -102,9 +120,12 @@ int main() {
     CHECK(presenter.present(unsupported, context) ==
         VideoPresentStatus::UnsupportedSurface);
     CHECK(presenter.present(good, context) == VideoPresentStatus::Presented);
+    CHECK(presenter.diagnostics().device_creations == 1);
+    CHECK(presenter.diagnostics().swap_chain_creations == 1);
 
     CHECK(MoveWindow(first, 100, 100, 500, 220, TRUE) != FALSE);
     CHECK(presenter.present(good, context) == VideoPresentStatus::Presented);
+    CHECK(presenter.diagnostics().swap_chain_resizes >= 1);
 
     HWND replacement = make_window();
     CHECK(replacement != nullptr);
@@ -112,11 +133,17 @@ int main() {
         VideoOutputSurfaceApplyStatus::Ready);
     CHECK(DestroyWindow(first) != FALSE);
     CHECK(presenter.present(good, context) == VideoPresentStatus::Presented);
+    CHECK(presenter.diagnostics().swap_chain_creations == 2);
+    CHECK(presenter.diagnostics().device_creations == 2);
 
     CHECK(presenter.set_output_surface(VideoOutputSurfaceDescriptor{}) ==
         VideoOutputSurfaceApplyStatus::Ready);
     CHECK(DestroyWindow(replacement) != FALSE);
     CHECK(presenter.present(good, context) == VideoPresentStatus::Presented);
     presenter.end();
+    // Explicitly releasing COM resources does not erase fault evidence.
+    CHECK(presenter.diagnostics().swap_chain_creations == 2);
+    CHECK(presenter.diagnostics().last_failure_stage ==
+        VideoPresenterFailureStage::WindowQuery);
     return 0;
 }

@@ -71,7 +71,7 @@ public:
     FfmpegPacketRouter(
         IFfmpegPacketSource& source,
         std::vector<int> stream_indexes,
-        std::size_t queue_capacity = 32);
+        std::size_t queue_capacity = 128);
     ~FfmpegPacketRouter();
 
     FfmpegPacketRouter(const FfmpegPacketRouter&) = delete;

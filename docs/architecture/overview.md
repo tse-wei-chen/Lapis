@@ -3,7 +3,7 @@
 Lapis is designed as a media platform rather than a UI wrapped around one decoder stack.
 
 ```text
-Lapis.Desktop.WinForms / future frontends
+Lapis.Desktop.Avalonia (MVVM / NativeControlHost)
         |
         v
 Lapis.Desktop.Hosting
@@ -25,6 +25,8 @@ Native MediaRuntime composition root
 Native MediaRuntime core
   - immutable GraphPlan / GraphBuilder
   - source / demux adapters
+      MediaSourceSession: byte stream + optional INavigationController
+        title / playlist / chapter / angle / menus / overlays (contract only)
       active DecodeGeneration
         DemuxPump -> bounded selected-stream packet queues -> decoders
   - decoded media contracts
@@ -62,20 +64,25 @@ Native MediaRuntime core
         +---- media taps ----> AIHost (future, non-blocking)
 ```
 
-## First desktop host
+## Desktop frontend: Avalonia
 
-The first runnable Windows frontend is `Lapis.Desktop.WinForms`, which owns
-its `Panel.Handle`, file selection, and UI dispatch only. The portable
-`Lapis.Desktop.Hosting` coordinator orders actor transport commands together
-with calls to the separate `IVideoOutputSurfaceBinding` port. Output binding
-uses the actor's current epoch but does not advance it. The synchronous native
-surface-ACK wait runs away from the UI thread, and form close is deferred until
-the host/native session has stopped and released the borrowed HWND.
+The first product page is a **library**: `Lapis.Library` indexes each local
+file or complete BDMV root behind `IMediaLibrary`. Its optional
+`DiscArtworkLocator` searches only BDMV/META/DL; Avalonia owns the
+background decoded thumbnails and their lifetimes, keeping the catalog
+format and playback pipeline independent of image decoding. Its first JSON persistence
+adapter does not manipulate media, and `LibraryViewModel` is not a playback
+session. Selecting one card opens the distinct Watch page with the existing
+serialized playback actor (ADR 0041). MPLS filenames shown in the disc sidebar
+are read-only previews, not playable playlist navigation.
 
-The hosting library depends only on Application and Contracts. The WinForms
-composition edge supplies `NativePlaybackRuntime` to both ports; WinForms
-has no P/Invoke or DXGI dependency. Other desktop frameworks can reuse the
-coordinator and replace only their window-lifetime adapter.
+`Lapis.Desktop.Avalonia` is the only desktop presentation adapter. Its
+`NativeControlHost` owns an Avalonia proxy HWND and a persistent GPU child
+HWND. The UI-neutral `Lapis.Desktop.Hosting` serializes playback and surface
+binding commands; native detach/render-thread shutdown must finish before the
+GPU child HWND is destroyed. The ViewModel uses `IPlayerPlaybackService`,
+not FFmpeg or D3D11 types. Native Win32 soak and real Avalonia integration
+tests now replace the retired WinForms test shell.
 
 The actor now also consumes native execution snapshots via the optional
 `IPlaybackRuntimeObserver` port. It polls only while Playing/Paused, off the UI
@@ -121,7 +128,20 @@ and to seek by dragging the progress slider.
 
 ## Current implementation slice
 
-The current slice opens local files through `IMediaByteStream`, feeds FFmpeg via custom AVIO, and keeps FFmpeg types inside adapters. Media open discovers/prepares video and audio decoders but does not start the demux pump. `PlaybackExecution` creates an immutable routing generation containing only streams with active consumers and owns both video and optional audio lifecycle under one `PlaybackEpoch`.
+The product desktop UI is now **Avalonia 11/MVVM** (`Lapis.Desktop.Avalonia`),
+with a replaceable `IPlayerPlaybackService` and Windows-specific
+`NativeControlHost` HWND adapter. The former WinForms shell is removed. Avalonia NativeControlHost has an airspace
+boundary: transparent subtitles/menus must be composed into a proper GPU
+surface rather than assumed to overlay an HWND (ADR 0040).
+
+The source-selected Blu-ray chapter-seek control path resolves a chapter
+ID to an immutable MediaTime through a separately versioned, read-only C ABI
+extension. Only the serialized C# PlaybackSession actor may then invoke the
+normal epoch-advancing Seek; the navigation lookup does not mutate libbluray
+or launch/retire workers itself (ADR 0039). Full Title/Playlist replacement,
+BD-J menu navigation and a chapter-picker UI are not implemented.
+
+The current slice opens local files through `IMediaByteStream`, feeds FFmpeg via custom AVIO, and keeps FFmpeg types inside adapters. At each execution-generation boundary, a pure native compiler validates the selected decoders against the discovery graph, extends the reachable selected paths through processing/scheduling/sinks, and builds an immutable activation GraphPlan. PlaybackExecution derives active video/audio branches from that validated plan, publishes a locked value snapshot for diagnostics, and retires the plan only after worker shutdown. This is an intermediate invariant, not a general graph-node factory, plugin execution registry, or atomic warm-and-swap engine. Media open discovers/prepares video and audio decoders but does not start the demux pump. `PlaybackExecution` creates an immutable routing generation containing only streams with active consumers and owns both video and optional audio lifecycle under one `PlaybackEpoch`.
 
 The public C ABI now owns a composition-level pipeline containing `PlaybackMediaSession` plus `PlaybackExecution`. `lapis_session_play`, `pause`, `seek`, and `close` call that execution owner rather than maintaining a parallel fake transport state machine. Per-session command serialization keeps concurrent result-returning calls ordered while the short-lived session mutex remains available to snapshots. Snapshot publication derives active time and natural Ended/Faulted state from `PlaybackExecutionSnapshot`.
 

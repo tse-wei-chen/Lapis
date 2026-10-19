@@ -90,6 +90,7 @@ int main() {
     const MediaLocator locator{MediaLocatorKind::File, LAPIS_TEST_MEDIA_PATH};
     const auto open_result = media.open(locator);
     CHECK(open_result.ok());
+    CHECK(!media.navigation_snapshot().has_value());
     CHECK(open_result.has_video);
     CHECK(!media.decode_next_video_frame().has_value());
 

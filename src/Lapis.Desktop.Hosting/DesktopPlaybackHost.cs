@@ -41,8 +41,8 @@ public sealed class DesktopPlaybackHost : IAsyncDisposable
         _session.ObserveSnapshotsAsync(cancellationToken);
 
     /// <summary>
-    /// Open the file, bind the current HWND at the new epoch, then start playback.
-    /// The binding is complete before any video frame can reach the window.
+    /// Backward-compatible file opening shortcut. Other sources use the typed
+    /// locator overload so they pass through the same application actor.
     /// </summary>
     public Task OpenAndPlayAsync(
         string path,
@@ -53,6 +53,23 @@ public sealed class DesktopPlaybackHost : IAsyncDisposable
         {
             throw new ArgumentException("A media file is required.", nameof(path));
         }
+        return OpenAndPlayAsync(
+            new MediaLocator(MediaLocatorKind.File, path),
+            windowHandle,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Open any supported media locator, bind the HWND at its new playback
+    /// epoch, then play. Source type never changes the host's ordering or
+    /// native window ownership rules.
+    /// </summary>
+    public Task OpenAndPlayAsync(
+        MediaLocator locator,
+        nint windowHandle,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(locator);
         if (windowHandle == 0)
         {
             throw new ArgumentException("The video window must have a valid HWND.",
@@ -62,7 +79,7 @@ public sealed class DesktopPlaybackHost : IAsyncDisposable
         return RunAsync(async () =>
         {
             await _session.ExecuteAsync(
-                new OpenMediaCommand(new MediaLocator(MediaLocatorKind.File, path)),
+                new OpenMediaCommand(locator),
                 cancellationToken).ConfigureAwait(false);
             await SetSurfaceCoreAsync(
                 VideoOutputSurface.ForWin32Window(windowHandle),
@@ -123,6 +140,25 @@ public sealed class DesktopPlaybackHost : IAsyncDisposable
             VideoOutputSurface.ForWin32Window(windowHandle),
             cancellationToken), cancellationToken);
     }
+
+    /// <summary>
+    /// Must complete before the UI destroys or recreates a borrowed HWND.
+    /// Serialized with Open/Play/Seek/Close; a successful native ACK guarantees
+    /// the presenter has released the previous window.
+    /// </summary>
+    public Task<VideoOutputSurfaceBindingState> DetachWindowAsync(
+        CancellationToken cancellationToken = default) =>
+        RunAsync(async () =>
+        {
+            if (!_hasBoundSurface)
+            {
+                return VideoOutputSurfaceBindingState.Deferred;
+            }
+
+            return await SetSurfaceCoreAsync(
+                VideoOutputSurface.None,
+                cancellationToken).ConfigureAwait(false);
+        }, cancellationToken);
 
     public Task CloseMediaAsync(
         CancellationToken cancellationToken = default) =>
@@ -192,7 +228,7 @@ public sealed class DesktopPlaybackHost : IAsyncDisposable
     {
         var context = new RuntimeCommandContext(_session.SessionId, _session.Snapshot.Epoch);
         // The existing C ABI waits synchronously for render-thread ACK. Never
-        // execute that wait on a WinForms/WPF/WinUI UI dispatcher thread.
+        // execute that wait on any desktop UI dispatcher thread.
         var result = await Task.Run(async () =>
             await _surfaces.SetVideoOutputSurfaceAsync(
                 surface, context, cancellationToken).ConfigureAwait(false),

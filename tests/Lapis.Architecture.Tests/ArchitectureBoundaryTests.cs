@@ -64,9 +64,9 @@ public sealed class ArchitectureBoundaryTests
     }
 
     [Fact]
-    public void WinFormsShellReferencesHostingAndNativeOnly()
+    public void AvaloniaShellReferencesHostingNativeAndLibrary()
     {
-        var project = LoadProject("src/Lapis.Desktop.WinForms/Lapis.Desktop.WinForms.csproj");
+        var project = LoadProject("src/Lapis.Desktop.Avalonia/Lapis.Desktop.Avalonia.csproj");
         var references = project.Descendants("ProjectReference")
             .Select(element => element.Attribute("Include")?.Value.Replace('\\', '/'))
             .Where(value => value is not null)
@@ -75,12 +75,34 @@ public sealed class ArchitectureBoundaryTests
         Assert.Equal(new[]
         {
             "../Lapis.Desktop.Hosting/Lapis.Desktop.Hosting.csproj",
+            "../Lapis.Library/Lapis.Library.csproj",
             "../Lapis.Runtime.Native/Lapis.Runtime.Native.csproj"
         }, references);
     }
 
     [Fact]
-    public void DesktopHostingDoesNotOwnNativeInteropOrWinForms()
+    public void LibraryCatalogOnlyDependsOnContracts()
+    {
+        var project = LoadProject("src/Lapis.Library/Lapis.Library.csproj");
+        var references = project.Descendants("ProjectReference")
+            .Select(element => element.Attribute("Include")?.Value.Replace('\\', '/'))
+            .Where(value => value is not null)
+            .ToArray();
+        Assert.Equal(new[] { "../Lapis.Contracts/Lapis.Contracts.csproj" }, references);
+    }
+
+    [Fact]
+    public void AvaloniaPublishCanSelectTheBdmvNativeVariant()
+    {
+        var xml = LoadProject("src/Lapis.Desktop.Avalonia/Lapis.Desktop.Avalonia.csproj");
+        var output = xml.Descendants("Content").Single(node =>
+            (string?)node.Attribute("Include") == "$(LapisNativeRuntimeDir)/*.dll");
+        Assert.Equal("Always", (string?)output.Element("CopyToOutputDirectory"));
+        Assert.Equal("Always", (string?)output.Element("CopyToPublishDirectory"));
+    }
+
+    [Fact]
+    public void DesktopHostingDoesNotOwnNativeInteropOrUiFramework()
     {
         var files = Directory.EnumerateFiles(
             Path.Combine(Root, "src", "Lapis.Desktop.Hosting"),
@@ -91,6 +113,21 @@ public sealed class ArchitectureBoundaryTests
             Assert.DoesNotContain("LibraryImport", source, StringComparison.Ordinal);
             Assert.DoesNotContain("DllImport", source, StringComparison.Ordinal);
             Assert.DoesNotContain("System.Windows.Forms", source, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void OnlyAvaloniaDesktopUiIsPresent()
+    {
+        Assert.False(Directory.Exists(Path.Combine(Root, "src", "Lapis.Desktop.WinForms")));
+        Assert.False(Directory.Exists(Path.Combine(Root, "tests", "Lapis.Desktop.WinForms.Tests")));
+        Assert.DoesNotContain("Lapis.Desktop.WinForms",
+            File.ReadAllText(Path.Combine(Root, "Lapis.slnx")), StringComparison.Ordinal);
+        foreach (var project in Directory.EnumerateFiles(
+            Path.Combine(Root, "src"), "*.csproj", SearchOption.AllDirectories))
+        {
+            Assert.DoesNotContain("<UseWindowsForms>true</UseWindowsForms>",
+                File.ReadAllText(project), StringComparison.OrdinalIgnoreCase);
         }
     }
 

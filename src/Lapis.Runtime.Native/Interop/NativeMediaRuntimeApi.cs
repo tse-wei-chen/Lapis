@@ -5,6 +5,15 @@ namespace Lapis.Runtime.Native.Interop;
 internal interface INativeMediaRuntimeApi
 {
     uint GetAbiVersion();
+    uint GetSourceFeatures();
+    uint GetDiagnosticsApiVersion();
+    uint GetNavigationApiVersion();
+    NativeResult SessionResolveChapter(
+        nint session, uint chapterId, NativePlaybackEpoch expectedEpoch,
+        out NativeMediaTime start);
+    NativeResult SessionReadDiagnosticEvents(
+        nint session, ulong sinceSequence, NativeDiagnosticEvent[] events,
+        out uint count, out ulong nextSequence, out ulong dropped);
     NativeResult RuntimeCreate(out nint runtime);
     void RuntimeDestroy(nint runtime);
     NativeResult SessionCreate(
@@ -40,6 +49,55 @@ internal sealed class PInvokeNativeMediaRuntimeApi : INativeMediaRuntimeApi
     private PInvokeNativeMediaRuntimeApi() {}
 
     public uint GetAbiVersion() => NativeMethods.RuntimeGetAbiVersion();
+
+    public uint GetSourceFeatures() => NativeMethods.RuntimeGetSourceFeatures();
+
+    public uint GetDiagnosticsApiVersion() =>
+        NativeMethods.RuntimeGetDiagnosticsApiVersion();
+
+    public uint GetNavigationApiVersion() =>
+        NativeMethods.RuntimeGetNavigationApiVersion();
+
+    public NativeResult SessionResolveChapter(
+        nint session, uint chapterId, NativePlaybackEpoch expectedEpoch,
+        out NativeMediaTime start) =>
+        NativeMethods.SessionResolveChapter(
+            session, chapterId, expectedEpoch, out start);
+
+    public NativeResult SessionReadDiagnosticEvents(
+        nint session, ulong sinceSequence, NativeDiagnosticEvent[] events,
+        out uint count, out ulong nextSequence, out ulong dropped)
+    {
+        // Allocate only for an explicit report export, never per video frame.
+        // The native API receives a stable, writable blittable buffer.
+        var pointer = Marshal.AllocHGlobal(
+            checked(events.Length * Marshal.SizeOf<NativeDiagnosticEvent>()));
+        try
+        {
+            var result = NativeMethods.SessionReadDiagnosticEvents(
+                session, sinceSequence, pointer, checked((uint)events.Length),
+                out count, out nextSequence, out dropped);
+            if (count > events.Length)
+            {
+                throw new InvalidOperationException(
+                    "Native diagnostics returned more records than capacity.");
+            }
+            if (result == NativeResult.Ok)
+            {
+                var size = Marshal.SizeOf<NativeDiagnosticEvent>();
+                for (var index = 0; index < count; index++)
+                {
+                    events[index] = Marshal.PtrToStructure<NativeDiagnosticEvent>(
+                        pointer + (int)index * size);
+                }
+            }
+            return result;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(pointer);
+        }
+    }
 
     public NativeResult RuntimeCreate(out nint runtime) =>
         NativeMethods.RuntimeCreate(out runtime);

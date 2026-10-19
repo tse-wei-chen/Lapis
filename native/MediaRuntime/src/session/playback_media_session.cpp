@@ -6,9 +6,14 @@
 #include "demux/ffmpeg/ffmpeg_demuxer.hpp"
 #include "demux/ffmpeg/ffmpeg_packet_router.hpp"
 #include "source/file/file_source.hpp"
+#if defined(LAPIS_ENABLE_LIBBLURAY)
+#include "source/bluray/bluray_source.hpp"
+#endif
 #include "source/media_source_registry.hpp"
 
+#include <algorithm>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 namespace lapis::media {
@@ -17,6 +22,10 @@ class PlaybackMediaSession::Impl final {
 public:
     Impl() {
         sources.add(std::make_unique<FileSourceProvider>());
+#if defined(LAPIS_ENABLE_LIBBLURAY)
+        sources.add(std::make_unique<bluray::BluraySourceProvider>(
+            bluray::open_libbluray_disc));
+#endif
     }
 
     void stop_decode_generation() noexcept {
@@ -59,6 +68,23 @@ PlaybackMediaSession::PlaybackMediaSession()
 
 PlaybackMediaSession::~PlaybackMediaSession() = default;
 
+void PlaybackMediaSession::register_source_provider(
+    std::unique_ptr<IMediaSourceProvider> provider) {
+    if (impl_->source != nullptr || impl_->demuxer != nullptr ||
+        impl_->packet_router != nullptr) {
+        throw std::logic_error(
+            "Register a media source provider before opening media.");
+    }
+    impl_->sources.add_override(std::move(provider));
+}
+
+std::optional<NavigationSnapshot> PlaybackMediaSession::navigation_snapshot() const {
+    if (impl_->source == nullptr || impl_->source->navigation == nullptr) {
+        return std::nullopt;
+    }
+    return impl_->source->navigation->snapshot();
+}
+
 MediaOpenInfo PlaybackMediaSession::open(const MediaLocator& locator) {
     impl_->reset();
 
@@ -86,6 +112,19 @@ MediaOpenInfo PlaybackMediaSession::open(const MediaLocator& locator) {
 
     MediaOpenInfo result{};
     result.duration = demuxer->duration();
+    if (impl_->source->navigation != nullptr) {
+        const auto navigation = impl_->source->navigation->snapshot();
+        const auto selected_title = std::find_if(
+            navigation.titles.begin(),
+            navigation.titles.end(),
+            [&navigation](const TitleInfo& title) {
+                return title.id == navigation.selected_title;
+            });
+        if (selected_title != navigation.titles.end() &&
+            selected_title->duration.has_value()) {
+            result.duration = selected_title->duration;
+        }
+    }
 
     const auto video_stream = demuxer->best_video_stream();
     if (video_stream.has_value()) {

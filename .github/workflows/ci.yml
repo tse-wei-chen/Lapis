@@ -91,6 +91,9 @@ jobs:
           $vcpkgExe = (Get-Command vcpkg).Source
           $vcpkgRoot = Split-Path -Parent $vcpkgExe
           git -C $vcpkgRoot fetch origin a5f736224e85b32e25a8ffc52562333180396642 --depth=1
+          # Keep the active registry consistent with builtin-baseline.
+          # Fetching the commit without checking it out is insufficient.
+          git -C $vcpkgRoot -c advice.detachedHead=false checkout --detach a5f736224e85b32e25a8ffc52562333180396642
           "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Configure
         shell: pwsh
@@ -109,3 +112,37 @@ jobs:
         run: cmake --build build/native --config Release
       - name: Test
         run: ctest --test-dir build/native -C Release --output-on-failure
+      # Native FFmpeg/D3D11 DLL is required for Avalonia acceptance.
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      # An actual Avalonia Win32 desktop lifetime / NativeControlHost /
+      # FFmpeg D3D11 swap chain acceptance; never a headless GPU mock.
+      - name: Real Avalonia native HWND playback acceptance
+        shell: pwsh
+        timeout-minutes: 4
+        run: |
+          dotnet build tests/Lapis.Desktop.Avalonia.Tests/Lapis.Desktop.Avalonia.Tests.csproj -c Release
+          # Test the PRODUCT deployment, not just a test host with Native's
+          # build folder injected into PATH (which previously hid missing DLLs).
+          dotnet build src/Lapis.Desktop.Avalonia/Lapis.Desktop.Avalonia.csproj -c Release
+          $nativeDir = (Resolve-Path "build/native/Release").Path
+          $appDir = (Resolve-Path "src/Lapis.Desktop.Avalonia/bin/Release/net10.0-windows").Path
+          $testDir = (Resolve-Path "tests/Lapis.Desktop.Avalonia.Tests/bin/Release/net10.0-windows").Path
+          $nativeDlls = @(Get-ChildItem -Path $nativeDir -Filter "*.dll" -File)
+          if ($nativeDlls.Count -le 1) {
+            throw "Native output contains no dependency DLLs; FFmpeg app-local staging is missing."
+          }
+          foreach ($dll in $nativeDlls) {
+            if (-not (Test-Path (Join-Path $appDir $dll.Name))) {
+              throw "Avalonia app deployment missing $($dll.Name)."
+            }
+          }
+          Copy-Item (Join-Path $nativeDir "*.dll") $testDir -Force
+          # No PATH override. Native acceptance must resolve DLLs beside the app.
+          $env:LAPIS_AVALONIA_NATIVE_ACCEPTANCE = "1"
+          $env:LAPIS_NATIVE_UI_MEDIA = (Resolve-Path "native/MediaRuntime/tests/assets/test_soak_churn.mp4").Path
+          dotnet test tests/Lapis.Desktop.Avalonia.Tests/Lapis.Desktop.Avalonia.Tests.csproj `
+            -c Release --no-build `
+            --filter "FullyQualifiedName~NativeAvaloniaPlaybackAcceptanceTests" `
+            --logger "trx;LogFileName=native-avalonia-acceptance.trx"

@@ -203,6 +203,113 @@ private:
     std::shared_ptr<AudioOutputProbe> probe_;
 };
 
+// Device loss is injected at the IAudioOutput seam only in this native
+// regression test. A fresh endpoint is selected when the user closes and
+// reopens the playback generation; we do not claim seamless auto-recovery.
+struct EndpointCycleProbe final {
+    std::atomic<std::uint64_t> prepared{};
+    std::atomic<std::uint64_t> opened{};
+    std::atomic<std::uint64_t> lost_submits{};
+    std::atomic<std::uint64_t> successful_submits{};
+    std::atomic<std::uint64_t> reset_calls{};
+    std::atomic<std::uint64_t> close_calls{};
+};
+
+class CyclingAudioOutput final : public lapis::media::IAudioOutput {
+public:
+    CyclingAudioOutput(
+        std::shared_ptr<EndpointCycleProbe> probe, bool fail_this_generation)
+        : probe_(std::move(probe)),
+          fail_this_generation_(fail_this_generation) {}
+
+    lapis::media::AudioOutputOpenStatus open(
+        const lapis::media::AudioFormat&) override {
+        probe_->opened.fetch_add(1, std::memory_order_relaxed);
+        return lapis::media::AudioOutputOpenStatus::Ready;
+    }
+
+    lapis::media::AudioOutputSubmitResult try_submit(
+        const lapis::media::AudioFrame& frame,
+        std::uint32_t first) override {
+        if (fail_this_generation_) {
+            probe_->lost_submits.fetch_add(1, std::memory_order_relaxed);
+            return {lapis::media::AudioOutputStatus::DeviceLost, 0};
+        }
+        if (frame.buffer == nullptr ||
+            first >= frame.buffer->sample_frame_count()) {
+            return {lapis::media::AudioOutputStatus::Faulted, 0};
+        }
+        probe_->successful_submits.fetch_add(1, std::memory_order_relaxed);
+        return {
+            lapis::media::AudioOutputStatus::Accepted,
+            frame.buffer->sample_frame_count() - first
+        };
+    }
+
+    lapis::media::AudioOutputWaitStatus wait_until_writable(
+        std::stop_token token) override {
+        return token.stop_requested()
+            ? lapis::media::AudioOutputWaitStatus::Stopped
+            : lapis::media::AudioOutputWaitStatus::Ready;
+    }
+
+    lapis::media::AudioOutputWaitStatus wait_until_drained(
+        std::stop_token token) override {
+        return token.stop_requested()
+            ? lapis::media::AudioOutputWaitStatus::Stopped
+            : lapis::media::AudioOutputWaitStatus::Ready;
+    }
+
+    lapis::media::AudioOutputControlStatus pause() override {
+        return lapis::media::AudioOutputControlStatus::Ready;
+    }
+    lapis::media::AudioOutputControlStatus resume() override {
+        return lapis::media::AudioOutputControlStatus::Ready;
+    }
+    void reset() noexcept override {
+        probe_->reset_calls.fetch_add(1, std::memory_order_relaxed);
+    }
+    lapis::media::AudioOutputPosition position() const noexcept override {
+        return {};
+    }
+    void close() noexcept override {
+        probe_->close_calls.fetch_add(1, std::memory_order_relaxed);
+    }
+
+private:
+    std::shared_ptr<EndpointCycleProbe> probe_;
+    const bool fail_this_generation_;
+};
+
+class CyclingEndpointProvider final : public lapis::media::IAudioOutputProvider {
+public:
+    explicit CyclingEndpointProvider(std::shared_ptr<EndpointCycleProbe> probe)
+        : probe_(std::move(probe)) {}
+
+    lapis::media::AudioOutputPlan prepare_default_output() override {
+        const auto generation = probe_->prepared.fetch_add(
+            1, std::memory_order_relaxed) + 1;
+        lapis::media::AudioOutputPlan plan{};
+        plan.status = lapis::media::AudioOutputPrepareStatus::Ready;
+        plan.target_format = {
+            lapis::media::AudioSampleFormat::S16,
+            lapis::media::AudioPacking::Interleaved,
+            48'000,
+            {
+                lapis::media::AudioChannel::FrontLeft,
+                lapis::media::AudioChannel::FrontRight
+            },
+            false
+        };
+        plan.output = std::make_unique<CyclingAudioOutput>(
+            probe_, generation == 1);
+        return plan;
+    }
+
+private:
+    std::shared_ptr<EndpointCycleProbe> probe_;
+};
+
 bool wait_for_state(
     lapis::media::PlaybackExecution& execution,
     lapis::media::PlaybackExecutionState expected) {
@@ -278,6 +385,10 @@ int main() {
         snapshot = execution.snapshot();
         CHECK(snapshot.video_active);
         CHECK(!snapshot.audio_active);
+        const auto initial_video_plan = execution.active_graph_plan();
+        CHECK(initial_video_plan.has_value());
+        CHECK(initial_video_plan->contains(GraphNodeKind::VideoSink));
+        CHECK(!initial_video_plan->contains(GraphNodeKind::AudioSink));
         CHECK(
             execution.seek(PlaybackEpoch{1}, MediaTime{}).error ==
             PlaybackExecutionError::StaleEpoch);
@@ -299,6 +410,9 @@ int main() {
         CHECK(snapshot.state == PlaybackExecutionState::Paused);
         CHECK(snapshot.clock.state == PlaybackClockState::Paused);
         CHECK(snapshot.clock.epoch.value() == 2);
+        const auto replacement_video_plan = execution.active_graph_plan();
+        CHECK(replacement_video_plan.has_value());
+        CHECK(replacement_video_plan->contains(GraphNodeKind::VideoSink));
 
         probe->reset_records();
         std::this_thread::sleep_for(20ms);
@@ -339,6 +453,7 @@ int main() {
         CHECK(snapshot.clock.position == MediaTime{});
         CHECK(!snapshot.video_active);
         CHECK(!snapshot.audio_active);
+        CHECK(!execution.active_graph_plan().has_value());
 
         CHECK(
             execution.pause().error ==
@@ -395,6 +510,10 @@ int main() {
         CHECK(snapshot.state == PlaybackExecutionState::Running);
         CHECK(!snapshot.video_active);
         CHECK(snapshot.audio_active);
+        const auto audio_plan = execution.active_graph_plan();
+        CHECK(audio_plan.has_value());
+        CHECK(audio_plan->contains(GraphNodeKind::AudioSink));
+        CHECK(!audio_plan->contains(GraphNodeKind::VideoSink));
         CHECK(snapshot.audio_render_state == AudioRenderWorkerState::Running);
         CHECK(output_probe->prepare_count.load(std::memory_order_relaxed) == 1);
         CHECK(output_probe->open_count.load(std::memory_order_relaxed) == 1);
@@ -457,6 +576,69 @@ int main() {
         CHECK(!snapshot.audio_active);
         CHECK(output_probe->reset_count.load(std::memory_order_relaxed) >= 1);
         CHECK(output_probe->close_count.load(std::memory_order_relaxed) >= 2);
+    }
+
+    // A WASAPI-equivalent device loss during PCM Submit must surface as a
+    // terminal fault, not silent EOF. The caller can close, release the
+    // invalidated endpoint, and start a new epoch on a freshly chosen device.
+    {
+        PlaybackMediaSession media;
+        const MediaLocator source{
+            MediaLocatorKind::File,
+            audio_asset_path()
+        };
+        CHECK(media.open(source).ok());
+        CHECK(media.has_audio());
+        auto probe = std::make_shared<EndpointCycleProbe>();
+        auto video_probe = std::make_shared<PresenterProbe>();
+
+        PlaybackExecution execution(
+            media,
+            std::make_unique<ffmpeg::FfmpegVideoFrameConverter>(),
+            std::make_unique<RecordingPresenter>(video_probe),
+            std::make_unique<CyclingEndpointProvider>(probe),
+            [](const AudioFormat& format)
+                -> std::unique_ptr<IAudioFrameProcessor> {
+                return std::make_unique<ffmpeg::FfmpegAudioFrameConverter>(
+                    format);
+            });
+
+        CHECK(execution.start(PlaybackEpoch{101}, MediaTime{}).ok());
+        CHECK(wait_for_state(execution, PlaybackExecutionState::Faulted));
+        auto snapshot = execution.snapshot();
+        CHECK(snapshot.clock.epoch.value() == 101);
+        CHECK(snapshot.audio_active);
+        CHECK(snapshot.audio_render_state ==
+            AudioRenderWorkerState::OutputUnavailable);
+        CHECK(snapshot.audio_rendering.output_failures == 1);
+        CHECK(probe->prepared.load() == 1);
+        CHECK(probe->opened.load() == 1);
+        CHECK(probe->lost_submits.load() == 1);
+        CHECK(probe->successful_submits.load() == 0);
+
+        CHECK(execution.close(PlaybackEpoch{102}).ok());
+        snapshot = execution.snapshot();
+        CHECK(snapshot.state == PlaybackExecutionState::Stopped);
+        CHECK(!snapshot.audio_active);
+        CHECK(probe->reset_calls.load() == 1);
+        CHECK(probe->close_calls.load() == 1);
+
+        // The transport owner reopens from the beginning after choosing a
+        // replacement audio endpoint. All new samples belong to epoch 103.
+        CHECK(media.seek(MediaTime{}));
+        CHECK(execution.start(PlaybackEpoch{103}, MediaTime{}).ok());
+        CHECK(wait_for_state(execution, PlaybackExecutionState::Ended));
+        snapshot = execution.snapshot();
+        CHECK(snapshot.clock.epoch.value() == 103);
+        CHECK(snapshot.audio_render_state == AudioRenderWorkerState::Drained);
+        CHECK(snapshot.audio_rendering.output_failures == 0);
+        CHECK(snapshot.audio_rendering.submitted_sample_frames > 0);
+        CHECK(probe->prepared.load() == 2);
+        CHECK(probe->opened.load() == 2);
+        CHECK(probe->lost_submits.load() == 1);
+        CHECK(probe->successful_submits.load() > 0);
+        CHECK(execution.close(PlaybackEpoch{104}).ok());
+        CHECK(probe->close_calls.load() == 2);
     }
 
     return 0;

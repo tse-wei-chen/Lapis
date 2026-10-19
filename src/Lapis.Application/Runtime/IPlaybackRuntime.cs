@@ -17,6 +17,19 @@ public sealed record RuntimeOpenResult(
 /// Application-side port for the native media runtime. Implementations may use
 /// P/Invoke, IPC, or another adapter, but those details must not leak upward.
 /// </summary>
+/// <summary>
+/// Optional, read-only chapter lookup for the source-selected title.
+/// The playback actor serializes this lookup with its normal epoch-advancing
+/// Seek. The adapter must never seek or mutate source navigation itself.
+/// </summary>
+public interface IChapterNavigationRuntime
+{
+    ValueTask<MediaTime> ResolveChapterAsync(
+        uint chapterId,
+        RuntimeCommandContext context,
+        CancellationToken cancellationToken);
+}
+
 public interface IPlaybackRuntime : IAsyncDisposable
 {
     ValueTask<RuntimeOpenResult> OpenAsync(

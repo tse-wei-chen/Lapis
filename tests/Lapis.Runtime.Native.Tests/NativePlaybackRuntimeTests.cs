@@ -24,6 +24,78 @@ public sealed class NativePlaybackRuntimeTests
     }
 
     [Fact]
+    public async Task FileOnlyRuntimeRejectsDirectoryWithoutCreatingSession()
+    {
+        var api = new FakeNativeApi { SourceFeatures = 1 };
+        await using var runtime = new NativePlaybackRuntime(api);
+        Assert.False(runtime.SupportsBdmvDirectory);
+        var error = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await runtime.OpenAsync(
+                new MediaLocator(MediaLocatorKind.Directory, @"C:\Disc"),
+                new RuntimeCommandContext(new PlaybackSessionId(Guid.NewGuid()),
+                    new PlaybackEpoch(1)), CancellationToken.None));
+        Assert.Contains("build-bdmv-player.ps1", error.Message);
+        Assert.DoesNotContain("session_open", api.Calls);
+        Assert.Equal(0, api.SessionCreateCount);
+    }
+
+    [Fact]
+    public async Task BdmvEnabledRuntimeStillDelegatesValidationToNative()
+    {
+        var api = new FakeNativeApi { SourceFeatures = 3 };
+        await using var runtime = new NativePlaybackRuntime(api);
+        Assert.True(runtime.SupportsBdmvDirectory);
+        await runtime.OpenAsync(new MediaLocator(MediaLocatorKind.Directory, @"C:\Disc"),
+            new RuntimeCommandContext(new PlaybackSessionId(Guid.NewGuid()),
+                new PlaybackEpoch(1)), CancellationToken.None);
+        Assert.Equal(NativeMediaLocatorKind.Directory, api.LastLocatorKind);
+    }
+
+    [Fact]
+    public async Task OlderRuntimeWithoutFeatureQueryRemainsCompatible()
+    {
+        var api = new FakeNativeApi { HasFeatureQuery = false };
+        await using var runtime = new NativePlaybackRuntime(api);
+        Assert.Null(runtime.SupportsBdmvDirectory);
+        await runtime.OpenAsync(new MediaLocator(MediaLocatorKind.Directory, @"C:\Disc"),
+            new RuntimeCommandContext(new PlaybackSessionId(Guid.NewGuid()),
+                new PlaybackEpoch(1)), CancellationToken.None);
+        Assert.Contains("session_open", api.Calls);
+    }
+
+    [Fact]
+    public async Task UnsupportedBdmvOpenProvidesBuildGuidance()
+    {
+        var api = new FakeNativeApi { SessionOpenResult = NativeResult.Unsupported };
+        await using var runtime = new NativePlaybackRuntime(api);
+        var error = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await runtime.OpenAsync(
+                new MediaLocator(MediaLocatorKind.Directory, @"C:\Disc"),
+                new RuntimeCommandContext(
+                    new PlaybackSessionId(Guid.NewGuid()), new PlaybackEpoch(1)),
+                CancellationToken.None));
+        Assert.Contains("libbluray", error.Message);
+        Assert.Contains("build-bdmv-player.ps1", error.Message);
+        Assert.Contains("AACS/BD+", error.Message);
+        Assert.Equal(NativeMediaLocatorKind.Directory, api.LastLocatorKind);
+    }
+
+    [Fact]
+    public async Task UnsupportedFileOpenPreservesNativeOperationError()
+    {
+        var api = new FakeNativeApi { SessionOpenResult = NativeResult.Unsupported };
+        await using var runtime = new NativePlaybackRuntime(api);
+        var error = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await runtime.OpenAsync(
+                new MediaLocator(MediaLocatorKind.File, "movie.mkv"),
+                new RuntimeCommandContext(
+                    new PlaybackSessionId(Guid.NewGuid()), new PlaybackEpoch(1)),
+                CancellationToken.None));
+        Assert.Contains("session_open", error.Message);
+        Assert.DoesNotContain("build-bdmv-player.ps1", error.Message);
+    }
+
+    [Fact]
     public async Task CommandsMapContractsAndDisposeSessionBeforeRuntime()
     {
         var api = new FakeNativeApi
@@ -80,6 +152,43 @@ public sealed class NativePlaybackRuntimeTests
         Assert.Equal(
             new[] { "session_destroy", "runtime_destroy" },
             api.Calls.TakeLast(2));
+    }
+
+    [Fact]
+    public async Task ChapterLookupIsReadOnlyEpochScopedAndRejectsUnsupportedVersions()
+    {
+        var api = new FakeNativeApi
+        {
+            NavigationStart = new NativeMediaTime { Nanoseconds = 8_000_000_000 }
+        };
+        await using var runtime = new NativePlaybackRuntime(api);
+        var navigation = (IChapterNavigationRuntime)runtime;
+        var id = new PlaybackSessionId(Guid.NewGuid());
+        var context = new RuntimeCommandContext(id, new PlaybackEpoch(1));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await navigation.ResolveChapterAsync(4, context, CancellationToken.None));
+        Assert.Equal(0, api.SessionCreateCount);
+
+        await runtime.OpenAsync(new MediaLocator(MediaLocatorKind.Directory, "BDMV"),
+            context, CancellationToken.None);
+        Assert.Equal(MediaTime.FromSeconds(8),
+            await navigation.ResolveChapterAsync(4, context, CancellationToken.None));
+        Assert.Contains("session_resolve_chapter", api.Calls);
+        Assert.DoesNotContain("session_seek", api.Calls);
+        Assert.Equal(4U, api.LastChapterId);
+        Assert.Equal(1UL, api.LastEpoch.Value);
+
+        api.ChapterResult = NativeResult.InvalidArgument;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await navigation.ResolveChapterAsync(999, context, CancellationToken.None));
+        api.ChapterResult = NativeResult.Unsupported;
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await navigation.ResolveChapterAsync(4, context, CancellationToken.None));
+        api.ChapterResult = NativeResult.Ok;
+        api.NavigationVersion = 99;
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await navigation.ResolveChapterAsync(4, context, CancellationToken.None));
     }
 
     [Fact]
@@ -255,6 +364,63 @@ public sealed class NativePlaybackRuntimeTests
     }
 
     [Fact]
+    public void DiagnosticsWireLayoutIsStable()
+    {
+        Assert.Equal(1u, NativeAbi.DiagnosticsVersion);
+        Assert.Equal(48, Marshal.SizeOf<NativeDiagnosticEvent>());
+        Assert.Equal(40L, Marshal.OffsetOf<NativeDiagnosticEvent>(
+            nameof(NativeDiagnosticEvent.Detail)).ToInt64());
+    }
+
+    [Fact]
+    public async Task DiagnosticsExportReadsOneBoundedSessionJournal()
+    {
+        var api = new FakeNativeApi
+        {
+            DiagnosticEvents =
+            [
+                new NativeDiagnosticEvent
+                {
+                    Sequence = 42,
+                    Epoch = 7,
+                    Kind = 1,
+                    FailureStage = 10,
+                    Hresult = 0x887A0005,
+                    RemovedReason = 0x887A0006
+                }
+            ],
+            DiagnosticDropped = 10
+        };
+        await using var runtime = new NativePlaybackRuntime(api);
+        Assert.Empty(runtime.CaptureDiagnostics().Events);
+        Assert.Equal(0, api.SessionCreateCount);
+
+        var id = new PlaybackSessionId(Guid.NewGuid());
+        await runtime.OpenAsync(
+            new MediaLocator(MediaLocatorKind.File, "secret-file-path.mkv"),
+            new RuntimeCommandContext(id, new PlaybackEpoch(1)),
+            CancellationToken.None);
+
+        var report = runtime.CaptureDiagnostics();
+        Assert.Equal((ulong)10, report.OverwrittenEvents);
+        var diagnostic = Assert.Single(report.Events);
+        Assert.Equal((ulong)42, diagnostic.Sequence);
+        Assert.Equal("0x887A0005", diagnostic.Hresult);
+        Assert.Equal("0x887A0006", diagnostic.RemovedReason);
+        Assert.DoesNotContain("secret-file-path", report.ToString());
+        Assert.Contains("session_read_diagnostic_events", api.Calls);
+    }
+
+    [Fact]
+    public async Task UnsupportedDiagnosticsVersionIsRejectedWithoutRead()
+    {
+        var api = new FakeNativeApi { DiagnosticVersion = 44 };
+        await using var runtime = new NativePlaybackRuntime(api);
+        Assert.Throws<NotSupportedException>(() => runtime.CaptureDiagnostics());
+        Assert.DoesNotContain("session_read_diagnostic_events", api.Calls);
+    }
+
+    [Fact]
     public void NativeSnapshotLayoutMirrorsCAbi()
     {
         Assert.Equal(40, Marshal.SizeOf<NativePlaybackSnapshot>());
@@ -346,7 +512,17 @@ public sealed class NativePlaybackRuntimeTests
     private sealed class FakeNativeApi : INativeMediaRuntimeApi
     {
         internal uint AbiVersion { get; set; } = NativeAbi.Version;
+        internal uint SourceFeatures { get; set; } = 3;
+        internal bool HasFeatureQuery { get; set; } = true;
+        internal uint DiagnosticVersion { get; set; } = NativeAbi.DiagnosticsVersion;
+        internal uint NavigationVersion { get; set; } = NativeAbi.NavigationVersion;
+        internal NativeResult ChapterResult { get; set; } = NativeResult.Ok;
+        internal NativeMediaTime NavigationStart { get; set; }
+        internal uint LastChapterId { get; private set; }
+        internal NativeDiagnosticEvent[] DiagnosticEvents { get; set; } = [];
+        internal ulong DiagnosticDropped { get; set; } = 0;
         internal NativeOpenResult OpenResult { get; set; }
+        internal NativeResult SessionOpenResult { get; set; } = NativeResult.Ok;
         internal NativePlaybackSnapshot Snapshot { get; set; }
         internal NativeResult PlayResult { get; set; } = NativeResult.Ok;
         internal NativeResult SurfaceResult { get; set; } = NativeResult.Ok;
@@ -363,6 +539,37 @@ public sealed class NativePlaybackRuntimeTests
         internal NativeMediaTime LastPosition { get; private set; }
 
         public uint GetAbiVersion() => AbiVersion;
+        public uint GetSourceFeatures() =>
+            HasFeatureQuery ? SourceFeatures :
+                throw new EntryPointNotFoundException("Feature query unsupported");
+        public uint GetDiagnosticsApiVersion() => DiagnosticVersion;
+        public uint GetNavigationApiVersion() => NavigationVersion;
+        public NativeResult SessionResolveChapter(
+            nint session, uint chapterId, NativePlaybackEpoch expectedEpoch,
+            out NativeMediaTime start)
+        {
+            Assert.Equal((nint)22, session);
+            Calls.Add("session_resolve_chapter");
+            LastEpoch = expectedEpoch;
+            LastChapterId = chapterId;
+            start = NavigationStart;
+            return ChapterResult;
+        }
+
+        public NativeResult SessionReadDiagnosticEvents(
+            nint session, ulong sinceSequence, NativeDiagnosticEvent[] events,
+            out uint count, out ulong nextSequence, out ulong dropped)
+        {
+            Assert.Equal((nint)22, session);
+            Assert.Equal((ulong)0, sinceSequence);
+            Calls.Add("session_read_diagnostic_events");
+            count = checked((uint)DiagnosticEvents.Length);
+            Assert.True(count <= events.Length);
+            Array.Copy(DiagnosticEvents, events, DiagnosticEvents.Length);
+            nextSequence = count == 0 ? sinceSequence : events[count - 1].Sequence;
+            dropped = DiagnosticDropped;
+            return NativeResult.Ok;
+        }
 
         public NativeResult RuntimeCreate(out nint runtime)
         {
@@ -412,7 +619,7 @@ public sealed class NativePlaybackRuntimeTests
             LastLocatorValue = value;
             LastEpoch = epoch;
             result = OpenResult;
-            return NativeResult.Ok;
+            return SessionOpenResult;
         }
 
         public NativeResult SessionPlay(nint session, NativePlaybackEpoch epoch)

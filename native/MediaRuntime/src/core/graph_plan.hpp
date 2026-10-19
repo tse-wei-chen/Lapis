@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -20,7 +21,10 @@ enum class GraphNodeKind : std::uint8_t {
     VideoSink,
     AudioSink,
     MediaTap,
-    Custom
+    Custom,
+    // Append rather than re-number existing kinds; it represents the
+    // real frame scheduler between processing and the video render sink.
+    VideoScheduler
 };
 
 struct GraphNode final {
@@ -44,6 +48,10 @@ public:
 
     [[nodiscard]] const std::vector<GraphNode>& nodes() const noexcept { return nodes_; }
     [[nodiscard]] const std::vector<GraphEdge>& edges() const noexcept { return edges_; }
+    [[nodiscard]] bool contains(GraphNodeKind kind) const noexcept {
+        return std::any_of(nodes_.begin(), nodes_.end(),
+            [kind](const GraphNode& node) { return node.kind == kind; });
+    }
 
 private:
     friend class GraphBuilder;

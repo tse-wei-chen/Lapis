@@ -21,6 +21,7 @@ struct FfmpegVideoStreamInfo final {
     int width{};
     int height{};
     AVRational time_base{0, 1};
+    MediaTime timestamp_origin{};
     const AVCodecParameters* codec_parameters{};
 };
 
@@ -29,6 +30,7 @@ struct FfmpegAudioStreamInfo final {
     int sample_rate{};
     int channel_count{};
     AVRational time_base{0, 1};
+    MediaTime timestamp_origin{};
     const AVCodecParameters* codec_parameters{};
 };
 
@@ -48,7 +50,12 @@ public:
     [[nodiscard]] bool seek(MediaTime target, int stream_index);
 
 private:
+    // One probed packet is owned by the demuxer after a verified Y4M seek.
+    // Router consumes it before reading the next FFmpeg packet.
+    AVPacket* pending_packet_{};
+    bool has_pending_packet_{};
     AVFormatContext* format_{};
+    MediaTime timestamp_origin_{};
     std::unique_ptr<FfmpegIoContext> io_;
 };
 

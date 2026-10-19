@@ -13,5 +13,13 @@
         "swscale"
       ]
     }
-  ]
+  ],
+  "features": {
+    "bluray": {
+      "description": "Optional unprotected BDMV directory source using libbluray (BD-J and DRM disabled)",
+      "dependencies": [
+        "libbluray"
+      ]
+    }
+  }
 }

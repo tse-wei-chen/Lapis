@@ -17,6 +17,16 @@ extern "C" {
 #endif
 
 #define LAPIS_MEDIA_RUNTIME_ABI_VERSION 2u
+/* Opt-in diagnostics extension; the existing playback ABI stays at v2. */
+#define LAPIS_DIAGNOSTICS_API_VERSION 1u
+/* Separate, optional read-only navigation extension; ABI v2 stays unchanged. */
+#define LAPIS_NAVIGATION_API_VERSION 1u
+#define LAPIS_DIAGNOSTIC_RING_CAPACITY 128u
+
+/* Optional source-provider feature mask. This is build capability, not
+ * proof that a particular BDMV disc is readable or decrypted. */
+#define LAPIS_SOURCE_FEATURE_FILE 0x1u
+#define LAPIS_SOURCE_FEATURE_BDMV_DIRECTORY 0x2u
 
 typedef struct lapis_runtime lapis_runtime;
 typedef struct lapis_session lapis_session;
@@ -75,6 +85,31 @@ typedef struct lapis_open_result {
     uint32_t has_duration;
 } lapis_open_result;
 
+typedef enum lapis_diagnostic_event_kind {
+    LAPIS_DIAG_DEVICE_FAILURE = 1,
+    LAPIS_DIAG_DEVICE_CREATED = 2,
+    LAPIS_DIAG_SWAP_CHAIN_CREATED = 3,
+    LAPIS_DIAG_SWAP_CHAIN_RESIZED = 4,
+    LAPIS_DIAG_RECOVERY_ATTEMPTED = 5,
+    LAPIS_DIAG_RECOVERY_BIND_SUCCEEDED = 6,
+    LAPIS_DIAG_RECOVERY_BIND_FAILED = 7,
+    LAPIS_DIAG_RECOVERY_PRESENTED = 8,
+    LAPIS_DIAG_RECOVERY_TERMINATED = 9,
+    LAPIS_DIAG_RECOVERY_INCOMPLETE_AT_EOF = 10
+} lapis_diagnostic_event_kind;
+
+/* Fixed-width 48-byte wire record, no pointers, paths or owned memory. */
+typedef struct lapis_diagnostic_event {
+    uint64_t sequence;
+    uint64_t epoch;
+    uint64_t monotonic_milliseconds;
+    uint32_t kind;
+    uint32_t failure_stage;
+    uint32_t hresult;
+    uint32_t removed_reason;
+    uint64_t detail;
+} lapis_diagnostic_event;
+
 typedef struct lapis_playback_snapshot {
     lapis_playback_session_id session_id;
     lapis_playback_epoch epoch;
@@ -116,6 +151,44 @@ typedef enum lapis_video_output_surface_binding {
  * - lapis_runtime_destroy requires that all child sessions have already been destroyed.
  */
 LAPIS_API uint32_t lapis_runtime_get_abi_version(void);
+
+/* ABI-v2-compatible read-only extension; an older DLL without the export
+ * means UNKNOWN capability. No session or runtime initialization required. */
+LAPIS_API uint32_t lapis_runtime_get_source_features(void);
+
+/* Optional diagnostics v1 extension, discover before use with dlsym/GetProcAddress.
+ * Read an ordered bounded journal. since_sequence is exclusive. If the reader
+ * falls behind the 128-event ring, out_dropped reports overwritten events.
+ * out_next_sequence is the sequence of the last *returned* event (not latest
+ * produced); call again with that cursor to page without silent skipping.
+ * A zero-capacity probe is valid with events=NULL. The operation is observational
+ * and does not mutate playback epoch, transport, or the journal.
+ */
+LAPIS_API uint32_t lapis_runtime_get_diagnostics_api_version(void);
+LAPIS_API lapis_result lapis_session_read_diagnostic_events(
+    lapis_session* session,
+    uint64_t since_sequence,
+    lapis_diagnostic_event* events,
+    uint32_t capacity,
+    uint32_t* out_count,
+    uint64_t* out_next_sequence,
+    uint64_t* out_dropped);
+
+/*
+ * Optional navigation v1 extension (discover with GetProcAddress).
+ * Resolve the source-selected title's chapter ID to a canonical time.
+ * This is strictly read-only: call lapis_session_seek() at a NEW epoch to
+ * retire old audio/video/packet workers. Only READY/PLAYING/PAUSED are legal.
+ * The expected epoch must match the current session; a closed/file source
+ * returns UNSUPPORTED, an unknown chapter ID returns INVALID_ARGUMENT.
+ * The output is zeroed on every error. No BD-J or menu action occurs.
+ */
+LAPIS_API uint32_t lapis_runtime_get_navigation_api_version(void);
+LAPIS_API lapis_result lapis_session_resolve_chapter(
+    lapis_session* session,
+    uint32_t chapter_id,
+    lapis_playback_epoch expected_epoch,
+    lapis_media_time* out_position);
 
 LAPIS_API lapis_result lapis_runtime_create(lapis_runtime** out_runtime);
 LAPIS_API void lapis_runtime_destroy(lapis_runtime* runtime);

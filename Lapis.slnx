@@ -4,7 +4,8 @@
     <Project Path="src/Lapis.Application/Lapis.Application.csproj" />
     <Project Path="src/Lapis.Runtime.Native/Lapis.Runtime.Native.csproj" />
     <Project Path="src/Lapis.Desktop.Hosting/Lapis.Desktop.Hosting.csproj" />
-    <Project Path="src/Lapis.Desktop.WinForms/Lapis.Desktop.WinForms.csproj" />
+    <Project Path="src/Lapis.Library/Lapis.Library.csproj" />
+    <Project Path="src/Lapis.Desktop.Avalonia/Lapis.Desktop.Avalonia.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Lapis.Contracts.Tests/Lapis.Contracts.Tests.csproj" />
@@ -12,5 +13,7 @@
     <Project Path="tests/Lapis.Architecture.Tests/Lapis.Architecture.Tests.csproj" />
     <Project Path="tests/Lapis.Runtime.Native.Tests/Lapis.Runtime.Native.Tests.csproj" />
     <Project Path="tests/Lapis.Desktop.Hosting.Tests/Lapis.Desktop.Hosting.Tests.csproj" />
+    <Project Path="tests/Lapis.Desktop.Avalonia.Tests/Lapis.Desktop.Avalonia.Tests.csproj" />
+    <Project Path="tests/Lapis.Library.Tests/Lapis.Library.Tests.csproj" />
   </Folder>
 </Solution>

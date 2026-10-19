@@ -2,11 +2,42 @@
 
 #include "core/monotonic_time.hpp"
 
+#include <cstdio>
 #include <stdexcept>
 #include <utility>
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 namespace lapis::media {
 namespace {
+
+// Diagnostic events are emitted only at GPU-recovery transitions, never for
+// every frame. Windows DebugView / Visual Studio can capture them without a
+// filesystem dependency or callbacks crossing the stable C ABI.
+void trace_recovery(
+    const char* event,
+    std::uint64_t epoch,
+    std::uint32_t attempt) noexcept {
+#if defined(_WIN32)
+    char line[192]{};
+    (void)std::snprintf(
+        line, sizeof(line),
+        "Lapis.VideoRender | event=%s | epoch=%llu | attempt=%u\n",
+        event,
+        static_cast<unsigned long long>(epoch),
+        static_cast<unsigned>(attempt));
+    OutputDebugStringA(line);
+#else
+    (void)event;
+    (void)epoch;
+    (void)attempt;
+#endif
+}
+
 
 VideoOutputSurfaceControlStatus control_status_from_apply_status(
     VideoOutputSurfaceApplyStatus status) noexcept {
@@ -35,14 +66,18 @@ VideoRenderWorkerState worker_state_from_apply_status(
 
 VideoRenderWorker::VideoRenderWorker(
     PlaybackClock& clock,
-    std::unique_ptr<IVideoPresenter> presenter)
+    std::unique_ptr<IVideoPresenter> presenter,
+    std::shared_ptr<DiagnosticEventJournal> journal)
     : clock_(clock),
       presenter_(std::move(presenter)),
+      journal_(journal != nullptr ? std::move(journal)
+                                  : std::make_shared<DiagnosticEventJournal>()),
       wait_interrupt_source_(std::make_shared<std::stop_source>()) {
     if (presenter_ == nullptr) {
         throw std::invalid_argument(
             "VideoRenderWorker requires a presenter.");
     }
+    presenter_->set_diagnostics_journal(journal_);
 }
 
 VideoRenderWorker::~VideoRenderWorker() {
@@ -70,6 +105,9 @@ void VideoRenderWorker::start(
     stale_epoch_drops_.store(0, std::memory_order_relaxed);
     inactive_clock_drops_.store(0, std::memory_order_relaxed);
     presenter_failures_.store(0, std::memory_order_relaxed);
+    recovery_attempts_.store(0, std::memory_order_relaxed);
+    recovery_bind_successes_.store(0, std::memory_order_relaxed);
+    recovered_presents_.store(0, std::memory_order_relaxed);
     last_begin_status_.store(
         VideoPresenterBeginStatus::Ready,
         std::memory_order_release);
@@ -179,7 +217,10 @@ VideoRenderStats VideoRenderWorker::stats() const noexcept {
         presented_frames_.load(std::memory_order_relaxed),
         stale_epoch_drops_.load(std::memory_order_relaxed),
         inactive_clock_drops_.load(std::memory_order_relaxed),
-        presenter_failures_.load(std::memory_order_relaxed)
+        presenter_failures_.load(std::memory_order_relaxed),
+        recovery_attempts_.load(std::memory_order_relaxed),
+        recovery_bind_successes_.load(std::memory_order_relaxed),
+        recovered_presents_.load(std::memory_order_relaxed)
     };
 }
 
@@ -291,6 +332,13 @@ void VideoRenderWorker::run(
     bool presenter_started = false;
     std::uint64_t applied_surface_revision{};
     VideoOutputSurfaceDescriptor applied_surface{};
+    // Cap recovery work to prevent an endlessly resetting GPU or stale HWND
+    // from thrashing the video worker. Every recovery runs on the render thread.
+    std::uint32_t device_rebuild_attempts = 0;
+    constexpr std::uint32_t max_device_rebuild_attempts = 2;
+    // Recreating the device is only a *candidate* recovery. Require a
+    // successful Present before treating an immediate EOF as clean.
+    bool recovery_pending = false;
 
     try {
         while (!stop_token.stop_requested()) {
@@ -310,7 +358,16 @@ void VideoRenderWorker::run(
                 continue;
             }
             if (read_result.status == QueueReadStatus::Closed) {
-                final_state = VideoRenderWorkerState::Drained;
+                if (recovery_pending) {
+                    journal_->record(input->epoch().value(),
+                        DiagnosticEventKind::RecoveryIncompleteAtEof, 0, 0, 0,
+                        device_rebuild_attempts);
+                    trace_recovery("recovered_device_no_present_before_eof",
+                        input->epoch().value(), device_rebuild_attempts);
+                }
+                final_state = recovery_pending
+                    ? VideoRenderWorkerState::PresenterUnavailable
+                    : VideoRenderWorkerState::Drained;
                 break;
             }
             if (!read_result.has_item()) {
@@ -361,11 +418,75 @@ void VideoRenderWorker::run(
                 std::memory_order_release);
 
             if (present_status == VideoPresentStatus::Presented) {
+                if (recovery_pending) {
+                    recovered_presents_.fetch_add(1, std::memory_order_relaxed);
+                    journal_->record(input->epoch().value(),
+                        DiagnosticEventKind::RecoveryPresented, 0, 0, 0,
+                        device_rebuild_attempts);
+                    trace_recovery("recovered_present", input->epoch().value(),
+                        device_rebuild_attempts);
+                }
+                recovery_pending = false;
                 presented_frames_.fetch_add(1, std::memory_order_relaxed);
                 continue;
             }
 
             presenter_failures_.fetch_add(1, std::memory_order_relaxed);
+
+            if (present_status == VideoPresentStatus::DeviceLost &&
+                applied_surface.kind != VideoOutputSurfaceKind::None &&
+                device_rebuild_attempts < max_device_rebuild_attempts &&
+                !stop_token.stop_requested()) {
+                ++device_rebuild_attempts;
+                recovery_attempts_.fetch_add(1, std::memory_order_relaxed);
+                journal_->record(input->epoch().value(),
+                    DiagnosticEventKind::RecoveryAttempted, 0, 0, 0,
+                    device_rebuild_attempts);
+                trace_recovery("device_lost_rebind_start", input->epoch().value(),
+                    device_rebuild_attempts);
+                // end() drops old D3D/DXGI resources. Rebind from the same
+                // desired descriptor; do not touch the clock/epoch or ask the
+                // UI thread to create a device. The failed frame is discarded.
+                presenter_->end();
+                presenter_started = false;
+                VideoOutputSurfaceApplyStatus recovery{
+                    VideoOutputSurfaceApplyStatus::Failed
+                };
+                try {
+                    recovery = presenter_->set_output_surface(applied_surface);
+                } catch (...) {
+                    recovery = VideoOutputSurfaceApplyStatus::Failed;
+                }
+                last_surface_apply_status_.store(
+                    recovery, std::memory_order_release);
+                if (recovery == VideoOutputSurfaceApplyStatus::Ready) {
+                    recovery_bind_successes_.fetch_add(
+                        1, std::memory_order_relaxed);
+                    journal_->record(input->epoch().value(),
+                        DiagnosticEventKind::RecoveryBindSucceeded, 0, 0, 0,
+                        device_rebuild_attempts);
+                    trace_recovery("device_lost_rebind_ready",
+                        input->epoch().value(), device_rebuild_attempts);
+                    recovery_pending = true;
+                    continue;
+                }
+                journal_->record(input->epoch().value(),
+                    DiagnosticEventKind::RecoveryBindFailed,
+                    static_cast<std::uint32_t>(recovery), 0, 0,
+                    device_rebuild_attempts);
+                trace_recovery("device_lost_rebind_failed",
+                    input->epoch().value(), device_rebuild_attempts);
+                final_state = worker_state_from_apply_status(recovery);
+                break;
+            }
+
+            if (present_status == VideoPresentStatus::DeviceLost) {
+                journal_->record(input->epoch().value(),
+                    DiagnosticEventKind::RecoveryTerminated, 0, 0, 0,
+                    device_rebuild_attempts);
+                trace_recovery("device_lost_terminal",
+                    input->epoch().value(), device_rebuild_attempts);
+            }
             final_state =
                 present_status == VideoPresentStatus::UnsupportedSurface ||
                 present_status == VideoPresentStatus::DeviceLost

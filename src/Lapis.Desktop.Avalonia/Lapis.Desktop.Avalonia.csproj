@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Lapis.Desktop.Hosting/Lapis.Desktop.Hosting.csproj" />
+    <ProjectReference Include="../Lapis.Runtime.Native/Lapis.Runtime.Native.csproj" />
+    <ProjectReference Include="../Lapis.Library/Lapis.Library.csproj" />
+  </ItemGroup>
+  <!-- Select an isolated Native build without overwriting file-only MediaRuntime. -->
+  <PropertyGroup>
+    <LapisNativeRuntimeDir Condition="'$(LapisNativeRuntimeDir)' == ''">$(MSBuildProjectDirectory)/../../build/native/Release</LapisNativeRuntimeDir>
+  </PropertyGroup>
+  <!-- The CMake/vcpkg Release output is a deployable native runtime set:
+       Lapis.MediaRuntime.dll plus transitive FFmpeg (and optional libbluray)
+       DLLs copied next to it by vcpkg's Windows app-local deployment.
+       Copy ALL DLLs to build AND publish outputs; copying only the main DLL
+       causes ERROR_MOD_NOT_FOUND (0x8007007E) on a normal user machine.
+       Leave managed-only builds valid when Native has not been built yet. -->
+  <ItemGroup Condition="Exists('$(LapisNativeRuntimeDir)/Lapis.MediaRuntime.dll')">
+    <Content Include="$(LapisNativeRuntimeDir)/*.dll">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+</Project>

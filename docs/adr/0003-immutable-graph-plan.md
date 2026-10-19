@@ -21,7 +21,7 @@ When playback requirements change (for example track selection, output mode, HDR
 4. atomically switch the active plan;
 5. retire the previous graph after in-flight work is safe.
 
-The file/decode vertical slice starts attaching its selected Source -> Demuxer -> VideoDecoder topology to this native plan. Full graph execution and atomic plan replacement will be added before renderer/audio pipelines are introduced.
+Source discovery first attaches Source -> Demuxer -> selected Decoder topology. ADR 0035 adds a pure native execution-graph compilation step that validates reachable decoders, adds the selected processing/scheduling/output nodes, and makes the resulting immutable plan the playback generation's authoritative branch-activation record. Full graph-node factory execution and atomic warm-and-swap remain deferred rather than being claimed by the current implementation.
 
 ## Consequences
 
