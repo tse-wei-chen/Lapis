@@ -1,5 +1,6 @@
 #include "execution/playback_execution.hpp"
 
+#include "core/execution_graph_plan.hpp"
 #include "core/monotonic_time.hpp"
 #include "session/playback_media_session.hpp"
 
@@ -323,6 +324,11 @@ PlaybackExecutionSnapshot PlaybackExecution::snapshot() const {
     return result;
 }
 
+std::optional<GraphPlan> PlaybackExecution::active_graph_plan() const {
+    std::scoped_lock lock(control_mutex_);
+    return active_graph_plan_;
+}
+
 PlaybackExecutionResult PlaybackExecution::fault_unlocked(
     PlaybackExecutionError error) {
     const auto now = SteadyClockSource::now();
@@ -415,18 +421,29 @@ bool PlaybackExecution::workers_drained_unlocked() const noexcept {
 }
 
 bool PlaybackExecution::start_generation_unlocked(PlaybackEpoch epoch) {
-    if (video_generation_active_ || audio_generation_active_) {
+    if (video_generation_active_ || audio_generation_active_ ||
+        active_graph_plan_.has_value()) {
         return false;
     }
 
-    const bool use_video = media_.has_video();
     const bool audio_configured =
         audio_output_provider_ != nullptr &&
         static_cast<bool>(audio_processor_factory_);
-    const bool use_audio = media_.has_audio() && audio_configured;
-    if (!use_video && !use_audio) {
+
+    // Source discovery is not the executable topology: audio decoding may be
+    // available but the product has no configured output consumer. Compile the
+    // selected branches before allocating output resources or starting workers.
+    const auto* discovered = media_.graph_plan();
+    if (discovered == nullptr) {
         return false;
     }
+    auto execution_plan = compile_execution_graph(
+        *discovered, {media_.has_video(), media_.has_audio() && audio_configured});
+    if (!execution_plan.has_value()) {
+        return false;
+    }
+    const bool use_video = execution_plan->contains(GraphNodeKind::VideoSink);
+    const bool use_audio = execution_plan->contains(GraphNodeKind::AudioSink);
 
     try {
         if (use_audio) {
@@ -488,6 +505,9 @@ bool PlaybackExecution::start_generation_unlocked(PlaybackEpoch epoch) {
             pending_audio_render_stream_ = std::move(audio_processed);
         }
 
+        // Commit only after every selected worker generation was prepared.
+        // Seek/Close will retire this plan after stopping all its workers.
+        active_graph_plan_.emplace(std::move(*execution_plan));
         return true;
     } catch (...) {
         try {
@@ -608,6 +628,7 @@ void PlaybackExecution::stop_generation_unlocked() {
     audio_processor_.reset();
     audio_generation_active_ = false;
     video_generation_active_ = false;
+    active_graph_plan_.reset();
 }
 
 } // namespace lapis::media

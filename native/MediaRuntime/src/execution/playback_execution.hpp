@@ -2,6 +2,7 @@
 
 #include "audio/audio_output_provider.hpp"
 #include "audio/audio_processor.hpp"
+#include "core/graph_plan.hpp"
 #include "core/media_time.hpp"
 #include "core/playback_clock.hpp"
 #include "core/playback_epoch.hpp"
@@ -22,6 +23,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 
 namespace lapis::media {
 
@@ -135,6 +137,9 @@ public:
     }
 
     [[nodiscard]] PlaybackExecutionSnapshot snapshot() const;
+    // Return a value copy under the control lock: no caller may hold a raw
+    // pointer into a retiring graph generation across Seek or Close.
+    [[nodiscard]] std::optional<GraphPlan> active_graph_plan() const;
 
 private:
     [[nodiscard]] PlaybackExecutionResult fault_unlocked(
@@ -166,6 +171,7 @@ private:
     std::unique_ptr<AudioRenderWorker> audio_renderer_;
     std::unique_ptr<AudioClockSyncWorker> audio_clock_sync_;
     std::shared_ptr<AudioFrameStream> pending_audio_render_stream_;
+    std::optional<GraphPlan> active_graph_plan_;
     bool video_generation_active_{};
     bool audio_generation_active_{};
     bool stopped_timeline_prepared_{};

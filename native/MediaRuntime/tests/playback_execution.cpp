@@ -385,6 +385,10 @@ int main() {
         snapshot = execution.snapshot();
         CHECK(snapshot.video_active);
         CHECK(!snapshot.audio_active);
+        const auto initial_video_plan = execution.active_graph_plan();
+        CHECK(initial_video_plan.has_value());
+        CHECK(initial_video_plan->contains(GraphNodeKind::VideoSink));
+        CHECK(!initial_video_plan->contains(GraphNodeKind::AudioSink));
         CHECK(
             execution.seek(PlaybackEpoch{1}, MediaTime{}).error ==
             PlaybackExecutionError::StaleEpoch);
@@ -406,6 +410,9 @@ int main() {
         CHECK(snapshot.state == PlaybackExecutionState::Paused);
         CHECK(snapshot.clock.state == PlaybackClockState::Paused);
         CHECK(snapshot.clock.epoch.value() == 2);
+        const auto replacement_video_plan = execution.active_graph_plan();
+        CHECK(replacement_video_plan.has_value());
+        CHECK(replacement_video_plan->contains(GraphNodeKind::VideoSink));
 
         probe->reset_records();
         std::this_thread::sleep_for(20ms);
@@ -446,6 +453,7 @@ int main() {
         CHECK(snapshot.clock.position == MediaTime{});
         CHECK(!snapshot.video_active);
         CHECK(!snapshot.audio_active);
+        CHECK(!execution.active_graph_plan().has_value());
 
         CHECK(
             execution.pause().error ==
@@ -502,6 +510,10 @@ int main() {
         CHECK(snapshot.state == PlaybackExecutionState::Running);
         CHECK(!snapshot.video_active);
         CHECK(snapshot.audio_active);
+        const auto audio_plan = execution.active_graph_plan();
+        CHECK(audio_plan.has_value());
+        CHECK(audio_plan->contains(GraphNodeKind::AudioSink));
+        CHECK(!audio_plan->contains(GraphNodeKind::VideoSink));
         CHECK(snapshot.audio_render_state == AudioRenderWorkerState::Running);
         CHECK(output_probe->prepare_count.load(std::memory_order_relaxed) == 1);
         CHECK(output_probe->open_count.load(std::memory_order_relaxed) == 1);
