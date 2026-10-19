@@ -22,6 +22,16 @@ internal static partial class NativeMethods
         out ulong nextSequence,
         out ulong dropped);
 
+    [LibraryImport(LibraryName, EntryPoint = "lapis_runtime_get_navigation_api_version")]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    internal static partial uint RuntimeGetNavigationApiVersion();
+
+    [LibraryImport(LibraryName, EntryPoint = "lapis_session_resolve_chapter")]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    internal static partial NativeResult SessionResolveChapter(
+        nint session, uint chapterId, NativePlaybackEpoch expectedEpoch,
+        out NativeMediaTime start);
+
     [LibraryImport(LibraryName, EntryPoint = "lapis_runtime_get_abi_version")]
     [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
     internal static partial uint RuntimeGetAbiVersion();

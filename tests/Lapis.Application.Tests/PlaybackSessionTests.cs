@@ -28,6 +28,60 @@ public sealed class PlaybackSessionTests
     }
 
     [Fact]
+    public async Task ChapterSeekIsSerializedAndUsesTheExistingEpochAdvancingSeek()
+    {
+        var runtime = new ChapterRuntime();
+        await using var session = new PlaybackSession(runtime);
+        await session.ExecuteAsync(
+            new OpenMediaCommand(new MediaLocator(MediaLocatorKind.Directory, "BDMV")));
+        await session.ExecuteAsync(new PlayCommand());
+
+        await session.ExecuteAsync(new SeekChapterCommand(7));
+        Assert.Equal(TransportState.Playing, session.Snapshot.Transport);
+        Assert.Equal(2UL, session.Snapshot.Epoch.Value);
+        Assert.Equal(MediaTime.FromSeconds(12), session.Snapshot.Position);
+        Assert.Equal(new[]
+        {
+            "open:1", "play:1", "chapter:1:7", "seek:2"
+        }, runtime.Calls);
+
+        await session.ExecuteAsync(new PauseCommand());
+        await session.ExecuteAsync(new SeekChapterCommand(7));
+        Assert.Equal(TransportState.Paused, session.Snapshot.Transport);
+        Assert.Equal(3UL, session.Snapshot.Epoch.Value);
+        Assert.Equal(new[]
+        {
+            "open:1", "play:1", "chapter:1:7", "seek:2",
+            "pause:2", "chapter:2:7", "seek:3"
+        }, runtime.Calls);
+    }
+
+    [Fact]
+    public async Task UnsupportedAndUnknownChapterDoNotAdvanceEpochOrFaultPlayback()
+    {
+        await using var simple = new PlaybackSession(new FakeRuntime());
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            simple.ExecuteAsync(new SeekChapterCommand(7)).AsTask());
+        await simple.ExecuteAsync(
+            new OpenMediaCommand(new MediaLocator(MediaLocatorKind.File, "clip.mkv")));
+        await Assert.ThrowsAsync<NotSupportedException>(() =>
+            simple.ExecuteAsync(new SeekChapterCommand(7)).AsTask());
+        Assert.Equal(TransportState.Ready, simple.Snapshot.Transport);
+        Assert.Equal(1UL, simple.Snapshot.Epoch.Value);
+
+        var runtime = new ChapterRuntime { RejectChapter = true };
+        await using var disc = new PlaybackSession(runtime);
+        await disc.ExecuteAsync(new OpenMediaCommand(
+            new MediaLocator(MediaLocatorKind.Directory, "BDMV")));
+        await disc.ExecuteAsync(new PlayCommand());
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            disc.ExecuteAsync(new SeekChapterCommand(8)).AsTask());
+        Assert.Equal(TransportState.Playing, disc.Snapshot.Transport);
+        Assert.Equal(1UL, disc.Snapshot.Epoch.Value);
+        Assert.Equal(new[] { "open:1", "play:1", "chapter:1:8" }, runtime.Calls);
+    }
+
+    [Fact]
     public async Task CallerCancellationAfterStartDoesNotInterruptRuntimeMutation()
     {
         var runtime = new ControlledRuntime();
@@ -328,6 +382,23 @@ public sealed class PlaybackSessionTests
         {
             DisposeCount++;
             return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class ChapterRuntime : FakeRuntime, IChapterNavigationRuntime
+    {
+        public bool RejectChapter { get; init; }
+
+        public ValueTask<MediaTime> ResolveChapterAsync(
+            uint chapterId, RuntimeCommandContext context,
+            CancellationToken cancellationToken)
+        {
+            Calls.Add($"chapter:{context.Epoch.Value}:{chapterId}");
+            if (RejectChapter)
+            {
+                throw new InvalidOperationException("Chapter does not exist.");
+            }
+            return ValueTask.FromResult(MediaTime.FromSeconds(12));
         }
     }
 

@@ -19,6 +19,8 @@ extern "C" {
 #define LAPIS_MEDIA_RUNTIME_ABI_VERSION 2u
 /* Opt-in diagnostics extension; the existing playback ABI stays at v2. */
 #define LAPIS_DIAGNOSTICS_API_VERSION 1u
+/* Separate, optional read-only navigation extension; ABI v2 stays unchanged. */
+#define LAPIS_NAVIGATION_API_VERSION 1u
 #define LAPIS_DIAGNOSTIC_RING_CAPACITY 128u
 
 typedef struct lapis_runtime lapis_runtime;
@@ -162,6 +164,22 @@ LAPIS_API lapis_result lapis_session_read_diagnostic_events(
     uint32_t* out_count,
     uint64_t* out_next_sequence,
     uint64_t* out_dropped);
+
+/*
+ * Optional navigation v1 extension (discover with GetProcAddress).
+ * Resolve the source-selected title's chapter ID to a canonical time.
+ * This is strictly read-only: call lapis_session_seek() at a NEW epoch to
+ * retire old audio/video/packet workers. Only READY/PLAYING/PAUSED are legal.
+ * The expected epoch must match the current session; a closed/file source
+ * returns UNSUPPORTED, an unknown chapter ID returns INVALID_ARGUMENT.
+ * The output is zeroed on every error. No BD-J or menu action occurs.
+ */
+LAPIS_API uint32_t lapis_runtime_get_navigation_api_version(void);
+LAPIS_API lapis_result lapis_session_resolve_chapter(
+    lapis_session* session,
+    uint32_t chapter_id,
+    lapis_playback_epoch expected_epoch,
+    lapis_media_time* out_position);
 
 LAPIS_API lapis_result lapis_runtime_create(lapis_runtime** out_runtime);
 LAPIS_API void lapis_runtime_destroy(lapis_runtime* runtime);

@@ -244,6 +244,12 @@ public sealed class PlaybackSession : IAsyncDisposable
             {
                 envelope.Completion.TrySetException(exception);
             }
+            catch (NotSupportedException exception)
+            {
+                // Unsupported optional source capabilities are user-command
+                // rejections, not native execution faults.
+                envelope.Completion.TrySetException(exception);
+            }
             catch (Exception exception)
             {
                 Publish(_snapshot with
@@ -286,6 +292,9 @@ public sealed class PlaybackSession : IAsyncDisposable
                 break;
             case SeekCommand seek:
                 await HandleSeekAsync(seek, cancellationToken).ConfigureAwait(false);
+                break;
+            case SeekChapterCommand chapter:
+                await HandleSeekChapterAsync(chapter, cancellationToken).ConfigureAwait(false);
                 break;
             case CloseCommand:
                 await HandleCloseAsync(cancellationToken).ConfigureAwait(false);
@@ -389,6 +398,35 @@ public sealed class PlaybackSession : IAsyncDisposable
         EnsureTransport(TransportState.Playing);
         await _runtime.PauseAsync(Context(), cancellationToken).ConfigureAwait(false);
         Publish(_snapshot with { Transport = TransportState.Paused, LastError = null });
+    }
+
+    private async ValueTask HandleSeekChapterAsync(
+        SeekChapterCommand command,
+        CancellationToken cancellationToken)
+    {
+        EnsureTransport(TransportState.Ready, TransportState.Playing, TransportState.Paused);
+        if (_runtime is not IChapterNavigationRuntime navigator)
+        {
+            throw new NotSupportedException(
+                "The current playback runtime does not support chapter navigation.");
+        }
+
+        // Perform the lookup while holding the actor's serialized command
+        // turn, under the *old* epoch. A rejected chapter must not increment
+        // the epoch or discard the active playback generation.
+        var position = await navigator.ResolveChapterAsync(
+            command.ChapterId, Context(), cancellationToken).ConfigureAwait(false);
+        if (position.Nanoseconds < 0)
+        {
+            throw new InvalidOperationException(
+                "Chapter navigation returned a negative start time.");
+        }
+
+        // This reuses the existing stop-workers -> demux seek -> flush/
+        // reconstruct-workers -> clock rebase mechanism. No independent
+        // libbluray cursor mutation is allowed from the UI.
+        await HandleSeekAsync(new SeekCommand(position), cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private async ValueTask HandleSeekAsync(

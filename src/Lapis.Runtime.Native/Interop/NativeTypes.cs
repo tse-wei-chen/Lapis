@@ -7,6 +7,7 @@ internal static class NativeAbi
 {
     internal const uint Version = 2;
     internal const uint DiagnosticsVersion = 1;
+    internal const uint NavigationVersion = 1;
     internal const int DiagnosticRingCapacity = 128;
 }
 

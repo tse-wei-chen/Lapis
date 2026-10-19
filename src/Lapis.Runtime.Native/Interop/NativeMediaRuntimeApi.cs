@@ -6,6 +6,10 @@ internal interface INativeMediaRuntimeApi
 {
     uint GetAbiVersion();
     uint GetDiagnosticsApiVersion();
+    uint GetNavigationApiVersion();
+    NativeResult SessionResolveChapter(
+        nint session, uint chapterId, NativePlaybackEpoch expectedEpoch,
+        out NativeMediaTime start);
     NativeResult SessionReadDiagnosticEvents(
         nint session, ulong sinceSequence, NativeDiagnosticEvent[] events,
         out uint count, out ulong nextSequence, out ulong dropped);
@@ -47,6 +51,15 @@ internal sealed class PInvokeNativeMediaRuntimeApi : INativeMediaRuntimeApi
 
     public uint GetDiagnosticsApiVersion() =>
         NativeMethods.RuntimeGetDiagnosticsApiVersion();
+
+    public uint GetNavigationApiVersion() =>
+        NativeMethods.RuntimeGetNavigationApiVersion();
+
+    public NativeResult SessionResolveChapter(
+        nint session, uint chapterId, NativePlaybackEpoch expectedEpoch,
+        out NativeMediaTime start) =>
+        NativeMethods.SessionResolveChapter(
+            session, chapterId, expectedEpoch, out start);
 
     public NativeResult SessionReadDiagnosticEvents(
         nint session, ulong sinceSequence, NativeDiagnosticEvent[] events,

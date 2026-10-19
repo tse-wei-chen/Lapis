@@ -27,7 +27,7 @@ public sealed class NativeMediaRuntimeException : Exception
 /// In-process adapter from the Application playback-runtime port to the stable
 /// native C ABI. One adapter instance binds to exactly one PlaybackSessionId.
 /// </summary>
-public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfaceBinding, IPlaybackRuntimeObserver
+public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfaceBinding, IPlaybackRuntimeObserver, IChapterNavigationRuntime
 {
     private readonly object _gate = new();
     private readonly INativeMediaRuntimeApi _api;
@@ -139,6 +139,73 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
         }
 
         return ValueTask.CompletedTask;
+    }
+
+    public ValueTask<MediaTime> ResolveChapterAsync(
+        uint chapterId,
+        RuntimeCommandContext context,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ThrowIfDisposed();
+            uint version;
+            try
+            {
+                version = _api.GetNavigationApiVersion();
+            }
+            catch (EntryPointNotFoundException exception)
+            {
+                throw new NotSupportedException(
+                    "The installed native runtime has no chapter-navigation extension.",
+                    exception);
+            }
+
+            if (version != NativeAbi.NavigationVersion)
+            {
+                throw new NotSupportedException(
+                    $"Native navigation API version {version} is not supported.");
+            }
+
+            // Do not create a session just to resolve a chapter: the caller
+            // must already have opened a media source in this exact session.
+            if (_session is null || _boundSessionId != context.SessionId)
+            {
+                throw new InvalidOperationException(
+                    "Chapter resolution requires the active playback session.");
+            }
+
+            NativeResult result;
+            NativeMediaTime position;
+            try
+            {
+                result = _api.SessionResolveChapter(
+                    _session.Handle,
+                    chapterId,
+                    new NativePlaybackEpoch { Value = context.Epoch.Value },
+                    out position);
+            }
+            catch (EntryPointNotFoundException exception)
+            {
+                throw new NotSupportedException(
+                    "The installed native runtime cannot resolve chapter locations.",
+                    exception);
+            }
+            if (result == NativeResult.InvalidArgument)
+            {
+                throw new InvalidOperationException(
+                    $"Chapter {chapterId} does not exist in the selected title.");
+            }
+            ThrowForResult(result, "session_resolve_chapter");
+            if (position.Nanoseconds < 0)
+            {
+                throw new InvalidOperationException(
+                    "Native navigation returned a negative chapter time.");
+            }
+            return ValueTask.FromResult(new MediaTime(position.Nanoseconds));
+        }
     }
 
     public ValueTask SeekAsync(

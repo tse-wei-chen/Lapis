@@ -83,6 +83,43 @@ public sealed class NativePlaybackRuntimeTests
     }
 
     [Fact]
+    public async Task ChapterLookupIsReadOnlyEpochScopedAndRejectsUnsupportedVersions()
+    {
+        var api = new FakeNativeApi
+        {
+            NavigationStart = new NativeMediaTime { Nanoseconds = 8_000_000_000 }
+        };
+        await using var runtime = new NativePlaybackRuntime(api);
+        var navigation = (IChapterNavigationRuntime)runtime;
+        var id = new PlaybackSessionId(Guid.NewGuid());
+        var context = new RuntimeCommandContext(id, new PlaybackEpoch(1));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await navigation.ResolveChapterAsync(4, context, CancellationToken.None));
+        Assert.Equal(0, api.SessionCreateCount);
+
+        await runtime.OpenAsync(new MediaLocator(MediaLocatorKind.Directory, "BDMV"),
+            context, CancellationToken.None);
+        Assert.Equal(MediaTime.FromSeconds(8),
+            await navigation.ResolveChapterAsync(4, context, CancellationToken.None));
+        Assert.Contains("session_resolve_chapter", api.Calls);
+        Assert.DoesNotContain("session_seek", api.Calls);
+        Assert.Equal(4U, api.LastChapterId);
+        Assert.Equal(1UL, api.LastEpoch.Value);
+
+        api.ChapterResult = NativeResult.InvalidArgument;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await navigation.ResolveChapterAsync(999, context, CancellationToken.None));
+        api.ChapterResult = NativeResult.Unsupported;
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await navigation.ResolveChapterAsync(4, context, CancellationToken.None));
+        api.ChapterResult = NativeResult.Ok;
+        api.NavigationVersion = 99;
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await navigation.ResolveChapterAsync(4, context, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task RuntimeBindsToExactlyOnePlaybackSessionId()
     {
         var api = new FakeNativeApi();
@@ -404,6 +441,10 @@ public sealed class NativePlaybackRuntimeTests
     {
         internal uint AbiVersion { get; set; } = NativeAbi.Version;
         internal uint DiagnosticVersion { get; set; } = NativeAbi.DiagnosticsVersion;
+        internal uint NavigationVersion { get; set; } = NativeAbi.NavigationVersion;
+        internal NativeResult ChapterResult { get; set; } = NativeResult.Ok;
+        internal NativeMediaTime NavigationStart { get; set; }
+        internal uint LastChapterId { get; private set; }
         internal NativeDiagnosticEvent[] DiagnosticEvents { get; set; } = [];
         internal ulong DiagnosticDropped { get; set; } = 0;
         internal NativeOpenResult OpenResult { get; set; }
@@ -424,6 +465,18 @@ public sealed class NativePlaybackRuntimeTests
 
         public uint GetAbiVersion() => AbiVersion;
         public uint GetDiagnosticsApiVersion() => DiagnosticVersion;
+        public uint GetNavigationApiVersion() => NavigationVersion;
+        public NativeResult SessionResolveChapter(
+            nint session, uint chapterId, NativePlaybackEpoch expectedEpoch,
+            out NativeMediaTime start)
+        {
+            Assert.Equal((nint)22, session);
+            Calls.Add("session_resolve_chapter");
+            LastEpoch = expectedEpoch;
+            LastChapterId = chapterId;
+            start = NavigationStart;
+            return ChapterResult;
+        }
 
         public NativeResult SessionReadDiagnosticEvents(
             nint session, ulong sinceSequence, NativeDiagnosticEvent[] events,

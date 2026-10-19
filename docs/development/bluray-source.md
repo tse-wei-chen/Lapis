@@ -68,8 +68,17 @@ and `BDMV/STREAM`, or to its `BDMV` subdirectory.
 The first implementation rejects discs reporting AACS or BD+. It only
 exposes read-only Title/Playlist/Chapter/Angle metadata (where present).
 Even if a disc advertises top menus or BD-J, Lapis does not claim to
-support them. Any navigation command returns NotReady while active,
-rather than mutating the native stream outside PlaybackEpoch control.
+support them. Direct `INavigationController::execute()` commands still
+return NotReady while active, rather than mutating the native stream.
+
+**Chapter seek control path (ADR 0039):** an optional read-only navigation
+ABI v1 extension resolves the current Title's chapter ID into its canonical
+start timestamp. The application actor executes `SeekChapterCommand` by
+querying that timestamp at the *current* PlaybackEpoch and, only if it is
+valid, advancing to a new Epoch through the normal seek lifecycle. This
+does **not** implement a chapter-list UI, native BD-J menus or full
+libbluray `bd_seek_chapter` transitions. Timestamp-based chapter navigation
+on real clear BDMV playlists still requires fixture/hardware acceptance.
 
 ## Source override ordering
 

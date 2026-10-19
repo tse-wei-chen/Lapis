@@ -1,4 +1,5 @@
 #include "navigation/navigation.hpp"
+#include "navigation/chapter_seek.hpp"
 #include "session/playback_media_session.hpp"
 #include "source/file/file_source.hpp"
 
@@ -157,6 +158,26 @@ int main() {
         CHECK(info->selected_title == std::uint32_t{7});
         CHECK(info->titles.size() == 1);
         CHECK(info->titles[0].chapters[0].id == 4);
+        CHECK(selected_chapter_start(*info, 4) == MediaTime{0});
+        CHECK(!selected_chapter_start(*info, 5).has_value());
+        auto second_title = *info;
+        TitleInfo alternate;
+        alternate.id = 8;
+        alternate.chapters.push_back({4, MediaTime{99'000'000'000}});
+        second_title.titles.push_back(alternate);
+        CHECK(selected_chapter_start(second_title, 4) == MediaTime{0});
+        second_title.selected_title = 8;
+        CHECK(selected_chapter_start(second_title, 4) ==
+              MediaTime{99'000'000'000});
+        auto other_title = *info;
+        other_title.selected_title = 1234;
+        CHECK(!selected_chapter_start(other_title, 4).has_value());
+        other_title = *info;
+        other_title.capabilities = NavigationCapability::Titles;
+        CHECK(!selected_chapter_start(other_title, 4).has_value());
+        other_title = *info;
+        other_title.titles[0].chapters[0].start = MediaTime{-1};
+        CHECK(!selected_chapter_start(other_title, 4).has_value());
         CHECK(supports_navigation(info->capabilities, NavigationCapability::TopMenu));
         CHECK(!supports_navigation(info->capabilities, NavigationCapability::BdJ));
 

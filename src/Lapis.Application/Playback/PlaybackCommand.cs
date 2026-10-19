@@ -13,4 +13,8 @@ public sealed record PauseCommand : PlaybackCommand;
 
 public sealed record SeekCommand(MediaTime Position) : PlaybackCommand;
 
+// Resolves the current title's chapter in the serialized actor, then uses
+// precisely the same playback-epoch-advancing seek as absolute positioning.
+public sealed record SeekChapterCommand(uint ChapterId) : PlaybackCommand;
+
 public sealed record CloseCommand : PlaybackCommand;

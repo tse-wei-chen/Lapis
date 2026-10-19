@@ -1,6 +1,7 @@
 #include "lapis/media_runtime.h"
 
 #include "core/diagnostic_events.hpp"
+#include "navigation/chapter_seek.hpp"
 #include "execution/playback_execution.hpp"
 #include "process/ffmpeg/ffmpeg_audio_frame_converter.hpp"
 #include "process/ffmpeg/ffmpeg_video_frame_converter.hpp"
@@ -340,6 +341,56 @@ uint32_t lapis_runtime_get_abi_version(void) {
 
 uint32_t lapis_runtime_get_diagnostics_api_version(void) {
     return LAPIS_DIAGNOSTICS_API_VERSION;
+}
+
+uint32_t lapis_runtime_get_navigation_api_version(void) {
+    return LAPIS_NAVIGATION_API_VERSION;
+}
+
+lapis_result lapis_session_resolve_chapter(
+    lapis_session* session,
+    uint32_t chapter_id,
+    lapis_playback_epoch expected_epoch,
+    lapis_media_time* out_position) {
+    return guarded_result([&]() -> lapis_result {
+        if (session == nullptr || out_position == nullptr) {
+            return LAPIS_E_INVALID_ARGUMENT;
+        }
+        *out_position = {};
+
+        // Serialize with Open/Seek/Close so the source cannot be retired
+        // while its navigation metadata is being copied.
+        std::scoped_lock command_lock(session->command_mutex);
+        std::shared_ptr<RuntimePlaybackPipeline> pipeline;
+        {
+            std::scoped_lock lock(session->mutex);
+            if (!matches_epoch(*session, expected_epoch)) {
+                return LAPIS_E_STALE_EPOCH;
+            }
+            if (session->transport != LAPIS_TRANSPORT_READY &&
+                session->transport != LAPIS_TRANSPORT_PLAYING &&
+                session->transport != LAPIS_TRANSPORT_PAUSED) {
+                return LAPIS_E_INVALID_STATE;
+            }
+            pipeline = session->pipeline;
+        }
+        if (pipeline == nullptr || pipeline->media == nullptr) {
+            return LAPIS_E_UNSUPPORTED;
+        }
+
+        const auto state = pipeline->media->navigation_snapshot();
+        if (!state.has_value() ||
+            !lapis::media::supports_navigation(
+                state->capabilities, lapis::media::NavigationCapability::Chapters)) {
+            return LAPIS_E_UNSUPPORTED;
+        }
+        const auto start = lapis::media::selected_chapter_start(*state, chapter_id);
+        if (!start.has_value()) {
+            return LAPIS_E_INVALID_ARGUMENT;
+        }
+        out_position->nanoseconds = start->nanoseconds;
+        return LAPIS_OK;
+    });
 }
 
 lapis_result lapis_session_read_diagnostic_events(

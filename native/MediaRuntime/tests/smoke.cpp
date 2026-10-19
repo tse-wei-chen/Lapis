@@ -49,6 +49,8 @@ int main() {
     CHECK(lapis_runtime_get_abi_version() == LAPIS_MEDIA_RUNTIME_ABI_VERSION);
     CHECK(lapis_runtime_get_diagnostics_api_version() ==
         LAPIS_DIAGNOSTICS_API_VERSION);
+    CHECK(lapis_runtime_get_navigation_api_version() ==
+        LAPIS_NAVIGATION_API_VERSION);
     CHECK(sizeof(lapis_diagnostic_event) == 48);
 
     lapis_runtime* runtime = nullptr;
@@ -96,6 +98,13 @@ int main() {
     CHECK(snapshot.transport == LAPIS_TRANSPORT_CLOSED);
     CHECK(snapshot.epoch.value == 0);
 
+    lapis_media_time chapter_start{123};
+    CHECK(lapis_session_resolve_chapter(session, 0, {0}, nullptr) ==
+          LAPIS_E_INVALID_ARGUMENT);
+    CHECK(lapis_session_resolve_chapter(session, 0, {0}, &chapter_start) ==
+          LAPIS_E_INVALID_STATE);
+    CHECK(chapter_start.nanoseconds == 0);
+
     const lapis_media_locator locator{LAPIS_LOCATOR_FILE, LAPIS_TEST_MEDIA_PATH};
     lapis_open_result open_result{};
     CHECK(lapis_session_open(session, &locator, {1}, &open_result) == LAPIS_OK);
@@ -103,6 +112,12 @@ int main() {
     CHECK(lapis_session_get_snapshot(session, &snapshot) == LAPIS_OK);
     CHECK(snapshot.transport == LAPIS_TRANSPORT_READY);
     CHECK(snapshot.epoch.value == 1);
+    chapter_start.nanoseconds = 456;
+    CHECK(lapis_session_resolve_chapter(session, 0, {0}, &chapter_start) ==
+          LAPIS_E_STALE_EPOCH);
+    CHECK(chapter_start.nanoseconds == 0);
+    CHECK(lapis_session_resolve_chapter(session, 0, {1}, &chapter_start) ==
+          LAPIS_E_UNSUPPORTED);
     CHECK(lapis_session_set_video_output_surface(session, detached, {0}, &binding) == LAPIS_E_STALE_EPOCH);
     CHECK(lapis_session_set_video_output_surface(session, detached, {1}, &binding) == LAPIS_OK);
     CHECK(binding == LAPIS_OUTPUT_SURFACE_DEFERRED);
