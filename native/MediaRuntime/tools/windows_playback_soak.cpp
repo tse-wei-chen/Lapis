@@ -35,6 +35,7 @@ struct Options final {
     std::wstring alternate_media;
     std::wstring output;
     std::wstring mode{L"mixed"};
+    lapis_media_locator_kind media_kind{LAPIS_LOCATOR_FILE};
     std::uint32_t cycles{4};
     std::uint32_t timeout_seconds{15};
     std::uint32_t seek_milliseconds{250};
@@ -83,6 +84,15 @@ struct CycleSample final {
         const std::wstring value(argv[++i]);
         if (flag == L"--media") {
             options.media = value;
+        } else if (flag == L"--media-kind") {
+            if (value == L"file") {
+                options.media_kind = LAPIS_LOCATOR_FILE;
+            } else if (value == L"directory") {
+                options.media_kind = LAPIS_LOCATOR_DIRECTORY;
+            } else {
+                throw std::invalid_argument(
+                    "Media kind must be file or directory.");
+            }
         } else if (flag == L"--media-alternate") {
             options.alternate_media = value;
         } else if (flag == L"--json") {
@@ -290,7 +300,10 @@ template <typename TCommand>
 [[nodiscard]] bool wait_for_terminal(
     lapis_session* session,
     std::uint32_t timeout_seconds,
-    lapis_transport_state& final_transport) {
+    lapis_transport_state& final_transport,
+    std::uint64_t& observed_epoch,
+    std::int64_t& observed_position_ns,
+    std::uint32_t& observed_transport) {
     const auto deadline = Clock::now() +
         std::chrono::seconds(timeout_seconds);
     while (Clock::now() < deadline) {
@@ -299,7 +312,10 @@ template <typename TCommand>
         if (lapis_session_get_snapshot(session, &snapshot) != LAPIS_OK) {
             return false;
         }
+        observed_epoch = snapshot.epoch.value;
+        observed_position_ns = snapshot.position.nanoseconds;
         final_transport = snapshot.transport;
+        observed_transport = static_cast<std::uint32_t>(snapshot.transport);
         if (final_transport == LAPIS_TRANSPORT_ENDED) {
             return true;
         }
@@ -430,7 +446,7 @@ void report_metrics(
 
         const auto& selected_media = !alternate_utf8.empty() && i % 2 == 1
             ? alternate_utf8 : media_utf8;
-        lapis_media_locator locator{LAPIS_LOCATOR_FILE, selected_media.c_str()};
+        lapis_media_locator locator{options.media_kind, selected_media.c_str()};
         lapis_open_result opened{};
         std::uint64_t prior_diagnostic_sequence{};
         if ((options.mode == L"churn" ||
@@ -629,12 +645,18 @@ void report_metrics(
         if (await_eof) {
             lapis_transport_state transport = LAPIS_TRANSPORT_CLOSED;
             if (!wait_for_terminal(
-                    state.session, options.timeout_seconds, transport)) {
+                    state.session,
+                    options.timeout_seconds,
+                    transport,
+                    last_observed_epoch,
+                    last_observed_position_ns,
+                    last_observed_transport)) {
                 failure = transport == LAPIS_TRANSPORT_FAULTED
                     ? "playback_faulted"
                     : "playback_timeout_or_snapshot_failure";
                 break;
             }
+            last_observed_transport = static_cast<std::uint32_t>(transport);
         } else {
             // Close a still-active generation. This is deliberately shorter
             // than most video frames; no sleep loops can hide an actor race.
@@ -805,7 +827,8 @@ int wmain(int argc, wchar_t** argv) {
     try {
         return run_soak(parse_options(argc, argv));
     } catch (const std::exception& exception) {
-        std::cerr << "Lapis soak usage: --media <file> [--cycles N]"
+        std::cerr << "Lapis soak usage: --media <path> [--media-kind file|directory]"
+                     " [--cycles N]"
                      " [--media-alternate <file>]"
                      " [--mode mixed|eof|stop|churn|parent-churn]"
                      " [--timeout-seconds N] [--seek-ms N]"

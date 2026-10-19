@@ -117,6 +117,37 @@ int main() {
     CHECK(router.read(2).status == FfmpegPacketReadStatus::Drained);
     router.stop();
 
+    // Some MP4 muxers place about a second of video packets ahead of
+    // their corresponding audio packets. The default queues must let the demux
+    // pump reach audio even while video is temporarily backpressured.
+    std::vector<PacketEvent> skewed_events;
+    for (std::uint8_t value = 0; value < 64; ++value) {
+        skewed_events.push_back({1, value});
+    }
+    skewed_events.push_back({2, 99});
+    FakePacketSource skewed_source(std::move(skewed_events));
+    FfmpegPacketRouter skewed_router(skewed_source, {1, 2});
+    skewed_router.start();
+
+    auto skewed_audio_reader = std::async(std::launch::async, [&] {
+        return skewed_router.read(2);
+    });
+    const bool audio_ready =
+        skewed_audio_reader.wait_for(2s) == std::future_status::ready;
+    if (!audio_ready) {
+        skewed_router.stop();
+    }
+    CHECK(audio_ready);
+    const auto skewed_audio = skewed_audio_reader.get();
+    CHECK(skewed_audio.has_packet());
+    CHECK(skewed_audio.packet->get().data[0] == 99);
+    for (std::uint8_t expected = 0; expected < 64; ++expected) {
+        const auto packet = skewed_router.read(1);
+        CHECK(packet.has_packet());
+        CHECK(packet.packet->get().data[0] == expected);
+    }
+    skewed_router.stop();
+
     // Stop must release a demux pump blocked by bounded backpressure.
     std::vector<PacketEvent> blocked_events;
     for (std::uint8_t value = 0; value < 16; ++value) {

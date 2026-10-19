@@ -90,6 +90,7 @@ public:
         TitleInfo title;
         title.id = 2;
         title.playlist_id = 105;
+        title.duration = MediaTime{2'000'000'000};
         title.chapters.push_back({0, MediaTime{0}});
         snap.titles.push_back(std::move(title));
         snap.playlists.push_back({105, MediaTime{2'000'000'000}});
@@ -221,6 +222,7 @@ int main() {
                 }));
         const auto opened = media.open({MediaLocatorKind::Directory, name});
         CHECK(opened.ok());
+        CHECK(opened.duration == MediaTime{2'000'000'000});
         CHECK(opened.has_video); // The unmodified FFmpeg AVIO still decodes.
         CHECK(!opened.has_audio);
         const auto snap = media.navigation_snapshot();

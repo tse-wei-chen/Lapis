@@ -21,6 +21,7 @@ struct FfmpegVideoStreamInfo final {
     int width{};
     int height{};
     AVRational time_base{0, 1};
+    MediaTime timestamp_origin{};
     const AVCodecParameters* codec_parameters{};
 };
 
@@ -29,6 +30,7 @@ struct FfmpegAudioStreamInfo final {
     int sample_rate{};
     int channel_count{};
     AVRational time_base{0, 1};
+    MediaTime timestamp_origin{};
     const AVCodecParameters* codec_parameters{};
 };
 
@@ -53,6 +55,7 @@ private:
     AVPacket* pending_packet_{};
     bool has_pending_packet_{};
     AVFormatContext* format_{};
+    MediaTime timestamp_origin_{};
     std::unique_ptr<FfmpegIoContext> io_;
 };
 

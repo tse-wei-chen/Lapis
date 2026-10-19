@@ -10,9 +10,27 @@ extern "C" {
 
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 
 namespace lapis::media::ffmpeg {
+namespace {
+
+bool checked_add(
+    std::int64_t left,
+    std::int64_t right,
+    std::int64_t& result) noexcept {
+    constexpr auto minimum = std::numeric_limits<std::int64_t>::min();
+    constexpr auto maximum = std::numeric_limits<std::int64_t>::max();
+    if ((right > 0 && left > maximum - right) ||
+        (right < 0 && left < minimum - right)) {
+        return false;
+    }
+    result = left + right;
+    return true;
+}
+
+} // namespace
 
 FfmpegDemuxer::FfmpegDemuxer() = default;
 
@@ -57,6 +75,14 @@ bool FfmpegDemuxer::open(IMediaByteStream& stream, std::string_view demux_hint) 
     }
 
     format_ = context;
+    if (context->start_time != AV_NOPTS_VALUE) {
+        timestamp_origin_ = MediaTime{
+            av_rescale_q(
+                context->start_time,
+                AV_TIME_BASE_Q,
+                AVRational{1, 1'000'000'000})
+        };
+    }
     io_ = std::move(io);
     return true;
 }
@@ -100,6 +126,7 @@ std::optional<FfmpegVideoStreamInfo> FfmpegDemuxer::best_video_stream() const no
         stream->codecpar->width,
         stream->codecpar->height,
         stream->time_base,
+        timestamp_origin_,
         stream->codecpar
     };
 }
@@ -130,6 +157,7 @@ std::optional<FfmpegAudioStreamInfo> FfmpegDemuxer::best_audio_stream() const no
         stream->codecpar->sample_rate,
         stream->codecpar->ch_layout.nb_channels,
         stream->time_base,
+        timestamp_origin_,
         stream->codecpar
     };
 }
@@ -151,6 +179,14 @@ bool FfmpegDemuxer::seek(MediaTime target, int stream_index) {
         return false;
     }
 
+    std::int64_t absolute_target_ns{};
+    if (!checked_add(
+            target.nanoseconds,
+            timestamp_origin_.nanoseconds,
+            absolute_target_ns)) {
+        return false;
+    }
+
     // Drop an unconsumed look-ahead from any previous generation.
     if (pending_packet_ != nullptr) {
         av_packet_unref(pending_packet_);
@@ -162,12 +198,12 @@ bool FfmpegDemuxer::seek(MediaTime target, int stream_index) {
         static_cast<unsigned int>(stream_index) < format_->nb_streams) {
         const auto* stream = format_->streams[stream_index];
         timestamp = av_rescale_q(
-            target.nanoseconds,
+            absolute_target_ns,
             AVRational{1, 1'000'000'000},
             stream->time_base);
     } else {
         timestamp = av_rescale_q(
-            target.nanoseconds,
+            absolute_target_ns,
             AVRational{1, 1'000'000'000},
             AV_TIME_BASE_Q);
         stream_index = -1;

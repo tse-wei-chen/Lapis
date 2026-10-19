@@ -11,6 +11,7 @@
 #endif
 #include "source/media_source_registry.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -111,6 +112,19 @@ MediaOpenInfo PlaybackMediaSession::open(const MediaLocator& locator) {
 
     MediaOpenInfo result{};
     result.duration = demuxer->duration();
+    if (impl_->source->navigation != nullptr) {
+        const auto navigation = impl_->source->navigation->snapshot();
+        const auto selected_title = std::find_if(
+            navigation.titles.begin(),
+            navigation.titles.end(),
+            [&navigation](const TitleInfo& title) {
+                return title.id == navigation.selected_title;
+            });
+        if (selected_title != navigation.titles.end() &&
+            selected_title->duration.has_value()) {
+            result.duration = selected_title->duration;
+        }
+    }
 
     const auto video_stream = demuxer->best_video_stream();
     if (video_stream.has_value()) {

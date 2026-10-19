@@ -236,13 +236,15 @@ if(BUILD_TESTING)
     target_compile_definitions(
         Lapis.MediaRuntime.FfmpegTests
         PRIVATE
-            LAPIS_TEST_MEDIA_PATH="${LAPIS_TEST_MEDIA_PATH}"
-            LAPIS_TEST_NONZERO_SEEK_MEDIA_PATH="${LAPIS_TEST_CHURN_MEDIA_PATH}"
-            LAPIS_TEST_Y4M_SEEK_MEDIA_PATH="${LAPIS_TEST_Y4M_SEEK_MEDIA_PATH}"
+            LAPIS_TEST_MEDIA_PATH="tests/assets/test.y4m"
+            LAPIS_TEST_NONZERO_SEEK_MEDIA_PATH="tests/assets/test_soak_churn.mp4"
+            LAPIS_TEST_Y4M_SEEK_MEDIA_PATH="tests/assets/test_seek_y4m.y4m"
     )
     target_link_libraries(Lapis.MediaRuntime.FfmpegTests PRIVATE Lapis.MediaRuntime.Core)
     lapis_enable_strict_warnings(Lapis.MediaRuntime.FfmpegTests)
     add_test(NAME ffmpeg_decode_smoke COMMAND Lapis.MediaRuntime.FfmpegTests)
+    set_tests_properties(ffmpeg_decode_smoke PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 
     add_executable(Lapis.MediaRuntime.PacketRouterTests tests/ffmpeg_packet_router.cpp)
     target_compile_features(Lapis.MediaRuntime.PacketRouterTests PRIVATE cxx_std_20)
@@ -258,7 +260,7 @@ if(BUILD_TESTING)
     target_compile_features(Lapis.MediaRuntime.AudioDecodeTests PRIVATE cxx_std_20)
     target_compile_definitions(
         Lapis.MediaRuntime.AudioDecodeTests
-        PRIVATE LAPIS_TEST_AUDIO_PATH="${LAPIS_TEST_AUDIO_PATH}"
+        PRIVATE LAPIS_TEST_AUDIO_PATH="tests/assets/test_audio.wav"
     )
     target_include_directories(
         Lapis.MediaRuntime.AudioDecodeTests
@@ -267,6 +269,8 @@ if(BUILD_TESTING)
     target_link_libraries(Lapis.MediaRuntime.AudioDecodeTests PRIVATE Lapis.MediaRuntime.Core)
     lapis_enable_strict_warnings(Lapis.MediaRuntime.AudioDecodeTests)
     add_test(NAME ffmpeg_audio_decode_smoke COMMAND Lapis.MediaRuntime.AudioDecodeTests)
+    set_tests_properties(ffmpeg_audio_decode_smoke PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 
     add_executable(Lapis.MediaRuntime.AudioExecutionTests tests/audio_decode_execution.cpp)
     target_compile_features(Lapis.MediaRuntime.AudioExecutionTests PRIVATE cxx_std_20)

@@ -19,6 +19,20 @@ extern "C" {
 namespace lapis::media::ffmpeg {
 namespace {
 
+std::int64_t subtract_timestamp_origin(
+    std::int64_t timestamp,
+    std::int64_t origin) noexcept {
+    constexpr auto minimum = std::numeric_limits<std::int64_t>::min();
+    constexpr auto maximum = std::numeric_limits<std::int64_t>::max();
+    if (origin > 0 && timestamp < minimum + origin) {
+        return minimum;
+    }
+    if (origin < 0 && timestamp > maximum + origin) {
+        return maximum;
+    }
+    return timestamp - origin;
+}
+
 AudioSampleFormat to_core_sample_format(AVSampleFormat format) noexcept {
     const auto packed = av_get_packed_sample_fmt(format);
     switch (packed) {
@@ -187,7 +201,10 @@ private:
     std::uint32_t bytes_per_sample_{};
 };
 
-std::optional<AudioFrame> make_audio_frame(AVFrame& frame, AVRational time_base) {
+std::optional<AudioFrame> make_audio_frame(
+    AVFrame& frame,
+    AVRational time_base,
+    MediaTime timestamp_origin) {
     const auto sample_format = static_cast<AVSampleFormat>(frame.format);
     const int sample_bytes = av_get_bytes_per_sample(sample_format);
     if (sample_bytes <= 0 || frame.nb_samples <= 0 || frame.sample_rate <= 0) {
@@ -227,12 +244,13 @@ std::optional<AudioFrame> make_audio_frame(AVFrame& frame, AVRational time_base)
                 source_pts,
                 Rational{time_base.num, time_base.den}
             };
-            result.timestamp = MediaTime{
-                av_rescale_q(
+            const auto absolute_timestamp = av_rescale_q(
                     source_pts,
                     time_base,
-                    AVRational{1, 1'000'000'000})
-            };
+                    AVRational{1, 1'000'000'000});
+            result.timestamp = MediaTime{subtract_timestamp_origin(
+                absolute_timestamp,
+                timestamp_origin.nanoseconds)};
         }
 
         return result;
@@ -281,6 +299,7 @@ bool FfmpegAudioDecoder::open(const FfmpegAudioStreamInfo& stream_info) {
     frame_ = frame;
     stream_index_ = stream_info.index;
     time_base_ = stream_info.time_base;
+    timestamp_origin_ = stream_info.timestamp_origin;
     draining_ = false;
     return true;
 }
@@ -299,7 +318,8 @@ std::optional<AudioFrame> FfmpegAudioDecoder::decode_next(
 
         const int receive_result = avcodec_receive_frame(context_, frame_);
         if (receive_result == 0) {
-            auto result = make_audio_frame(*frame_, time_base_);
+            auto result = make_audio_frame(
+                *frame_, time_base_, timestamp_origin_);
             av_frame_unref(frame_);
             return result;
         }

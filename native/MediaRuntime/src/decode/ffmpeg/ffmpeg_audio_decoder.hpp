@@ -33,6 +33,7 @@ private:
     AVFrame* frame_{};
     int stream_index_{-1};
     AVRational time_base_{0, 1};
+    MediaTime timestamp_origin_{};
     bool draining_{};
 };
 
