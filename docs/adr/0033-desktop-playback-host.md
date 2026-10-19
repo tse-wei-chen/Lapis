@@ -1,6 +1,6 @@
 # ADR 0033: First desktop shell is an adapter above a UI-neutral playback host
 
-- Status: Accepted
+- Status: Superseded for the UI choice by ADR 0040; hosting boundary retained
 - Date: 2026-10-18
 
 ## Context
@@ -41,6 +41,12 @@ Mixing WinForms types into Application would also preclude future UI hosts.
 9. Add portable fake-port tests for Open/Bind/Play sequencing, epochs, Stop,
    replacement, invalid input, and detach-failure disposal. Add architecture
    tests ensuring the hosting library never depends on WinForms/native code.
+
+## Historical note
+
+The initial WinForms adapter and its tests have now been removed.
+The UI-neutral `Lapis.Desktop.Hosting` actor/epoch/HWND lifetime boundary
+remains in use by the Avalonia frontend described in ADR 0040.
 
 ## Deferred
 

@@ -112,26 +112,10 @@ jobs:
         run: cmake --build build/native --config Release
       - name: Test
         run: ctest --test-dir build/native -C Release --output-on-failure
-      # The Native plane alone has the real FFmpeg/D3D11 DLL available.
+      # Native FFmpeg/D3D11 DLL is required for Avalonia acceptance.
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
-      - name: Real WinForms and native playback lifecycle acceptance
-        shell: pwsh
-        timeout-minutes: 4
-        run: |
-          # Ordinary managed CI never needs to load FFmpeg or D3D11.
-          dotnet build tests/Lapis.Desktop.WinForms.Tests/Lapis.Desktop.WinForms.Tests.csproj -c Release
-          $nativeDir = (Resolve-Path "build/native/Release").Path
-          $testDir = (Resolve-Path "tests/Lapis.Desktop.WinForms.Tests/bin/Release/net10.0-windows").Path
-          Copy-Item (Join-Path $nativeDir "Lapis.MediaRuntime.dll") $testDir -Force
-          $env:PATH = "$nativeDir;$env:PATH"
-          $env:LAPIS_NATIVE_UI_ACCEPTANCE = "1"
-          $env:LAPIS_NATIVE_UI_MEDIA = (Resolve-Path "native/MediaRuntime/tests/assets/test_soak_churn.mp4").Path
-          dotnet test tests/Lapis.Desktop.WinForms.Tests/Lapis.Desktop.WinForms.Tests.csproj `
-            -c Release --no-build `
-            --filter "FullyQualifiedName~NativeWinFormsPlaybackAcceptanceTests" `
-            --logger "trx;LogFileName=native-winforms-acceptance.trx"
       # An actual Avalonia Win32 desktop lifetime / NativeControlHost /
       # FFmpeg D3D11 swap chain acceptance; never a headless GPU mock.
       - name: Real Avalonia native HWND playback acceptance

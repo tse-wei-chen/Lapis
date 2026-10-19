@@ -1,4 +1,4 @@
-# ADR 0040: Avalonia as the product desktop UI, WinForms as a test harness
+# ADR 0040: Avalonia as the sole product desktop UI
 
 - Status: Accepted (first Windows vertical slice)
 - Date: 2026-10-19
@@ -44,10 +44,11 @@ is desirable; the current media renderer itself is still Windows/D3D11.
    transparent native subtitles/BD-J menus already overlay correctly would
    be unsafe. A future GPU compositor or properly shared rendering surface
    must own video/subtitles/menus/AI text ordering.
-7. WinForms remains in the solution as a legacy/regression harness only.
-   No new product controls should be developed there. Retain its existing
-   Windows GPU acceptance tests until equivalent Avalonia HW lifecycle and
-   DPI/device-loss gates exist.
+7. Remove the previous WinForms shell and test project; Avalonia is
+   the sole desktop UI. Retain native Win32 GPU soak/parent-churn tests
+   plus real Avalonia desktop acceptance. Physical GPU/DPI/device-loss
+   tests remain separate release gates.
+
 8. Target `net10.0-windows` for the first runnable app. Avalonia's View and
    ViewModel abstractions are portable, but the current D3D11/Win32 playback
    adapter cannot run on macOS/Linux; never claim cross-platform decoding.
@@ -57,7 +58,7 @@ is desirable; the current media renderer itself is still Windows/D3D11.
 - Windows managed build/test must restore the pinned Avalonia dependencies,
   compile XAML and cover BDMV locator validation and ViewModel playback
   state/error handling without loading native DLLs.
-- Existing Native/WinForms GPU tests remain compatibility gates.
+- Native Win32 GPU soak, parent-churn and injected DeviceLost tests remain additional gates.
 - **New CI gate:** a full Avalonia desktop lifetime and D3D11 swap-chain
   acceptance with a real FFmpeg media fixture, six NativeControlHost
   detach/attach cycles, seek/replay and host-before-HWND shutdown ordering.

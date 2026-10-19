@@ -228,7 +228,7 @@ public sealed class DesktopPlaybackHost : IAsyncDisposable
     {
         var context = new RuntimeCommandContext(_session.SessionId, _session.Snapshot.Epoch);
         // The existing C ABI waits synchronously for render-thread ACK. Never
-        // execute that wait on a WinForms/WPF/WinUI UI dispatcher thread.
+        // execute that wait on any desktop UI dispatcher thread.
         var result = await Task.Run(async () =>
             await _surfaces.SetVideoOutputSurfaceAsync(
                 surface, context, cancellationToken).ConfigureAwait(false),

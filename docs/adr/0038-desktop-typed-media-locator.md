@@ -1,6 +1,6 @@
 # ADR 0038: Desktop opens typed media locators through one playback actor
 
-- Status: Implemented (BDMV folder UI preview)
+- Status: Implemented for the media locator; desktop adapter superseded by ADR 0040
 - Date: 2026-10-19
 
 ## Context
@@ -45,6 +45,12 @@ PlaybackSession actor, playback epoch and HWND lease ownership contracts.
 - Default Windows CI verifies compatibility, not real-disc playback.
   The separate successful libbluray opt-in build/test verifies Native linkage
   and a fake-provider-backed FFmpeg custom-AVIO test, not a real Blu-ray.
+
+## Historical note
+
+The WinForms BDMV picker and tests were removed; the Avalonia
+`BdmvLocator` service and tests now own UI-side directory validation.
+The native source and session actor boundaries remain unchanged.
 
 ## Deferred
 

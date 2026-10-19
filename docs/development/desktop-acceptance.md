@@ -23,19 +23,19 @@ evaluate this milestone.
 | A02 Seeking | Seek backwards/forwards 50 times, including near EOF, paused and playing | No old frames/audio after seek; new epoch reaches requested time |
 | A03 Stop/reopen | Stop, open same file, open a different file, repeat 30 times | Old swapchains and workers release; latest file plays; UI position resets |
 | A04 Natural EOF | Let a short clip reach Ended, press 重播 and Space in separate runs | Playback restarts at 00:00 with a new epoch, no stale EOF |
-| A05 Controlled HWND recreation | While playing, press Ctrl+Shift+H 20 times | The *video* HWND stays identical while Panel HWND changes; no deadlock/black screen |
+| A05 Avalonia HWND reattachment | Exercise repeated NativeControlHost detach/reattach while playing | The *video* HWND stays identical as the proxy is recycled; no deadlock/black screen |
 | A06 Resize/minimize | Resize aggressively, minimize/restore and maximize repeatedly | No stretch corruption, DXGI failure or crash |
-| A07 Per-monitor DPI (not yet guaranteed) | Move form between 100% and 150/200% monitors, change scale while playing | Video HWND remains valid and rendering continues after automatic Panel/parent HWND reconstruction. **Hardware gate remains open.** |
+| A07 Per-monitor DPI (not yet guaranteed) | Move Avalonia window between 100% and 150/200% monitors, change scale while playing | Video HWND remains valid and rendering continues after automatic NativeControlHost proxy reattachment. **Hardware gate remains open.** |
 | A08 GPU Device Lost | Trigger adapter reset/device removal in a controlled development environment; capture native debug output | Transient loss recovers within bounded attempts **with a subsequent successful frame** or ends with a visible terminal failure; record HRESULT, removed reason and recovery attempts; no infinite loop |
 | A09 Display disconnect | Disconnect/reconnect external display and switch graphics mode | No use-after-free or permanent deadlock; recover/fail clearly |
 | A10 Audio endpoint churn | Unplug/replug output, change default device during playback | No process crash; fault is observable if recovery unavailable |
-| A11 App shutdown | Close while opening, seeking, paused, full screen, and during Ctrl+Shift+H | Native render worker joined before HWND is destroyed |
+| A11 App shutdown | Close while opening, seeking, paused, full screen, and during NativeControlHost reattachment | Native render worker joined before HWND is destroyed |
 | A12 Rapid switching | Alternate 10 different local files rapidly with mixed codecs | No previous content on newly opened title, bounded handle/VRAM usage |
 
 ## Automated native Windows soak runner
 
 The Release native build contains `Lapis.PlaybackSoak.exe`. Unlike the
-WinForms test shell, this is a **console-driven repeatability harness** that
+Avalonia desktop UI, this is a **console-driven repeatability harness** that
 calls the existing **C ABI v2** through a real, visible Win32 output HWND.
 It executes FFmpeg decode, the real native workers, D3D11 swap-chain binding,
 natural EOF, and early Stop/Close without synthetic presenter mocks.
@@ -103,7 +103,7 @@ owned hidden popup, then attached to a newly created container HWND.
 The old container is destroyed **only after** parking. No Native surface
 rebind occurs, and playback must continue to natural EOF after all
 transitions without reporting Faulted. This is a native simulation of
-the WinForms HWND Island design, **not a real DPI/WinForms integration test**.
+the proxy-parent HWND lifetime design, **not a real DPI/Avalonia integration test**.
 A `churn` cycle first waits for a *new* real D3D11
 swap-chain creation event, creates a distinct visible output HWND, requests
 a synchronous renderer-acknowledged rebind, destroys the old HWND **only
@@ -127,7 +127,7 @@ rendering HWND. A green result proves only these short Windows CI runner
 scenarios; it **does not**
 exercise actual PMv2 multi-monitor DPI, protected Blu-ray, large HDR frames,
 real driver removal, multi-hour A01, or audio-device churn. The runner uses
-a plain Win32 output HWND and does not replace A05/A07 WinForms Panel tests.
+a plain Win32 output HWND and does not replace A05/A07 Avalonia NativeControlHost and hardware DPI tests.
 
 ## Real D3D11 resource recovery with test-only DeviceLost injection
 
@@ -183,33 +183,22 @@ reset/close of the old output, and normal decode/drain after a
 automatic audio endpoint migration. A10 remains an explicit physical
 headphone-unplug/default-device-switch acceptance gate.
 
-## Real WinForms + Native end-to-end acceptance in Windows CI
+## Real Avalonia + Native end-to-end acceptance in Windows CI
 
-The Native CI workflow now builds **both** the C++ media runtime and
-`Lapis.Desktop.WinForms.Tests` and explicitly enables
-`NativeWinFormsPlaybackAcceptanceTests` with the freshly built native DLL
-and a six-second synthetic indexed MP4. The regular Managed CI job remains
-native-DLL-independent; the integration test is opt-in only when
-`LAPIS_NATIVE_UI_ACCEPTANCE=1` and `LAPIS_NATIVE_UI_MEDIA` names the
-local fixture.
+The Native CI job builds `Lapis.Desktop.Avalonia.Tests` and runs the
+opt-in `NativeAvaloniaPlaybackAcceptanceTests` with a real native DLL
+when `LAPIS_AVALONIA_NATIVE_ACCEPTANCE=1` and `LAPIS_NATIVE_UI_MEDIA`
+points to a locally permitted six-second fixture.
 
-This test uses an actual Windows STA with `Application.Run(Form)`, the
-production `VideoSurfacePanel`, `DesktopPlaybackHost`, native P/Invoke
-adapter, FFmpeg and real D3D11 device/SwapChain. It verifies a
-`SwapChainCreated` event **before** 20 synchronous WinForms Panel HWND
-recreations, invariance of the persistent output HWND and its parent,
-a 250 ms epoch-advancing Seek, natural EOF, replay with the same native
-session and output HWND, explicit Close, and host Disposal **before**
-destroying the borrowed HWND. A 60-second test timeout prevents silent
-indefinite waiting. The Native CI job adds the DLL to the test's output
-directory only after building the native Release artifact.
+The test starts Avalonia's real Win32 STA desktop lifetime. It verifies
+the D3D11 swapchain, persistent GPU child HWND, six NativeControlHost
+detach/attach cycles (including deferred proxy teardown), child pixel
+resizing, epoch-advancing seek, EOF, replay and native shutdown before
+HWND destruction. Ordinary managed unit CI requires no native DLL.
 
-This tests the real WinForms/managed/native boundary missing from the
-standalone D3D11 soak executable. It is still only a short synthetic
-video on a hosted Windows CI environment. It does **not** close the
-physical-hardware A01 (multi-hour), A07 (PerMonitorV2 cross-monitor DPI),
-A08 (actual driver reset), A09 (display disconnect), or A10
-(actual audio endpoint unplug) acceptance gates.
+This is NOT proof of first-frame pixel correctness, hardware DPI,
+physical GPU device removal, long-duration stability or audio endpoint
+migration; those remain explicit release gates.
 
 ## Evidence / sign-off
 
@@ -221,7 +210,7 @@ HRESULT/removed-reason fields. Also capture `Lapis.D3D11`/`Lapis.VideoRender`
 debug-output lines if more detailed driver evidence is needed; a clean Windows
 CI run cannot substitute for a controlled real-driver fault.
 Only mark as passed when performed on real Windows hardware. CI green is not
-a substitute for A01/A07/A08/A09/A10. The Panel HWND lifetime now avoids
+a substitute for A01/A07/A08/A09/A10. The Avalonia GPU HWND lifetime now avoids
 directly destroying the Native swap-chain HWND, but A07 is still an explicit
 release blocker until independent GPU/DPI hardware runs are completed.
 

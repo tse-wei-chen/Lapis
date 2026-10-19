@@ -1,7 +1,7 @@
 # Avalonia desktop player — Windows first
 
 **Product UI:** `src/Lapis.Desktop.Avalonia` (Avalonia 11.3.22 with MVVM).
-**Legacy verification only:** `src/Lapis.Desktop.WinForms`.
+**Former WinForms shell and tests:** removed.
 
 This is a first vertical slice, not a claim of complete PowerDVD parity.
 UI/VM can be ported, but Native FFmpeg/D3D11/WASAPI and the Win32 HWND output
@@ -73,7 +73,7 @@ typed locator forwarding and ViewModel errors without real Native DLLs.
 The Native Windows CI plane now runs a **dedicated opt-in REAL Avalonia
 lifecycle acceptance**, after building MediaRuntime: it starts a true
 Avalonia Win32 desktop lifetime on an STA, opens the same FFmpeg/D3D11
-fixture as the legacy WinForms acceptance, waits for the real native
+fixture used for native Windows acceptance, waits for the real native
 SwapChainCreated diagnostic, detaches/reattaches the NativeControlHost six
 times while keeping the same output HWND, verifies physical D3D11-child
 resize under an explicit Avalonia control layout change, exercises seek, EOF, replay,
@@ -83,4 +83,4 @@ physical GPUs, device loss or multi-hour stability.
 
 The integration test is gated by `LAPIS_AVALONIA_NATIVE_ACCEPTANCE=1`
 and `LAPIS_NATIVE_UI_MEDIA`, so managed unit CI needs no Native DLL.
-The existing WinForms Native acceptance remains as a comparison gate.
+Separate native Win32 soak and parent-churn tests provide additional acceptance coverage.

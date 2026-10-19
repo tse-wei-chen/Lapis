@@ -3,7 +3,7 @@
 Lapis is designed as a media platform rather than a UI wrapped around one decoder stack.
 
 ```text
-Lapis.Desktop.WinForms / future frontends
+Lapis.Desktop.Avalonia (MVVM / NativeControlHost)
         |
         v
 Lapis.Desktop.Hosting
@@ -64,20 +64,15 @@ Native MediaRuntime core
         +---- media taps ----> AIHost (future, non-blocking)
 ```
 
-## First desktop host
+## Desktop frontend: Avalonia
 
-The first runnable Windows frontend is `Lapis.Desktop.WinForms`, which owns
-its `Panel.Handle`, file selection, and UI dispatch only. The portable
-`Lapis.Desktop.Hosting` coordinator orders actor transport commands together
-with calls to the separate `IVideoOutputSurfaceBinding` port. Output binding
-uses the actor's current epoch but does not advance it. The synchronous native
-surface-ACK wait runs away from the UI thread, and form close is deferred until
-the host/native session has stopped and released the borrowed HWND.
-
-The hosting library depends only on Application and Contracts. The WinForms
-composition edge supplies `NativePlaybackRuntime` to both ports; WinForms
-has no P/Invoke or DXGI dependency. Other desktop frameworks can reuse the
-coordinator and replace only their window-lifetime adapter.
+`Lapis.Desktop.Avalonia` is the only desktop presentation adapter. Its
+`NativeControlHost` owns an Avalonia proxy HWND and a persistent GPU child
+HWND. The UI-neutral `Lapis.Desktop.Hosting` serializes playback and surface
+binding commands; native detach/render-thread shutdown must finish before the
+GPU child HWND is destroyed. The ViewModel uses `IPlayerPlaybackService`,
+not FFmpeg or D3D11 types. Native Win32 soak and real Avalonia integration
+tests now replace the retired WinForms test shell.
 
 The actor now also consumes native execution snapshots via the optional
 `IPlaybackRuntimeObserver` port. It polls only while Playing/Paused, off the UI
@@ -125,8 +120,7 @@ and to seek by dragging the progress slider.
 
 The product desktop UI is now **Avalonia 11/MVVM** (`Lapis.Desktop.Avalonia`),
 with a replaceable `IPlayerPlaybackService` and Windows-specific
-`NativeControlHost` HWND adapter. Existing WinForms shell is retained only
-for legacy native GPU acceptance. Avalonia NativeControlHost has an airspace
+`NativeControlHost` HWND adapter. The former WinForms shell is removed. Avalonia NativeControlHost has an airspace
 boundary: transparent subtitles/menus must be composed into a proper GPU
 surface rather than assumed to overlay an HWND (ADR 0040).
 
