@@ -12,6 +12,10 @@
 #include <windows.h>
 #include <wrl/client.h>
 
+// WASAPI/COM SDK headers must be initialized before the Win32 event-wait
+// helper; including the helper earlier changes the Windows SDK GUID macros.
+#include "audio/wasapi/wasapi_event_wait.hpp"
+
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -362,38 +366,24 @@ public:
         if (!running_) {
             return AudioOutputWaitStatus::Ready;
         }
-        if (ResetEvent(stop_event_) == FALSE) {
-            return AudioOutputWaitStatus::Faulted;
-        }
-
-        std::stop_callback stop_callback(
-            stop_token,
-            [event = stop_event_]() noexcept {
-                (void)SetEvent(event);
+        return detail::wait_for_writable_or_device_loss(
+            audio_event_, stop_event_, stop_token, [this] {
+                // Endpoint unplug/default-device transitions may silence the
+                // event indefinitely. Probe GetCurrentPadding at most once
+                // every 100 ms while the event isn't firing.
+                UINT32 padding{};
+                const auto result = audio_client_->GetCurrentPadding(&padding);
+                if (FAILED(result)) {
+                    return device_unavailable(result)
+                        ? detail::WritableProbeResult::DeviceLost
+                        : detail::WritableProbeResult::Faulted;
+                }
+                if (padding >= buffer_frame_count_) {
+                    return detail::WritableProbeResult::Pending;
+                }
+                refresh_position_cache();
+                return detail::WritableProbeResult::Writable;
             });
-
-        const HANDLE handles[] = {audio_event_, stop_event_};
-        const auto wait_result = WaitForMultipleObjects(
-            2,
-            handles,
-            FALSE,
-            INFINITE);
-
-        if (stop_token.stop_requested() ||
-            wait_result == WAIT_OBJECT_0 + 1) {
-            return AudioOutputWaitStatus::Stopped;
-        }
-        if (wait_result != WAIT_OBJECT_0) {
-            return AudioOutputWaitStatus::Faulted;
-        }
-
-        UINT32 padding{};
-        const auto result = audio_client_->GetCurrentPadding(&padding);
-        if (FAILED(result)) {
-            return wait_status_from_hresult(result);
-        }
-        refresh_position_cache();
-        return AudioOutputWaitStatus::Ready;
     }
 
     [[nodiscard]] AudioOutputWaitStatus wait_until_drained(

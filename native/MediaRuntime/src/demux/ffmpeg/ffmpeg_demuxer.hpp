@@ -48,6 +48,10 @@ public:
     [[nodiscard]] bool seek(MediaTime target, int stream_index);
 
 private:
+    // One probed packet is owned by the demuxer after a verified Y4M seek.
+    // Router consumes it before reading the next FFmpeg packet.
+    AVPacket* pending_packet_{};
+    bool has_pending_packet_{};
     AVFormatContext* format_{};
     std::unique_ptr<FfmpegIoContext> io_;
 };

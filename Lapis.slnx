@@ -12,5 +12,6 @@
     <Project Path="tests/Lapis.Architecture.Tests/Lapis.Architecture.Tests.csproj" />
     <Project Path="tests/Lapis.Runtime.Native.Tests/Lapis.Runtime.Native.Tests.csproj" />
     <Project Path="tests/Lapis.Desktop.Hosting.Tests/Lapis.Desktop.Hosting.Tests.csproj" />
+    <Project Path="tests/Lapis.Desktop.WinForms.Tests/Lapis.Desktop.WinForms.Tests.csproj" />
   </Folder>
 </Solution>

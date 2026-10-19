@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/diagnostic_events.hpp"
 #include "core/media_time.hpp"
 #include "core/playback_epoch.hpp"
 #include "video/video_frame.hpp"
@@ -20,6 +21,35 @@ enum class VideoPresentStatus : std::uint8_t {
     UnsupportedSurface,
     DeviceLost,
     Failed
+};
+
+// Readable from a diagnostics/snapshot thread. Presentation implementations
+// must atomically publish individual fields; values are best-effort telemetry,
+// not an interlocked transaction and never control recovery policy.
+enum class VideoPresenterFailureStage : std::uint8_t {
+    None,
+    DeviceCreation,
+    AdapterDiscovery,
+    WindowQuery,
+    SwapChainCreation,
+    RenderTargetCreation,
+    ShaderCreation,
+    ResizeBuffers,
+    TextureUpload,
+    TextureMap,
+    Present
+};
+
+struct VideoPresenterDiagnostics final {
+    std::uint64_t device_creations{};
+    std::uint64_t swap_chain_creations{};
+    std::uint64_t swap_chain_resizes{};
+    std::uint64_t device_loss_events{};
+    std::uint32_t last_hresult{};
+    std::uint32_t last_device_removed_reason{};
+    VideoPresenterFailureStage last_failure_stage{
+        VideoPresenterFailureStage::None
+    };
 };
 
 struct VideoPresentContext final {
@@ -54,6 +84,14 @@ public:
     [[nodiscard]] virtual VideoPresentStatus present(
         const VideoFrame& frame,
         const VideoPresentContext& context) = 0;
+
+    virtual void set_diagnostics_journal(
+        std::shared_ptr<DiagnosticEventJournal>) noexcept {}
+
+    // Default keeps headless and existing third-party presenters compatible.
+    [[nodiscard]] virtual VideoPresenterDiagnostics diagnostics() const noexcept {
+        return {};
+    }
 
     virtual void end() noexcept = 0;
 };

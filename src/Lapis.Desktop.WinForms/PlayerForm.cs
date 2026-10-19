@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Text.Json;
 using System.Windows.Forms;
 using Lapis.Contracts.Playback;
 using Lapis.Desktop.Hosting;
@@ -15,168 +16,291 @@ public sealed class PlayerForm : Form
 {
     private readonly SemaphoreSlim _uiCommands = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
-    private readonly Panel _video = new()
+    // All visual composition lives in PlayerChrome; this Form only adapts
+    // user actions to framework-neutral DesktopPlaybackHost commands.
+    private readonly PlayerChrome _chrome = new();
+    private readonly System.Windows.Forms.Timer _chromeIdleTimer = new()
     {
-        Dock = DockStyle.Fill,
-        BackColor = Color.Black,
-        Margin = new Padding(12, 12, 12, 6),
-        TabStop = false
+        Interval = 200
     };
-    private readonly Button _open = NewButton("開啟影片");
-    private readonly Button _playPause = NewButton("播放");
-    private readonly Button _closeMedia = NewButton("停止");
-    private readonly Button _seek = NewButton("跳至");
-    private readonly TrackBar _progress = new()
+    private readonly System.Windows.Forms.Timer _videoClickTimer = new()
     {
-        Dock = DockStyle.Fill,
-        AutoSize = false,
-        TickStyle = TickStyle.None,
-        Minimum = 0,
-        Maximum = 1000,
-        Enabled = false,
-        Height = 40,
-        Margin = new Padding(12, 3, 12, 3)
+        Interval = SystemInformation.DoubleClickTime
     };
-    private bool _scrubbing;
-    private readonly NumericUpDown _seekSeconds = new()
-    {
-        Minimum = 0,
-        Maximum = 86400,
-        DecimalPlaces = 0,
-        Width = 90,
-        TextAlign = HorizontalAlignment.Right
-    };
-    private readonly Label _state = new()
-    {
-        AutoSize = false,
-        Dock = DockStyle.Fill,
-        ForeColor = Color.Gainsboro,
-        Text = "選擇本機影片，即可開始播放。",
-        TextAlign = ContentAlignment.MiddleLeft,
-        Padding = new Padding(14, 0, 0, 0)
-    };
+    private DateTime _lastMotionUtc = DateTime.UtcNow;
+    private Point _previousPointer = Cursor.Position;
+
+    private VideoSurfacePanel _video => _chrome.Video;
+    private Button _open => _chrome.OpenButton;
+    private Button _playPause => _chrome.PlayButton;
+    private Button _closeMedia => _chrome.StopButton;
+    private Button _seek => _chrome.SeekButton;
+    private Button _diagnostics => _chrome.DiagnosticsButton;
+    private PlaybackSeekBar _progress => _chrome.Progress;
+    private NumericUpDown _seekSeconds => _chrome.SeekSeconds;
 
     private DesktopPlaybackHost? _host;
+    private NativePlaybackRuntime? _nativeRuntime;
     private string? _openedFile;
     private bool _busy;
     private bool _closing;
     private bool _closeApproved;
+    private bool _fullScreen;
+    private FormBorderStyle _restoreBorderStyle;
+    private FormWindowState _restoreWindowState;
+    private Rectangle _restoreBounds;
 
     public PlayerForm()
     {
         Text = "Lapis — Desktop Player";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(720, 470);
-        Size = new Size(1100, 710);
-        BackColor = Color.FromArgb(22, 24, 30);
+        MinimumSize = new Size(850, 530);
+        Size = new Size(1200, 760);
+        BackColor = Color.FromArgb(11, 16, 25);
         ForeColor = Color.WhiteSmoke;
         Font = new Font("Segoe UI", 10f);
         KeyPreview = true;
         AllowDrop = true;
-
-        var root = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            RowCount = 4,
-            ColumnCount = 1,
-            Margin = Padding.Empty,
-            Padding = Padding.Empty
-        };
-        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 68f));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 36f));
-
-        var toolbar = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            BackColor = Color.FromArgb(32, 35, 43),
-            Padding = new Padding(12, 11, 12, 4),
-            Margin = Padding.Empty
-        };
-        toolbar.Controls.AddRange(
-            new Control[] { _open, _playPause, _closeMedia, _seek, _seekSeconds });
-        toolbar.Controls.Add(new Label
-        {
-            Text = "秒",
-            ForeColor = Color.Silver,
-            TextAlign = ContentAlignment.MiddleLeft,
-            AutoSize = false,
-            Size = new Size(36, 38),
-            Padding = new Padding(2, 0, 0, 0)
-        });
-
-        var statusBar = new Panel
-        {
-            Dock = DockStyle.Fill,
-            Margin = Padding.Empty,
-            BackColor = Color.FromArgb(32, 35, 43)
-        };
-        statusBar.Controls.Add(_state);
-
-        root.Controls.Add(_video, 0, 0);
-        root.Controls.Add(_progress, 0, 1);
-        root.Controls.Add(toolbar, 0, 2);
-        root.Controls.Add(statusBar, 0, 3);
-        Controls.Add(root);
+        Controls.Add(_chrome);
 
         _open.Click += async (_, _) => await ChooseFileAsync();
-        _playPause.Click += async (_, _) => await RunUiCommandAsync(
-            async (host, token) => await host.TogglePlayPauseAsync(token));
+        _chrome.ChooseMediaButton.Click += async (_, _) => await ChooseFileAsync();
+        _diagnostics.Click += async (_, _) => await ExportDiagnosticsAsync();
+        _playPause.Click += async (_, _) => await TogglePlayPauseAsync();
         _closeMedia.Click += async (_, _) => await RunUiCommandAsync(
             async (host, token) =>
             {
                 await host.CloseMediaAsync(token);
                 _openedFile = null;
                 Text = "Lapis — Desktop Player";
+                _chrome.SetMedia(null);
+                _chrome.SetTimeline("00:00", "--:--");
             });
         _seek.Click += async (_, _) => await RunUiCommandAsync(
             async (host, token) => await host.SeekAsync(
                 TimeSpan.FromSeconds((double)_seekSeconds.Value), token));
-        _progress.MouseDown += (_, _) => _scrubbing = true;
-        _progress.MouseUp += async (_, _) =>
+        _chrome.BackButton.Click += async (_, _) => await SeekRelativeAsync(-10);
+        _chrome.ForwardButton.Click += async (_, _) => await SeekRelativeAsync(10);
+        _chrome.FullScreenButton.Click += (_, _) => ToggleFullScreen();
+        _chrome.TheaterButton.Click += (_, _) => ToggleTheater();
+
+        // The custom, YouTube-style timeline emits only on an actual release
+        // or keyboard seek. Native position updates never override dragging.
+        _progress.SeekRequested += position =>
         {
-            _scrubbing = false;
-            var duration = _host?.Snapshot.Duration;
-            if (duration is { Nanoseconds: > 0 } && !_closing && !_busy)
+            RegisterInteraction();
+            _ = RunUiCommandAsync(async (host, token) =>
+                await host.SeekAsync(position, token));
+        };
+
+        // Video surface belongs to a persistent HWND. Single click toggles
+        // playback; double click enters/exits fullscreen without accidentally
+        // also toggling pause on the first of its two clicks.
+        _video.MouseClick += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Left && !_closing && !_busy)
             {
-                // MediaTime is canonical nanoseconds; use ticks to retain
-                // sub-second seek precision without clock simulation in UI.
-                var targetTicks = (long)(duration.Value.Nanoseconds / 100.0 *
-                    _progress.Value / _progress.Maximum);
-                await RunUiCommandAsync(async (host, token) =>
-                    await host.SeekAsync(TimeSpan.FromTicks(targetTicks), token));
+                _videoClickTimer.Stop();
+                _videoClickTimer.Start();
             }
+        };
+        _video.MouseDoubleClick += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Left)
+            {
+                _videoClickTimer.Stop();
+                ToggleFullScreen();
+                RegisterInteraction();
+            }
+        };
+        _videoClickTimer.Tick += async (_, _) =>
+        {
+            _videoClickTimer.Stop();
+            if (!_closing && !_busy && _playPause.Enabled)
+            {
+                await TogglePlayPauseAsync();
+            }
+        };
+
+        _chromeIdleTimer.Tick += (_, _) => UpdateChromeVisibility();
+        Shown += (_, _) =>
+        {
+            _previousPointer = Cursor.Position;
+            _chromeIdleTimer.Start();
         };
 
         DragEnter += OnDragEnter;
-        DragDrop += async (_, eventArgs) =>
-        {
-            if (eventArgs.Data?.GetData(DataFormats.FileDrop) is string[] files &&
-                files.Length != 0)
-            {
-                await OpenFileAsync(files[0]);
-            }
-        };
+        DragDrop += OnDragDrop;
+        // WinForms routes drag events to the child under the cursor, not
+        // necessarily to the Form. Both the idle overlay and video area
+        // therefore accept the exact same OpenFile command.
+        AttachFileDropHandlers(_video);
+        // The idle overlay contains nested layout panels and labels. Register
+        // their HWNDs too, or an external drop over the visible instructions
+        // would silently be ignored by WinForms OLE drag routing.
+        AttachFileDropHandlers(_chrome.EmptySurface);
+
         KeyDown += OnKeyDown;
         FormClosing += OnClosing;
+        Resize += (_, _) =>
+        {
+            _chrome.SetCompactHint(ClientSize.Width < 1050);
+            RegisterInteraction();
+        };
+        _chrome.SetCompactHint(ClientSize.Width < 1050);
         RefreshControls();
     }
 
-    private static Button NewButton(string caption) => new()
+    private void AttachFileDropHandlers(Control surface)
     {
-        Text = caption,
-        Width = 100,
-        Height = 38,
-        FlatStyle = FlatStyle.Flat,
-        Margin = new Padding(0, 0, 9, 0),
-        BackColor = Color.FromArgb(55, 62, 77),
-        ForeColor = Color.WhiteSmoke,
-        UseVisualStyleBackColor = false
-    };
+        surface.AllowDrop = true;
+        surface.DragEnter += OnDragEnter;
+        surface.DragDrop += OnDragDrop;
+        foreach (Control child in surface.Controls)
+        {
+            AttachFileDropHandlers(child);
+        }
+    }
+
+    private void RegisterInteraction()
+    {
+        _lastMotionUtc = DateTime.UtcNow;
+        _chrome.SetControlsVisible(true);
+    }
+
+    private void UpdateChromeVisibility()
+    {
+        if (_closing || IsDisposed)
+        {
+            return;
+        }
+
+        var cursor = Cursor.Position;
+        if (cursor != _previousPointer)
+        {
+            _previousPointer = cursor;
+            RegisterInteraction();
+        }
+
+        var immersive = _fullScreen || _chrome.TheaterMode;
+        if (!immersive)
+        {
+            _chrome.SetControlsVisible(true);
+            return;
+        }
+
+        // Controls stay accessible when paused, busy, scrubbing or when the
+        // user is actually pointing at the control deck.
+        if (_busy ||
+            _host?.Snapshot.Transport != TransportState.Playing ||
+            _progress.IsScrubbing ||
+            _progress.Focused ||
+            _seekSeconds.Focused ||
+            _chrome.IsCursorOverTransport(cursor))
+        {
+            RegisterInteraction();
+            return;
+        }
+
+        // A short idle timeout feels like YouTube while preserving the Win32
+        // child HWND ordering: we're collapsing a sibling deck, not drawing
+        // WinForms controls across a GPU-owned child HWND.
+        _chrome.SetControlsVisible(
+            DateTime.UtcNow - _lastMotionUtc < TimeSpan.FromSeconds(3));
+    }
+
+    private void ToggleTheater()
+    {
+        if (_closing || _busy)
+        {
+            return;
+        }
+        _chrome.SetTheaterMode(!_chrome.TheaterMode);
+        RegisterInteraction();
+    }
+
+    private async Task TogglePlayPauseAsync()
+    {
+        // Native EOF is terminal: replay must open a new decoder generation.
+        if (_host?.Snapshot.Transport == TransportState.Ended &&
+            _openedFile is { } replayFile)
+        {
+            await OpenFileAsync(replayFile);
+        }
+        else
+        {
+            await RunUiCommandAsync(
+                async (host, token) => await host.TogglePlayPauseAsync(token));
+        }
+    }
+
+    private Task SeekRelativeAsync(int seconds)
+    {
+        if (_closing || _busy || _host is null)
+        {
+            return Task.CompletedTask;
+        }
+        return RunUiCommandAsync(async (host, token) =>
+        {
+            var snapshot = host.Snapshot;
+            var position = snapshot.Position.ToTimeSpan() +
+                TimeSpan.FromSeconds(seconds);
+            if (position < TimeSpan.Zero)
+            {
+                position = TimeSpan.Zero;
+            }
+            if (snapshot.Duration is { Nanoseconds: > 0 } duration)
+            {
+                var maximum = duration.ToTimeSpan();
+                if (position > maximum)
+                {
+                    position = maximum;
+                }
+            }
+            await host.SeekAsync(position, token);
+        });
+    }
+
+    private async void OnDragDrop(object? sender, DragEventArgs eventArgs)
+    {
+        if (!_closing && !_busy &&
+            eventArgs.Data?.GetData(DataFormats.FileDrop) is string[] files &&
+            files.Length > 0 && File.Exists(files[0]))
+        {
+            await OpenFileAsync(files[0]);
+        }
+    }
+
+    private void ToggleFullScreen()
+    {
+        if (_closing || _busy)
+        {
+            return;
+        }
+        if (!_fullScreen)
+        {
+            RegisterInteraction();
+            _restoreBorderStyle = FormBorderStyle;
+            _restoreWindowState = WindowState;
+            _restoreBounds = Bounds;
+            _fullScreen = true;
+            _chrome.SetFullScreen(true);
+            WindowState = FormWindowState.Normal;
+            FormBorderStyle = FormBorderStyle.None;
+            WindowState = FormWindowState.Maximized;
+        }
+        else
+        {
+            RegisterInteraction();
+            _chrome.SetFullScreen(false);
+            FormBorderStyle = _restoreBorderStyle;
+            WindowState = FormWindowState.Normal;
+            Bounds = _restoreBounds;
+            WindowState = _restoreWindowState;
+            _fullScreen = false;
+        }
+        RegisterInteraction();
+    }
 
     private async Task ChooseFileAsync()
     {
@@ -197,14 +321,64 @@ public sealed class PlayerForm : Form
         }
     }
 
+    private Task ExportDiagnosticsAsync() =>
+        RunUiCommandAsync(async (_, token) =>
+        {
+            if (_nativeRuntime is null)
+            {
+                throw new InvalidOperationException(
+                    "請先開啟一部影片，再匯出診斷報告。");
+            }
+
+            using var dialog = new SaveFileDialog
+            {
+                Title = "匯出 Lapis 診斷報告",
+                Filter = "JSON 診斷報告|*.json",
+                FileName = $"lapis-diagnostics-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.json",
+                AddExtension = true,
+                DefaultExt = "json",
+                OverwritePrompt = true
+            };
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+            {
+                return;
+            }
+
+            // Native records never include the opened media's path.
+            var captured = await Task.Run(
+                () => _nativeRuntime.CaptureDiagnostics(), token);
+            var document = new
+            {
+                schemaVersion = 1,
+                capturedAtUtc = DateTimeOffset.UtcNow,
+                application = "Lapis Desktop",
+                playbackAbiVersion = 2,
+                diagnosticsApiVersion = 1,
+                operatingSystem = Environment.OSVersion.VersionString,
+                dotnetVersion = Environment.Version.ToString(),
+                transport = _host?.Snapshot.Transport.ToString(),
+                videoPanelRecreations = _video.ParentHandleRecreations,
+                journalCapacity = 128,
+                captured.OverwrittenEvents,
+                captured.Events
+            };
+            var json = JsonSerializer.Serialize(
+                document, new JsonSerializerOptions { WriteIndented = true });
+            await File.WriteAllTextAsync(dialog.FileName, json, token);
+        });
+
     private Task OpenFileAsync(string file) => RunUiCommandAsync(
         async (host, token) =>
         {
-            // Access the Control.Handle on the UI thread only. The HWND is a
-            // borrowed display target: we keep it alive through native Dispose.
-            var hwnd = _video.Handle;
+            // The rendering HWND is independently owned and parked across
+            // WinForms Panel handle recreation. Do not lend the Panel HWND.
+            var hwnd = _video.GetOutputHandle();
+            _openedFile = null;
+            Text = "Lapis — Desktop Player";
+            _chrome.SetMedia(null);
             await host.OpenAndPlayAsync(file, hwnd, token);
             _openedFile = file;
+            _chrome.SetMedia(Path.GetFileName(file));
             Text = $"Lapis — {Path.GetFileName(file)}";
         });
 
@@ -272,6 +446,7 @@ public sealed class PlayerForm : Form
         var runtime = await Task.Run(
             static () => new NativePlaybackRuntime(), _lifetime.Token);
         var host = new DesktopPlaybackHost(runtime, runtime);
+        _nativeRuntime = runtime;
         _host = host;
         _ = ObserveSnapshotsAsync(host, _lifetime.Token);
         return host;
@@ -289,13 +464,24 @@ public sealed class PlayerForm : Form
                 {
                     continue;
                 }
-                BeginInvoke(new Action(() =>
+                try
                 {
-                    if (!_closing && !IsDisposed)
+                    BeginInvoke(new Action(() =>
                     {
-                        DisplaySnapshot(snapshot);
-                    }
-                }));
+                        if (!_closing && !IsDisposed && IsHandleCreated)
+                        {
+                            DisplaySnapshot(snapshot);
+                        }
+                    }));
+                }
+                catch (InvalidOperationException) when (!IsHandleCreated || _closing || IsDisposed)
+                {
+                    // The form handle can disappear between the probe and
+                    // BeginInvoke during PMv2/control recreation.
+                }
+                catch (ObjectDisposedException) when (_closing || IsDisposed)
+                {
+                }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -313,7 +499,8 @@ public sealed class PlayerForm : Form
             return;
         }
         var duration = snapshot.Duration;
-        if (!_scrubbing)
+        _progress.Duration = duration?.ToTimeSpan() ?? TimeSpan.Zero;
+        if (!_progress.IsScrubbing)
         {
             _progress.Value = duration is { Nanoseconds: > 0 }
                 ? Math.Clamp((int)Math.Round(
@@ -326,10 +513,24 @@ public sealed class PlayerForm : Form
         var durationText = duration.HasValue
             ? FormatPosition(duration.Value.ToTimeSpan())
             : "--:--";
-        _state.Text = snapshot.LastError is null
-            ? $"狀態：{snapshot.Transport}　|　{positionText} / {durationText}" +
-              (_openedFile is null ? "" : $"　|　{Path.GetFileName(_openedFile)}")
-            : $"錯誤：{(snapshot.LastError.Context ?? snapshot.LastError.Code)}";
+        _chrome.SetTimeline(positionText, durationText);
+        var stateLabel = snapshot.Transport switch
+        {
+            TransportState.Closed => "準備就緒",
+            TransportState.Opening => "正在開啟",
+            TransportState.Ready => "已就緒",
+            TransportState.Playing => "播放中",
+            TransportState.Paused => "已暫停",
+            TransportState.Seeking => "跳轉中",
+            TransportState.Ended => "播放完成",
+            TransportState.Faulted => "播放發生問題",
+            _ => snapshot.Transport.ToString()
+        };
+        _chrome.SetState(snapshot.LastError is null
+            ? $"{stateLabel}  ·  {positionText} / {durationText}" +
+              (_openedFile is null ? "" : $"  ·  {Path.GetFileName(_openedFile)}")
+            : $"播放錯誤：{(snapshot.LastError.Context ?? snapshot.LastError.Code)}",
+            snapshot.LastError is not null);
         RefreshControls();
     }
 
@@ -343,17 +544,25 @@ public sealed class PlayerForm : Form
         var state = _host?.Snapshot.Transport ?? TransportState.Closed;
         var canInteract = !_busy && !_closing;
         _open.Enabled = canInteract;
+        _chrome.ChooseMediaButton.Enabled = canInteract;
+        _diagnostics.Enabled = canInteract && _nativeRuntime is not null;
         _playPause.Enabled = canInteract &&
-            state is TransportState.Ready or TransportState.Playing or TransportState.Paused;
-        _playPause.Text = state == TransportState.Playing ? "暫停" : "播放";
+            (state is TransportState.Ready or TransportState.Playing or TransportState.Paused ||
+             (state == TransportState.Ended && _openedFile is not null));
+        _playPause.Text = state == TransportState.Playing ? "Ⅱ  暫停" :
+            state == TransportState.Ended ? "↻  重播" : "▶  播放";
         _closeMedia.Enabled = canInteract && state != TransportState.Closed;
-        _seek.Enabled = canInteract &&
+        var canSeek = canInteract &&
             state is TransportState.Ready or TransportState.Playing or TransportState.Paused;
-        _seekSeconds.Enabled = _seek.Enabled;
-        _progress.Enabled = canInteract &&
-            _host?.Snapshot.Duration is { Nanoseconds: > 0 } &&
-            state is (TransportState.Ready or TransportState.Playing or
-                TransportState.Paused or TransportState.Ended);
+        _seek.Enabled = canSeek;
+        _seekSeconds.Enabled = canSeek;
+        _chrome.BackButton.Enabled = canSeek;
+        _chrome.ForwardButton.Enabled = canSeek;
+        _progress.Enabled = canSeek &&
+            _host?.Snapshot.Duration is { Nanoseconds: > 0 };
+        _chrome.FullScreenButton.Enabled = canInteract;
+        _chrome.TheaterButton.Enabled = canInteract;
+        UpdateChromeVisibility();
     }
 
     private void ShowFailure(Exception exception)
@@ -367,7 +576,7 @@ public sealed class PlayerForm : Form
                 "Native DLL 與 Managed ABI 版本不相容，請重新建置 Native MediaRuntime。",
             _ => exception.Message
         };
-        _state.Text = $"錯誤：{message}";
+        _chrome.SetState($"錯誤：{message}", true);
         MessageBox.Show(this, message, "Lapis 播放錯誤",
             MessageBoxButtons.OK, MessageBoxIcon.Error);
     }
@@ -382,18 +591,82 @@ public sealed class PlayerForm : Form
 
     private async void OnKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Control && e.KeyCode == Keys.O)
+        // Ignore transport shortcuts while editing an absolute seek value.
+        // Modifier shortcuts remain available even if another child has focus.
+        var editingTime = _seekSeconds.Focused;
+        var editingTimeline = _progress.Focused;
+
+        if (e.KeyCode is Keys.F11 or Keys.F && !e.Control && !e.Alt &&
+            !_closing && !editingTime)
         {
             e.Handled = true;
+            e.SuppressKeyPress = true;
+            ToggleFullScreen();
+        }
+        else if (e.KeyCode == Keys.Escape && _fullScreen)
+        {
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            ToggleFullScreen();
+        }
+        else if (e.Control && e.KeyCode == Keys.O)
+        {
+            e.Handled = true;
+            e.SuppressKeyPress = true;
             await ChooseFileAsync();
         }
-        else if (e.KeyCode == Keys.Space &&
-                 !_seekSeconds.Focused && !_closing && !_busy &&
-                 _playPause.Enabled)
+        else if (e.Control && e.Shift && e.KeyCode == Keys.H &&
+                 !_closing && !_busy && _host is not null)
+        {
+            // Stable native HWND cannot change during an active UI
+            // recreation, regardless of theater/fullscreen mode.
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            await RunUiCommandAsync((_, _) =>
+            {
+                var outputHwnd = _video.GetOutputHandle();
+                _video.RecreateForDiagnostics();
+                if (_video.GetOutputHandle() != outputHwnd)
+                {
+                    throw new InvalidOperationException(
+                        "Video output HWND changed during panel recreation.");
+                }
+                return Task.CompletedTask;
+            });
+        }
+        else if (e.KeyCode == Keys.T && !e.Control && !e.Alt &&
+                 !_closing && !editingTime)
         {
             e.Handled = true;
-            await RunUiCommandAsync(
-                async (host, token) => await host.TogglePlayPauseAsync(token));
+            e.SuppressKeyPress = true;
+            ToggleTheater();
+        }
+        else if (!editingTime && !editingTimeline && !_closing &&
+                 !_busy && _chrome.BackButton.Enabled &&
+                 e.KeyCode is Keys.Left or Keys.Right or Keys.J or Keys.L)
+        {
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            RegisterInteraction();
+            await SeekRelativeAsync(e.KeyCode is Keys.Left or Keys.J ? -10 : 10);
+        }
+        else if (!editingTime && !_closing && !_busy &&
+                 _playPause.Enabled &&
+                 e.KeyCode is Keys.Space or Keys.K)
+        {
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            RegisterInteraction();
+            await TogglePlayPauseAsync();
+        }
+        else if (e.KeyCode == Keys.D0 && !e.Control && !e.Alt &&
+                 !editingTime && !_busy && _chrome.BackButton.Enabled)
+        {
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            RegisterInteraction();
+            await RunUiCommandAsync(async (host, token) =>
+                await host.SeekAsync(TimeSpan.Zero, token));
         }
     }
 
@@ -413,6 +686,8 @@ public sealed class PlayerForm : Form
         }
 
         _closing = true;
+        _chromeIdleTimer.Stop();
+        _videoClickTimer.Stop();
         RefreshControls();
         await _uiCommands.WaitAsync();
         try
@@ -436,6 +711,9 @@ public sealed class PlayerForm : Form
             _uiCommands.Release();
         }
 
+        // DXGI render worker has joined and detached before the island
+        // destroys its independently owned output HWND.
+        _video.ReleaseOutputAfterRuntimeDisposed();
         _lifetime.Cancel();
         _closeApproved = true;
         BeginInvoke(new Action(Close));
@@ -445,6 +723,8 @@ public sealed class PlayerForm : Form
     {
         if (disposing)
         {
+            _chromeIdleTimer.Dispose();
+            _videoClickTimer.Dispose();
             _lifetime.Dispose();
             _uiCommands.Dispose();
         }

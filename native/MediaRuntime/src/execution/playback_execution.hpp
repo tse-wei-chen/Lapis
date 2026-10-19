@@ -79,6 +79,7 @@ struct PlaybackExecutionSnapshot final {
     VideoRenderWorkerState render_state{VideoRenderWorkerState::Idle};
     VideoSchedulingStats scheduling{};
     VideoRenderStats rendering{};
+    VideoPresenterDiagnostics presenter_diagnostics{};
     AudioDecodeWorkerState audio_decode_state{AudioDecodeWorkerState::Idle};
     AudioProcessWorkerState audio_process_state{AudioProcessWorkerState::Idle};
     AudioProcessStatus audio_process_status{AudioProcessStatus::NeedMoreInput};
@@ -97,7 +98,8 @@ public:
         PlaybackMediaSession& media,
         std::unique_ptr<IVideoFrameProcessor> processor,
         std::unique_ptr<IVideoPresenter> presenter,
-        PlaybackExecutionConfig config = {});
+        PlaybackExecutionConfig config = {},
+        std::shared_ptr<DiagnosticEventJournal> journal = nullptr);
 
     PlaybackExecution(
         PlaybackMediaSession& media,
@@ -105,7 +107,8 @@ public:
         std::unique_ptr<IVideoPresenter> presenter,
         std::unique_ptr<IAudioOutputProvider> audio_output_provider,
         AudioFrameProcessorFactory audio_processor_factory,
-        PlaybackExecutionConfig config = {});
+        PlaybackExecutionConfig config = {},
+        std::shared_ptr<DiagnosticEventJournal> journal = nullptr);
 
     ~PlaybackExecution();
 

@@ -277,6 +277,77 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
         }
     }
 
+    /// <summary>
+    /// Explicit on-demand diagnostics export. This optional API is separately
+    /// versioned from playback ABI v2 and is not used in the frame loop.
+    /// It captures the most recent 128 events (with overwrite accounting)
+    /// without collecting the local media path or changing playback state.
+    /// </summary>
+    public NativeDiagnosticsReport CaptureDiagnostics()
+    {
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            uint version;
+            try
+            {
+                version = _api.GetDiagnosticsApiVersion();
+            }
+            catch (EntryPointNotFoundException exception)
+            {
+                throw new NotSupportedException(
+                    "The installed native DLL does not provide diagnostics v1.",
+                    exception);
+            }
+            if (version != NativeAbi.DiagnosticsVersion)
+            {
+                throw new NotSupportedException(
+                    $"Native diagnostics API {version} is not supported.");
+            }
+
+            if (_session is null)
+            {
+                return new NativeDiagnosticsReport([], 0);
+            }
+
+            var native = new NativeDiagnosticEvent[NativeAbi.DiagnosticRingCapacity];
+            NativeResult result;
+            uint count;
+            ulong next;
+            ulong dropped;
+            try
+            {
+                result = _api.SessionReadDiagnosticEvents(
+                    _session.Handle, 0, native, out count, out next, out dropped);
+            }
+            catch (EntryPointNotFoundException exception)
+            {
+                throw new NotSupportedException(
+                    "The installed native DLL is missing diagnostics v1 exports.",
+                    exception);
+            }
+            ThrowForResult(result, "session_read_diagnostic_events");
+            if (count > native.Length)
+            {
+                throw new NativeMediaRuntimeException(
+                    "session_read_diagnostic_events.count", NativeResult.Internal);
+            }
+            var events = new List<NativeDiagnosticsEvent>((int)count);
+            for (var index = 0; index < count; index++)
+            {
+                var entry = native[index];
+                events.Add(new NativeDiagnosticsEvent(
+                    entry.Sequence, entry.Epoch,
+                    entry.MonotonicMilliseconds,
+                    entry.Kind, entry.FailureStage,
+                    $"0x{entry.Hresult:X8}",
+                    $"0x{entry.RemovedReason:X8}",
+                    entry.Detail));
+            }
+            return new NativeDiagnosticsReport(events, dropped);
+        }
+    }
+
     public ValueTask DisposeAsync()
     {
         lock (_gate)

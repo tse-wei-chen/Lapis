@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <iostream>
 #include <thread>
 
@@ -46,6 +47,9 @@ int main() {
     using namespace std::chrono_literals;
 
     CHECK(lapis_runtime_get_abi_version() == LAPIS_MEDIA_RUNTIME_ABI_VERSION);
+    CHECK(lapis_runtime_get_diagnostics_api_version() ==
+        LAPIS_DIAGNOSTICS_API_VERSION);
+    CHECK(sizeof(lapis_diagnostic_event) == 48);
 
     lapis_runtime* runtime = nullptr;
     CHECK(lapis_runtime_create(&runtime) == LAPIS_OK);
@@ -55,6 +59,23 @@ int main() {
     lapis_session* session = nullptr;
     CHECK(lapis_session_create(runtime, session_id, &session) == LAPIS_OK);
     CHECK(session != nullptr);
+
+    lapis_diagnostic_event events[LAPIS_DIAGNOSTIC_RING_CAPACITY]{};
+    uint32_t event_count{};
+    uint64_t next_sequence{};
+    uint64_t overwritten{};
+    CHECK(lapis_session_read_diagnostic_events(
+        session, 0, events, LAPIS_DIAGNOSTIC_RING_CAPACITY,
+        &event_count, &next_sequence, &overwritten) == LAPIS_OK);
+    CHECK(event_count == 0);
+    CHECK(next_sequence == 0);
+    CHECK(overwritten == 0);
+    CHECK(lapis_session_read_diagnostic_events(
+        session, 0, nullptr, 1,
+        &event_count, &next_sequence, &overwritten) == LAPIS_E_INVALID_ARGUMENT);
+    CHECK(lapis_session_read_diagnostic_events(
+        session, 0, events, LAPIS_DIAGNOSTIC_RING_CAPACITY + 1,
+        &event_count, &next_sequence, &overwritten) == LAPIS_E_INVALID_ARGUMENT);
 
     lapis_video_output_surface_binding binding{};
     const lapis_video_output_surface detached{LAPIS_VIDEO_OUTPUT_SURFACE_NONE, 0};

@@ -22,6 +22,9 @@ public:
     [[nodiscard]] VideoPresentStatus present(
         const VideoFrame& frame,
         const VideoPresentContext& context) override;
+    [[nodiscard]] VideoPresenterDiagnostics diagnostics() const noexcept override;
+    void set_diagnostics_journal(
+        std::shared_ptr<DiagnosticEventJournal> journal) noexcept override;
     void end() noexcept override;
 
 private:

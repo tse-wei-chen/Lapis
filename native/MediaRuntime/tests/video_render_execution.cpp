@@ -52,6 +52,8 @@ struct PresenterProbe final {
     std::mutex present_gate_mutex;
     std::condition_variable present_gate_changed;
     bool block_first_present{};
+    bool device_lost_once{};
+    bool device_always_lost{};
     bool first_present_entered{};
     bool release_first_present{};
 
@@ -69,6 +71,8 @@ struct PresenterProbe final {
         surfaces.clear();
         surface_threads.clear();
         block_first_present = false;
+        device_lost_once = false;
+        device_always_lost = false;
         first_present_entered = false;
         release_first_present = false;
     }
@@ -112,6 +116,10 @@ public:
             });
         }
 
+        if (probe_->device_always_lost ||
+            (probe_->device_lost_once && probe_->present_count == 1)) {
+            return lapis::media::VideoPresentStatus::DeviceLost;
+        }
         return probe_->present_status;
     }
 
@@ -214,6 +222,9 @@ int main() {
     CHECK(render_stats.stale_epoch_drops == 0);
     CHECK(render_stats.inactive_clock_drops == 0);
     CHECK(render_stats.presenter_failures == 0);
+    CHECK(render_stats.recovery_attempts == 0);
+    CHECK(render_stats.recovery_bind_successes == 0);
+    CHECK(render_stats.recovered_presents == 0);
     CHECK(probe->begin_count == 1);
     CHECK(probe->present_count == 2);
     CHECK(probe->end_count == 1);
@@ -278,6 +289,8 @@ int main() {
     render_stats = renderer.stats();
     CHECK(render_stats.presented_frames == 0);
     CHECK(render_stats.presenter_failures == 1);
+    CHECK(render_stats.recovery_attempts == 0); // No bound surface to recover.
+    CHECK(render_stats.recovered_presents == 0);
     CHECK(renderer.last_present_status() == VideoPresentStatus::DeviceLost);
     CHECK(probe->begin_count == 1);
     CHECK(probe->present_count == 1);
@@ -285,13 +298,82 @@ int main() {
     CHECK(probe->begin_thread == probe->present_threads[0]);
     CHECK(probe->end_thread == probe->begin_thread);
 
+    // Recover from a transient device removal without restarting playback or
+    // replacing the logical epoch. The next decoded frame is presented after
+    // the presenter releases and rebuilds its render-thread resources.
+    CHECK(media.seek(MediaTime{}));
+    const auto recovery_now = SteadyClockSource::now();
+    CHECK(clock.rebase(PlaybackEpoch{11}, MediaTime{}, recovery_now));
+    probe->reset_records();
+    probe->present_status = VideoPresentStatus::Presented;
+    probe->device_lost_once = true;
+    const VideoOutputSurfaceDescriptor recovery_surface{
+        VideoOutputSurfaceKind::Win32Window,
+        static_cast<std::uintptr_t>(0x3333)
+    };
+    CHECK(renderer.set_output_surface(recovery_surface) ==
+        VideoOutputSurfaceControlStatus::Deferred);
+    CHECK(media.start_decode_generation(MediaDecodeSelection{true, false}));
+    auto recovery_decoded = decoder.start(PlaybackEpoch{11});
+    auto recovery_presentation = scheduler.start(recovery_decoded);
+    renderer.start(recovery_presentation);
+    CHECK(wait_for_render_completion(renderer));
+    renderer.stop();
+    scheduler.stop();
+    decoder.stop();
+    media.stop_decode_generation();
+
+    CHECK(renderer.state() == VideoRenderWorkerState::Drained);
+    render_stats = renderer.stats();
+    CHECK(render_stats.presented_frames == 1);
+    CHECK(render_stats.presenter_failures == 1);
+    CHECK(render_stats.recovery_attempts == 1);
+    CHECK(render_stats.recovery_bind_successes == 1);
+    CHECK(render_stats.recovered_presents == 1);
+    CHECK(renderer.last_present_status() == VideoPresentStatus::Presented);
+    CHECK(probe->begin_count == 2);
+    CHECK(probe->present_count == 2);
+    CHECK(probe->end_count == 2);
+    CHECK(probe->surfaces.size() == 3);
+    CHECK(probe->surfaces[0] == recovery_surface);
+    CHECK(probe->surfaces[1] == recovery_surface);
+    CHECK(probe->surfaces[2] == VideoOutputSurfaceDescriptor{});
+
+    // A repeated loss is NOT a successful EOF merely because the input ran
+    // out while the presenter was trying to recreate its D3D resources.
+    CHECK(media.seek(MediaTime{}));
+    const auto loss_now = SteadyClockSource::now();
+    CHECK(clock.rebase(PlaybackEpoch{12}, MediaTime{}, loss_now));
+    probe->reset_records();
+    probe->device_always_lost = true;
+    CHECK(media.start_decode_generation(MediaDecodeSelection{true, false}));
+    auto loss_decoded = decoder.start(PlaybackEpoch{12});
+    auto loss_presentation = scheduler.start(loss_decoded);
+    renderer.start(loss_presentation);
+    CHECK(wait_for_render_completion(renderer));
+    renderer.stop();
+    scheduler.stop();
+    decoder.stop();
+    media.stop_decode_generation();
+
+    CHECK(renderer.state() == VideoRenderWorkerState::PresenterUnavailable);
+    render_stats = renderer.stats();
+    CHECK(render_stats.presented_frames == 0);
+    CHECK(render_stats.presenter_failures == 2);
+    CHECK(render_stats.recovery_attempts == 2);
+    CHECK(render_stats.recovery_bind_successes == 2);
+    CHECK(render_stats.recovered_presents == 0);
+    CHECK(probe->begin_count == 2);
+    CHECK(probe->present_count == 2);
+    CHECK(probe->end_count == 2);
+
     // A surface configured while no render generation exists is deferred. The
     // next generation applies it on the render thread before presentation. A
     // live replacement is synchronous: the caller does not receive Applied until
     // the render thread has left the current present() call and switched surfaces.
     CHECK(media.seek(MediaTime{}));
     const auto surface_now = SteadyClockSource::now();
-    CHECK(clock.rebase(PlaybackEpoch{11}, MediaTime{}, surface_now));
+    CHECK(clock.rebase(PlaybackEpoch{13}, MediaTime{}, surface_now));
     probe->reset_records();
     probe->present_status = VideoPresentStatus::Presented;
     probe->surface_status = VideoOutputSurfaceApplyStatus::Ready;
@@ -310,7 +392,7 @@ int main() {
         VideoOutputSurfaceControlStatus::Deferred);
 
     CHECK(media.start_decode_generation(MediaDecodeSelection{true, false}));
-    auto surface_decoded = decoder.start(PlaybackEpoch{11});
+    auto surface_decoded = decoder.start(PlaybackEpoch{13});
     auto surface_presentation = scheduler.start(surface_decoded);
     renderer.start(surface_presentation);
     CHECK(wait_for_first_present(probe));

@@ -255,6 +255,63 @@ public sealed class NativePlaybackRuntimeTests
     }
 
     [Fact]
+    public void DiagnosticsWireLayoutIsStable()
+    {
+        Assert.Equal(1u, NativeAbi.DiagnosticsVersion);
+        Assert.Equal(48, Marshal.SizeOf<NativeDiagnosticEvent>());
+        Assert.Equal(40L, Marshal.OffsetOf<NativeDiagnosticEvent>(
+            nameof(NativeDiagnosticEvent.Detail)).ToInt64());
+    }
+
+    [Fact]
+    public async Task DiagnosticsExportReadsOneBoundedSessionJournal()
+    {
+        var api = new FakeNativeApi
+        {
+            DiagnosticEvents =
+            [
+                new NativeDiagnosticEvent
+                {
+                    Sequence = 42,
+                    Epoch = 7,
+                    Kind = 1,
+                    FailureStage = 10,
+                    Hresult = 0x887A0005,
+                    RemovedReason = 0x887A0006
+                }
+            ],
+            DiagnosticDropped = 10
+        };
+        await using var runtime = new NativePlaybackRuntime(api);
+        Assert.Empty(runtime.CaptureDiagnostics().Events);
+        Assert.Equal(0, api.SessionCreateCount);
+
+        var id = new PlaybackSessionId(Guid.NewGuid());
+        await runtime.OpenAsync(
+            new MediaLocator(MediaLocatorKind.File, "secret-file-path.mkv"),
+            new RuntimeCommandContext(id, new PlaybackEpoch(1)),
+            CancellationToken.None);
+
+        var report = runtime.CaptureDiagnostics();
+        Assert.Equal((ulong)10, report.OverwrittenEvents);
+        var diagnostic = Assert.Single(report.Events);
+        Assert.Equal((ulong)42, diagnostic.Sequence);
+        Assert.Equal("0x887A0005", diagnostic.Hresult);
+        Assert.Equal("0x887A0006", diagnostic.RemovedReason);
+        Assert.DoesNotContain("secret-file-path", report.ToString());
+        Assert.Contains("session_read_diagnostic_events", api.Calls);
+    }
+
+    [Fact]
+    public async Task UnsupportedDiagnosticsVersionIsRejectedWithoutRead()
+    {
+        var api = new FakeNativeApi { DiagnosticVersion = 44 };
+        await using var runtime = new NativePlaybackRuntime(api);
+        Assert.Throws<NotSupportedException>(() => runtime.CaptureDiagnostics());
+        Assert.DoesNotContain("session_read_diagnostic_events", api.Calls);
+    }
+
+    [Fact]
     public void NativeSnapshotLayoutMirrorsCAbi()
     {
         Assert.Equal(40, Marshal.SizeOf<NativePlaybackSnapshot>());
@@ -346,6 +403,9 @@ public sealed class NativePlaybackRuntimeTests
     private sealed class FakeNativeApi : INativeMediaRuntimeApi
     {
         internal uint AbiVersion { get; set; } = NativeAbi.Version;
+        internal uint DiagnosticVersion { get; set; } = NativeAbi.DiagnosticsVersion;
+        internal NativeDiagnosticEvent[] DiagnosticEvents { get; set; } = [];
+        internal ulong DiagnosticDropped { get; set; } = 0;
         internal NativeOpenResult OpenResult { get; set; }
         internal NativePlaybackSnapshot Snapshot { get; set; }
         internal NativeResult PlayResult { get; set; } = NativeResult.Ok;
@@ -363,6 +423,22 @@ public sealed class NativePlaybackRuntimeTests
         internal NativeMediaTime LastPosition { get; private set; }
 
         public uint GetAbiVersion() => AbiVersion;
+        public uint GetDiagnosticsApiVersion() => DiagnosticVersion;
+
+        public NativeResult SessionReadDiagnosticEvents(
+            nint session, ulong sinceSequence, NativeDiagnosticEvent[] events,
+            out uint count, out ulong nextSequence, out ulong dropped)
+        {
+            Assert.Equal((nint)22, session);
+            Assert.Equal((ulong)0, sinceSequence);
+            Calls.Add("session_read_diagnostic_events");
+            count = checked((uint)DiagnosticEvents.Length);
+            Assert.True(count <= events.Length);
+            Array.Copy(DiagnosticEvents, events, DiagnosticEvents.Length);
+            nextSequence = count == 0 ? sinceSequence : events[count - 1].Sequence;
+            dropped = DiagnosticDropped;
+            return NativeResult.Ok;
+        }
 
         public NativeResult RuntimeCreate(out nint runtime)
         {

@@ -22,14 +22,16 @@ PlaybackExecution::PlaybackExecution(
     PlaybackMediaSession& media,
     std::unique_ptr<IVideoFrameProcessor> processor,
     std::unique_ptr<IVideoPresenter> presenter,
-    PlaybackExecutionConfig config)
+    PlaybackExecutionConfig config,
+    std::shared_ptr<DiagnosticEventJournal> journal)
     : PlaybackExecution(
           media,
           std::move(processor),
           std::move(presenter),
           nullptr,
           {},
-          config) {}
+          config,
+          std::move(journal)) {}
 
 PlaybackExecution::PlaybackExecution(
     PlaybackMediaSession& media,
@@ -37,7 +39,8 @@ PlaybackExecution::PlaybackExecution(
     std::unique_ptr<IVideoPresenter> presenter,
     std::unique_ptr<IAudioOutputProvider> audio_output_provider,
     AudioFrameProcessorFactory audio_processor_factory,
-    PlaybackExecutionConfig config)
+    PlaybackExecutionConfig config,
+    std::shared_ptr<DiagnosticEventJournal> journal)
     : media_(media),
       decoder_(media_, config.decode_queue_capacity),
       processor_(std::move(processor), config.process_queue_capacity),
@@ -45,7 +48,7 @@ PlaybackExecution::PlaybackExecution(
           clock_,
           config.scheduler,
           config.presentation_queue_capacity),
-      renderer_(clock_, std::move(presenter)),
+      renderer_(clock_, std::move(presenter), std::move(journal)),
       audio_decoder_(media_, config.audio_decode_queue_capacity),
       audio_output_provider_(std::move(audio_output_provider)),
       audio_processor_factory_(std::move(audio_processor_factory)),
@@ -302,6 +305,7 @@ PlaybackExecutionSnapshot PlaybackExecution::snapshot() const {
     result.render_state = renderer_.state();
     result.scheduling = scheduler_.stats();
     result.rendering = renderer_.stats();
+    result.presenter_diagnostics = renderer_.presenter_diagnostics();
     result.audio_decode_state = audio_decoder_.state();
     if (audio_processor_ != nullptr) {
         result.audio_process_state = audio_processor_->state();

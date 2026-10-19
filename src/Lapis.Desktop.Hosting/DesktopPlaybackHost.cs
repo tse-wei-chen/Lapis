@@ -124,6 +124,25 @@ public sealed class DesktopPlaybackHost : IAsyncDisposable
             cancellationToken), cancellationToken);
     }
 
+    /// <summary>
+    /// Must complete before the UI destroys or recreates a borrowed HWND.
+    /// Serialized with Open/Play/Seek/Close; a successful native ACK guarantees
+    /// the presenter has released the previous window.
+    /// </summary>
+    public Task<VideoOutputSurfaceBindingState> DetachWindowAsync(
+        CancellationToken cancellationToken = default) =>
+        RunAsync(async () =>
+        {
+            if (!_hasBoundSurface)
+            {
+                return VideoOutputSurfaceBindingState.Deferred;
+            }
+
+            return await SetSurfaceCoreAsync(
+                VideoOutputSurface.None,
+                cancellationToken).ConfigureAwait(false);
+        }, cancellationToken);
+
     public Task CloseMediaAsync(
         CancellationToken cancellationToken = default) =>
         RunAsync(async () =>

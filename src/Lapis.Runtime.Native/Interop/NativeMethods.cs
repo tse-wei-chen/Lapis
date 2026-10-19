@@ -7,6 +7,21 @@ internal static partial class NativeMethods
 {
     private const string LibraryName = "Lapis.MediaRuntime";
 
+    [LibraryImport(LibraryName, EntryPoint = "lapis_runtime_get_diagnostics_api_version")]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    internal static partial uint RuntimeGetDiagnosticsApiVersion();
+
+    [LibraryImport(LibraryName, EntryPoint = "lapis_session_read_diagnostic_events")]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    internal static partial NativeResult SessionReadDiagnosticEvents(
+        nint session,
+        ulong sinceSequence,
+        nint events,
+        uint capacity,
+        out uint count,
+        out ulong nextSequence,
+        out ulong dropped);
+
     [LibraryImport(LibraryName, EntryPoint = "lapis_runtime_get_abi_version")]
     [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
     internal static partial uint RuntimeGetAbiVersion();

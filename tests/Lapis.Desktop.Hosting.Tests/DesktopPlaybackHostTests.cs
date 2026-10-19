@@ -81,6 +81,70 @@ public sealed class DesktopPlaybackHostTests
     }
 
     [Fact]
+    public async Task DetachCompletesBeforeCallerDestroysOldWindowAndRebinds()
+    {
+        var calls = new List<string>();
+        await using var host = new DesktopPlaybackHost(
+            new FakeRuntime(calls), new FakeSurfaceBinding(calls));
+
+        await host.OpenAndPlayAsync("clip.mkv", (nint)100);
+        var detached = await host.DetachWindowAsync();
+        calls.Add("destroy-old-hwnd");
+        var rebound = await host.ReplaceWindowAsync((nint)200);
+
+        Assert.Equal(VideoOutputSurfaceBindingState.Deferred, detached);
+        Assert.Equal(VideoOutputSurfaceBindingState.Deferred, rebound);
+        Assert.Equal(new[]
+        {
+            "open:1", "surface:Win32Window:1", "play:1",
+            "surface:None:1", "destroy-old-hwnd", "surface:Win32Window:1"
+        }, calls);
+    }
+
+    [Fact]
+    public async Task DetachIsIdempotentBeforeOpenOrAfterStop()
+    {
+        var calls = new List<string>();
+        await using var host = new DesktopPlaybackHost(
+            new FakeRuntime(calls), new FakeSurfaceBinding(calls));
+
+        await host.DetachWindowAsync();
+        await host.OpenAndPlayAsync("clip.mkv", (nint)100);
+        await host.CloseMediaAsync();
+        await host.DetachWindowAsync();
+
+        Assert.Equal(new[]
+        {
+            "open:1", "surface:Win32Window:1", "play:1",
+            "close:2", "surface:None:2"
+        }, calls);
+    }
+
+    [Fact]
+    public async Task SwitchingAndReopeningMediaUseFreshEpochsAndNoOldWindowLease()
+    {
+        var calls = new List<string>();
+        await using var host = new DesktopPlaybackHost(
+            new FakeRuntime(calls), new FakeSurfaceBinding(calls));
+
+        await host.OpenAndPlayAsync("first.mkv", (nint)123);
+        await host.SeekAsync(TimeSpan.FromSeconds(3));
+        await host.OpenAndPlayAsync("second.mkv", (nint)123);
+        await host.CloseMediaAsync();
+        await host.OpenAndPlayAsync("second.mkv", (nint)456);
+
+        Assert.Equal(TransportState.Playing, host.Snapshot.Transport);
+        Assert.Equal(new[]
+        {
+            "open:1", "surface:Win32Window:1", "play:1",
+            "seek:2:3000000000",
+            "open:3", "surface:Win32Window:3", "play:3",
+            "close:4", "surface:None:4",
+            "open:5", "surface:Win32Window:5", "play:5"
+        }, calls);
+    }
+
+    [Fact]
     public async Task RejectsInvalidHostInputBeforeCreatingNativeSession()
     {
         var calls = new List<string>();
