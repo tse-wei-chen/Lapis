@@ -97,7 +97,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
     public bool IsVideoCategory => _category == LibraryCategory.Videos;
     public bool IsRecentlyAddedSort => SelectedSort.Mode == LibrarySortMode.RecentlyAdded;
 
-    public string CountText => $"{_items.Count} 部收藏 · {_items.Count(item => item.IsDisc)} 張 Blu-ray";
+    public string CountText => $"{_items.Count} 部收藏 · {_items.Count(item => item.IsDisc)} 張光碟";
     public string ResultText => $"{VisibleItems.Count} 部影片";
     public bool HasItems => _items.Count != 0;
     public bool IsEmpty => _loaded && _items.Count == 0;
