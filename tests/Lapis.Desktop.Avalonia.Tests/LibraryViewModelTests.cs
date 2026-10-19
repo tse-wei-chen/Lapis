@@ -80,12 +80,61 @@ public sealed class LibraryViewModelTests
         Assert.Equal("Zebra", Assert.Single(view.VisibleItems).Title);
         view.ShowRecentlyAdded();
         Assert.Equal(LibraryDisplayMode.List, view.DisplayMode);
-        Assert.True(view.IsAllCategory);
+        Assert.False(view.IsAllCategory);
+        Assert.True(view.IsRecentlyAddedCategory);
+        Assert.Equal(LibraryCategory.RecentlyAdded, view.Category);
+        Assert.Equal("最近加入", view.CurrentFilterLabel);
         Assert.True(view.IsRecentlyAddedSort);
         Assert.Single(view.VisibleItems); // Search preserved.
         view.SearchText = "";
         Assert.Equal(new[] { "Alpha", "Blu-ray", "Zebra" },
             view.VisibleItems.Select(card => card.Title).ToArray());
+    }
+
+    [Fact]
+    public async Task SortingAndFilteringMoveExistingCardsWithoutResettingCollection()
+    {
+        var storage = new FakeLibrary();
+        using var view = new LibraryViewModel(storage);
+        await view.LoadAsync();
+        await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, "Zebra.mkv"));
+        await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, "Alpha.mkv"));
+        var cards = view.VisibleItems.ToDictionary(card => card.Title);
+        var actions = new List<System.Collections.Specialized.NotifyCollectionChangedAction>();
+        view.VisibleItems.CollectionChanged += (_, change) => actions.Add(change.Action);
+
+        view.SelectedSort = LibraryViewModel.SortChoices[1];
+        Assert.Equal(new[] { "Alpha", "Zebra" },
+            view.VisibleItems.Select(card => card.Title));
+        Assert.Same(cards["Alpha"], view.VisibleItems[0]);
+        Assert.Same(cards["Zebra"], view.VisibleItems[1]);
+        view.SearchText = "Zebra";
+        Assert.Same(cards["Zebra"], Assert.Single(view.VisibleItems));
+        view.SearchText = "";
+        Assert.Equal(2, view.VisibleItems.Count);
+        Assert.DoesNotContain(System.Collections.Specialized.NotifyCollectionChangedAction.Reset, actions);
+    }
+
+    [Fact]
+    public async Task SidebarNavigationMaintainsExactlyOneActiveTarget()
+    {
+        using var view = new LibraryViewModel(new FakeLibrary());
+        await view.LoadAsync();
+        Assert.True(view.IsAllCategory);
+        Assert.False(view.IsRecentlyAddedCategory);
+
+        view.ShowDiscs();
+        Assert.True(view.IsBluRayCategory);
+        Assert.False(view.IsAllCategory);
+
+        view.ShowRecentlyAdded();
+        Assert.True(view.IsRecentlyAddedCategory);
+        Assert.False(view.IsBluRayCategory);
+        Assert.False(view.IsAllCategory);
+
+        view.ShowAll();
+        Assert.True(view.IsAllCategory);
+        Assert.False(view.IsRecentlyAddedCategory);
     }
 
     [Fact]

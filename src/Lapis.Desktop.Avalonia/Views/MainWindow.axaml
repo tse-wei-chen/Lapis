@@ -46,7 +46,16 @@
       <Setter Property="Background" Value="{StaticResource LibraryAccentHover}"/>
     </Style>
     <Style Selector="Button.library-nav">
+      <Setter Property="Width" Value="180"/>
+      <Setter Property="Height" Value="42"/>
+      <Setter Property="HorizontalAlignment" Value="Left"/>
       <Setter Property="HorizontalContentAlignment" Value="Left"/>
+      <Setter Property="Transitions">
+        <Transitions>
+          <BrushTransition Property="Background" Duration="0:0:0.17"/>
+          <BrushTransition Property="Foreground" Duration="0:0:0.17"/>
+        </Transitions>
+      </Setter>
       <Setter Property="Background" Value="Transparent"/>
       <Setter Property="Foreground" Value="{StaticResource LibrarySubtext}"/>
       <Setter Property="BorderThickness" Value="0"/>
@@ -62,11 +71,27 @@
       <Setter Property="Foreground" Value="{StaticResource LibraryText}"/>
       <Setter Property="FontWeight" Value="SemiBold"/>
     </Style>
+    <Style Selector="Button.library-nav.selected:pointerover">
+      <Setter Property="Background" Value="#D4E9ED"/>
+    </Style>
+    <Style Selector="Button.library-nav:pressed">
+      <Setter Property="Background" Value="#CEE3E8"/>
+    </Style>
+    <Style Selector="Button.library-nav:focus-visible">
+      <Setter Property="BorderBrush" Value="{StaticResource LibraryAccent}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+    </Style>
     <Style Selector="TextBlock.sidebar-section">
       <Setter Property="Foreground" Value="#90959C"/>
       <Setter Property="FontSize" Value="11"/>
     </Style>
     <Style Selector="Button.view-button">
+      <Setter Property="Transitions">
+        <Transitions>
+          <BrushTransition Property="Background" Duration="0:0:0.16"/>
+          <BrushTransition Property="Foreground" Duration="0:0:0.16"/>
+        </Transitions>
+      </Setter>
       <Setter Property="Background" Value="Transparent"/>
       <Setter Property="Foreground" Value="{StaticResource LibrarySubtext}"/>
       <Setter Property="BorderThickness" Value="0"/>
@@ -74,6 +99,9 @@
       <Setter Property="CornerRadius" Value="4"/>
       <Setter Property="FontSize" Value="21"/>
       <Setter Property="Padding" Value="9,4"/>
+    </Style>
+    <Style Selector="Button.view-button:pointerover">
+      <Setter Property="Background" Value="{StaticResource LibraryHover}"/>
     </Style>
     <Style Selector="Button.view-button.active">
       <Setter Property="Foreground" Value="{StaticResource LibraryAccent}"/>
@@ -92,6 +120,11 @@
       <Setter Property="BorderThickness" Value="1"/>
     </Style>
     <Style Selector="Button.library-row">
+      <Setter Property="Transitions">
+        <Transitions>
+          <BrushTransition Property="Background" Duration="0:0:0.14"/>
+        </Transitions>
+      </Setter>
       <Setter Property="Padding" Value="0"/>
       <Setter Property="Background" Value="{StaticResource LibrarySurface}"/>
       <Setter Property="Foreground" Value="#333B43"/>
@@ -153,18 +186,20 @@
       <Grid Grid.Row="1" ColumnDefinitions="208,*">
         <Border Background="{StaticResource LibrarySurface}" BorderBrush="{StaticResource LibraryBorder}"
                 BorderThickness="0,0,1,0" Grid.Column="0">
+          <Grid x:Name="LibraryNavigationHost">
           <StackPanel Margin="14,24,14,18" Spacing="5">
             <TextBlock Text="收藏庫" Classes="sidebar-section" Margin="11,0,0,11"/>
-            <Button Classes="library-nav" Classes.selected="{Binding IsAllCategory}"
+            <Button x:Name="NavigationAll" Classes="library-nav" Classes.selected="{Binding IsAllCategory}"
                     Content="▦   所有收藏" Click="ShowAll_Click"/>
-            <Button Classes="library-nav" Classes.selected="{Binding IsBluRayCategory}"
+            <Button x:Name="NavigationBluRay" Classes="library-nav" Classes.selected="{Binding IsBluRayCategory}"
                     Content="▤   Blu-ray 光碟" Click="ShowDiscs_Click"/>
-            <Button Classes="library-nav" Classes.selected="{Binding IsVideoCategory}"
+            <Button x:Name="NavigationVideos" Classes="library-nav" Classes.selected="{Binding IsVideoCategory}"
                     Content="▷   本機影片" Click="ShowVideos_Click"/>
             <Border Height="1" Background="{StaticResource LibraryBorder}" Margin="6,19,6,16"/>
             <TextBlock Text="快速存取" Classes="sidebar-section" Margin="11,0,0,10"/>
-            <Button Classes="library-nav" Content="◷   最近加入"
-                    Click="ShowRecentlyAdded_Click"/>
+            <Button x:Name="NavigationRecent" Classes="library-nav"
+                    Classes.selected="{Binding IsRecentlyAddedCategory}"
+                    Content="◷   最近加入" Click="ShowRecentlyAdded_Click"/>
             <Border Height="1" Background="{StaticResource LibraryBorder}" Margin="6,19,6,16"/>
             <TextBlock Text="匯入" Classes="sidebar-section" Margin="11,0,0,10"/>
             <TextBlock Text="使用右上角匯入按鈕建立索引。"
@@ -176,13 +211,20 @@
             <TextBlock Text="僅建立收藏索引，不搬移原始影片。" Margin="11,3"
                        FontSize="11" Foreground="#90959B" TextWrapping="Wrap"/>
           </StackPanel>
+          <!-- One compositor-driven selection marker, not one per button. -->
+          <Canvas IsHitTestVisible="False" ZIndex="2">
+            <Border x:Name="LibraryNavigationIndicator" Width="3" Height="27"
+                    Canvas.Left="16" Canvas.Top="0" CornerRadius="2"
+                    Background="{StaticResource LibraryAccent}"/>
+          </Canvas>
+          </Grid>
         </Border>
 
         <Grid Grid.Column="1" Margin="32,30,32,16"
               RowDefinitions="Auto,Auto,*,Auto" RowSpacing="18">
           <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="16">
             <StackPanel Spacing="6">
-              <TextBlock Text="{Binding CurrentFilterLabel}" FontSize="34"
+              <TextBlock x:Name="LibraryCurrentHeading" Text="{Binding CurrentFilterLabel}" FontSize="34"
                          FontWeight="SemiBold" Foreground="{StaticResource LibraryText}"/>
               <TextBlock Text="{Binding ResultText}" FontSize="12"
                          Foreground="{StaticResource LibrarySubtext}"/>
@@ -213,7 +255,7 @@
 
           <Border Grid.Row="1" Background="{StaticResource LibraryBorder}" Height="1"/>
 
-          <Grid Grid.Row="2">
+          <Grid Grid.Row="2" x:Name="LibraryContentArea">
             <Border IsVisible="{Binding IsEmpty}" Background="{StaticResource LibrarySurface}"
                     BorderBrush="{StaticResource LibraryBorder}" BorderThickness="1" CornerRadius="9"
                     Padding="52" VerticalAlignment="Top">

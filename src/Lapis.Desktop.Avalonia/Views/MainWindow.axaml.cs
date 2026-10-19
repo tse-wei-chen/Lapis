@@ -30,6 +30,13 @@ public sealed partial class MainWindow : Window
     private readonly ItemsControl _discPlaylistList;
     private readonly ScrollViewer _gridSurface;
     private readonly Border _listSurface;
+    private readonly Grid _navigationHost;
+    private readonly Border _navigationIndicator;
+    private readonly Button _navAll;
+    private readonly Button _navBluRay;
+    private readonly Button _navVideos;
+    private readonly Button _navRecent;
+    private readonly TextBlock _currentHeading;
     private readonly PlayerViewModel _player;
     private readonly LibraryViewModel _library;
     private bool _closeStarted;
@@ -54,6 +61,20 @@ public sealed partial class MainWindow : Window
             ?? throw new InvalidOperationException("Missing library grid viewport.");
         _listSurface = this.FindControl<Border>("LibraryListSurface")
             ?? throw new InvalidOperationException("Missing library list viewport.");
+        _navigationHost = this.FindControl<Grid>("LibraryNavigationHost")
+            ?? throw new InvalidOperationException("Missing sidebar host.");
+        _navigationIndicator = this.FindControl<Border>("LibraryNavigationIndicator")
+            ?? throw new InvalidOperationException("Missing sidebar selection indicator.");
+        _navAll = this.FindControl<Button>("NavigationAll")
+            ?? throw new InvalidOperationException("Missing All nav item.");
+        _navBluRay = this.FindControl<Button>("NavigationBluRay")
+            ?? throw new InvalidOperationException("Missing Blu-ray nav item.");
+        _navVideos = this.FindControl<Button>("NavigationVideos")
+            ?? throw new InvalidOperationException("Missing Videos nav item.");
+        _navRecent = this.FindControl<Button>("NavigationRecent")
+            ?? throw new InvalidOperationException("Missing Recently Added nav item.");
+        _currentHeading = this.FindControl<TextBlock>("LibraryCurrentHeading")
+            ?? throw new InvalidOperationException("Missing library heading.");
 
         var libraryFile = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -69,7 +90,12 @@ public sealed partial class MainWindow : Window
         _playerPage.IsVisible = false;
         Opened += async (_, _) =>
         {
-            try { await _library.LoadAsync(); }
+            try
+            {
+                await _library.LoadAsync();
+                Dispatcher.UIThread.Post(() => UpdateNavigationMarker(initial: true),
+                    DispatcherPriority.Loaded);
+            }
             catch (Exception exception) { _library.ReportError($"無法讀取收藏庫：{exception.Message}"); }
         };
 
@@ -146,11 +172,49 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void ShowAll_Click(object? sender, RoutedEventArgs args) => _library.ShowAll();
-    private void ShowDiscs_Click(object? sender, RoutedEventArgs args) => _library.ShowDiscs();
-    private void ShowVideos_Click(object? sender, RoutedEventArgs args) => _library.ShowVideos();
+    private void ShowAll_Click(object? sender, RoutedEventArgs args) =>
+        NavigateLibrary(_library.ShowAll);
+    private void ShowDiscs_Click(object? sender, RoutedEventArgs args) =>
+        NavigateLibrary(_library.ShowDiscs);
+    private void ShowVideos_Click(object? sender, RoutedEventArgs args) =>
+        NavigateLibrary(_library.ShowVideos);
     private void ShowRecentlyAdded_Click(object? sender, RoutedEventArgs args) =>
-        _library.ShowRecentlyAdded();
+        NavigateLibrary(_library.ShowRecentlyAdded);
+
+    private void NavigateLibrary(Action navigate)
+    {
+        var previous = _library.Category;
+        navigate();
+        if (previous == _library.Category) return;
+        // The actor does not participate in navigation animations. Update
+        // the read-only compositor visuals after Avalonia has laid out the
+        // newly selected content.
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!_libraryPage.IsVisible) return;
+            UpdateNavigationMarker(initial: false);
+            LibraryMotion.Enter(_library.IsGridView ? _gridSurface : _listSurface);
+            LibraryMotion.Enter(_currentHeading);
+        }, DispatcherPriority.Loaded);
+    }
+
+    private void UpdateNavigationMarker(bool initial)
+    {
+        if (!_libraryPage.IsVisible) return;
+        var selected = _library.Category switch
+        {
+            LibraryCategory.BluRay => _navBluRay,
+            LibraryCategory.Videos => _navVideos,
+            LibraryCategory.RecentlyAdded => _navRecent,
+            _ => _navAll
+        };
+        var origin = global::Avalonia.VisualExtensions.TranslatePoint(
+            selected, new global::Avalonia.Point(0, 0), _navigationHost);
+        if (origin is null || selected.Bounds.Height <= 0) return;
+        var y = LibraryMotion.IndicatorTop(origin.Value.Y, selected.Bounds.Height,
+            _navigationIndicator.Bounds.Height);
+        LibraryMotion.MoveNavigationMarker(_navigationIndicator, y, animate: !initial);
+    }
     private void ShowGrid_Click(object? sender, RoutedEventArgs args)
     {
         if (_library.IsGridView) return;
@@ -381,6 +445,8 @@ public sealed partial class MainWindow : Window
         await _player.CloseAsync();
         _playerPage.IsVisible = false;
         _libraryPage.IsVisible = true;
+        Dispatcher.UIThread.Post(() => UpdateNavigationMarker(initial: true),
+            DispatcherPriority.Loaded);
     }
 
     private async void OnClosing(object? sender, WindowClosingEventArgs args)

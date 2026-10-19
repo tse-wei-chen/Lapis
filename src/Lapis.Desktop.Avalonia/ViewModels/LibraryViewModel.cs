@@ -7,7 +7,7 @@ using Lapis.Library;
 namespace Lapis.Desktop.Avalonia.ViewModels;
 
 public enum LibraryDisplayMode { Grid, List }
-public enum LibraryCategory { All, BluRay, Videos }
+public enum LibraryCategory { All, BluRay, Videos, RecentlyAdded }
 public enum LibrarySortMode { RecentlyAdded, TitleAscending, TitleDescending }
 
 public sealed record LibrarySortChoice(LibrarySortMode Mode, string Label);
@@ -92,9 +92,11 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
 
     public bool IsGridView => DisplayMode == LibraryDisplayMode.Grid;
     public bool IsListView => DisplayMode == LibraryDisplayMode.List;
+    public LibraryCategory Category => _category;
     public bool IsAllCategory => _category == LibraryCategory.All;
     public bool IsBluRayCategory => _category == LibraryCategory.BluRay;
     public bool IsVideoCategory => _category == LibraryCategory.Videos;
+    public bool IsRecentlyAddedCategory => _category == LibraryCategory.RecentlyAdded;
     public bool IsRecentlyAddedSort => SelectedSort.Mode == LibrarySortMode.RecentlyAdded;
 
     public string CountText => $"{_items.Count} 部收藏 · {_items.Count(item => item.IsDisc)} 張光碟";
@@ -106,6 +108,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
     {
         LibraryCategory.BluRay => "Blu-ray 光碟",
         LibraryCategory.Videos => "本機影片",
+        LibraryCategory.RecentlyAdded => "最近加入",
         _ => "所有收藏"
     };
 
@@ -151,7 +154,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
     public void ShowVideos() => SetCategory(LibraryCategory.Videos);
     public void ShowRecentlyAdded()
     {
-        SetCategory(LibraryCategory.All);
+        SetCategory(LibraryCategory.RecentlyAdded);
         SelectedSort = SortChoices[0];
     }
 
@@ -166,6 +169,8 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         Notify(nameof(IsAllCategory));
         Notify(nameof(IsBluRayCategory));
         Notify(nameof(IsVideoCategory));
+        Notify(nameof(IsRecentlyAddedCategory));
+        Notify(nameof(Category));
         ApplyFilter();
     }
 
@@ -174,7 +179,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         if (_disposed) return;
         var needle = _searchText.Trim();
         IEnumerable<MediaLibraryItem> filtered = _items.Where(item =>
-            (_category == LibraryCategory.All ||
+            (_category is LibraryCategory.All or LibraryCategory.RecentlyAdded ||
              (_category == LibraryCategory.BluRay && item.IsDisc) ||
              (_category == LibraryCategory.Videos && !item.IsDisc)) &&
             (needle.Length == 0 ||
@@ -193,13 +198,26 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
                 .ThenBy(item => item.Id)
         };
 
-        VisibleItems.Clear();
-        foreach (var item in filtered)
+        // Preserve visual container identities for unchanged cards instead
+        // of clearing every row on each search/sort/category action. A Reset
+        // forces the ItemsControl to rebuild the entire visual tree and
+        // interrupts ongoing compositor transitions.
+        var desired = filtered.Select(item => _cards[item.Id]).ToArray();
+        for (var index = 0; index < desired.Length; index++)
         {
-            var card = _cards[item.Id];
-            VisibleItems.Add(card);
+            var card = desired[index];
+            if (index >= VisibleItems.Count || !ReferenceEquals(VisibleItems[index], card))
+            {
+                var previous = VisibleItems.IndexOf(card);
+                if (previous >= 0)
+                    VisibleItems.Move(previous, index);
+                else
+                    VisibleItems.Insert(index, card);
+            }
             card.EnsurePosterLoaded();
         }
+        while (VisibleItems.Count > desired.Length)
+            VisibleItems.RemoveAt(VisibleItems.Count - 1);
         Notify(nameof(CurrentFilterLabel));
         Notify(nameof(ResultText));
         Notify(nameof(IsEmpty));

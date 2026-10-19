@@ -22,13 +22,27 @@ by Avalonia Composition.
   canvas `#F5F7F8`, surface `#FFFFFF`. Colors are defined once as
   named brushes in the Window resources for later personalization.
 - Keep Watch dark and all playback primitives entirely unchanged.
-- View enter uses Avalonia `ElementComposition.GetElementVisual` with
-  compositor `Opacity` and small `Offset` animations (155ms). It starts
+- View and category enter use Avalonia `ElementComposition.GetElementVisual`
+  with compositor `Opacity` and small `Offset` animations (205ms) with
+  cubic ease-out. This is triggered for every *navigation selection*, not
+  just the Grid/List toggle. It starts
   after the layout is active; no control is copied/recreated by the
   animation, no task delay or animation-driven actor call.
 - Card/list hover uses a render-thread **implicit** opacity animation
-  (115ms) using the visual's current and final values. Separate XAML
-  pseudo-state styles own persistent selected/focus colors, not fake animation.
+  (115ms) using the visual's current and final values. Hover/pressed/selected
+  button background changes use restrained BrushTransitions (140–170ms).
+- Sidebar's four navigation buttons have the same 180-DIP width and 42-DIP
+  height, independent of localized title length. A **single 3-DIP accent
+  indicator** sits in an input-transparent sidebar Canvas and tracks the
+  currently selected item. Its Y destination is computed from actual
+  arranged positions, using a 205ms render-thread implicit Offset tween;
+  fast repeated selections converge on the newest destination.
+- Filtering and sorting now apply **incremental ObservableCollection
+  insert/move/remove changes** rather than Clear + re-add, preserving
+  unchanged item visuals and making transitions less jarring.
+- `RecentlyAdded` is a real, mutually exclusive sidebar selection
+  (previously clicking it highlighted `All`). It preserves query text
+  while switching to newest-first ordering.
 - Only **library** viewports and library entries are eligible. Never
   animate a `NativeControlHost` or a child HWND.
 - Motion obeys Windows `SPI_GETCLIENTAREAANIMATION` and the

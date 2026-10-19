@@ -12,7 +12,8 @@ namespace Lapis.Desktop.Avalonia.Services;
 public static class LibraryMotion
 {
     private const uint SpiGetClientAreaAnimation = 0x1042;
-    private const int EnterMilliseconds = 155;
+    private const int EnterMilliseconds = 205;
+    private const int IndicatorMilliseconds = 205;
     private const int HoverMilliseconds = 115;
 
     [DllImport("user32.dll", EntryPoint = "SystemParametersInfoW", SetLastError = true)]
@@ -49,8 +50,8 @@ public static class LibraryMotion
         visual.StopAnimation("Opacity");
         var fade = visual.Compositor.CreateScalarKeyFrameAnimation();
         fade.Duration = TimeSpan.FromMilliseconds(EnterMilliseconds);
-        fade.InsertKeyFrame(0f, 0.38f);
-        fade.InsertKeyFrame(1f, 1f);
+        fade.InsertKeyFrame(0f, 0.72f);
+        fade.InsertKeyFrame(1f, 1f, new global::Avalonia.Animation.Easings.CubicEaseOut());
         visual.StartAnimation("Opacity", fade);
 
         // Offset animation is deliberately restricted to an already-laid-out
@@ -59,9 +60,48 @@ public static class LibraryMotion
         var offset = visual.Offset;
         var move = visual.Compositor.CreateVector3DKeyFrameAnimation();
         move.Duration = TimeSpan.FromMilliseconds(EnterMilliseconds);
-        move.InsertKeyFrame(0f, new Vector3D(offset.X, offset.Y + 5, offset.Z));
-        move.InsertKeyFrame(1f, offset);
+        move.InsertKeyFrame(0f, new Vector3D(offset.X, offset.Y + 8, offset.Z));
+        move.InsertKeyFrame(1f, offset, new global::Avalonia.Animation.Easings.CubicEaseOut());
         visual.StartAnimation("Offset", move);
+    }
+
+    /// <summary>
+    /// Center one consistent-height marker next to a navigation item.
+    /// Geometry lives in the sidebar's layout coordinate space.
+    /// </summary>
+    public static double IndicatorTop(double itemTop, double itemHeight, double markerHeight) =>
+        itemTop + (itemHeight - markerHeight) / 2.0;
+
+    /// <summary>
+    /// The sidebar has one marker, not one per navigation button. A
+    /// Composition implicit animation tracks the latest Y destination, so
+    /// rapid clicks never queue multiple stale navigation tweens.
+    /// </summary>
+    public static void MoveNavigationMarker(Visual marker, double y, bool animate)
+    {
+        var visual = ElementComposition.GetElementVisual(marker);
+        if (visual is null) return;
+        var target = new Vector3D(visual.Offset.X, (float)y, visual.Offset.Z);
+        if (!animate || !CanAnimate())
+        {
+            visual.ImplicitAnimations = null;
+            visual.StopAnimation("Offset");
+            visual.Offset = target;
+            return;
+        }
+
+        if (visual.ImplicitAnimations is null)
+        {
+            var slide = visual.Compositor.CreateVector3DKeyFrameAnimation();
+            slide.Target = "Offset";
+            slide.Duration = TimeSpan.FromMilliseconds(IndicatorMilliseconds);
+            slide.InsertExpressionKeyFrame(1f, "this.FinalValue");
+            var animations = visual.Compositor.CreateImplicitAnimationCollection();
+            animations["Offset"] = slide;
+            visual.ImplicitAnimations = animations;
+        }
+
+        visual.Offset = target;
     }
 
     /// <summary>
