@@ -244,13 +244,13 @@ public sealed partial class MainWindow : Window
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             CanResize = false,
             RequestedThemeVariant = ThemeVariant.Light,
-            Background = Avalonia.Media.Brushes.White
+            Background = global::Avalonia.Media.Brushes.White
         };
         var cancel = new Button
         {
             Content = confirmRemoval ? "取消" : "關閉",
             HorizontalAlignment = HorizontalAlignment.Right,
-            Padding = new Avalonia.Thickness(16, 8)
+            Padding = new global::Avalonia.Thickness(16, 8)
         };
         cancel.Click += (_, _) => dialog.Close(false);
         var buttons = new StackPanel
@@ -265,25 +265,25 @@ public sealed partial class MainWindow : Window
             var remove = new Button
             {
                 Content = "移出收藏庫",
-                Background = Avalonia.Media.Brushes.Firebrick,
-                Foreground = Avalonia.Media.Brushes.White,
-                Padding = new Avalonia.Thickness(16, 8)
+                Background = global::Avalonia.Media.Brushes.Firebrick,
+                Foreground = global::Avalonia.Media.Brushes.White,
+                Padding = new global::Avalonia.Thickness(16, 8)
             };
             remove.Click += (_, _) => dialog.Close(true);
             buttons.Children.Add(remove);
         }
         dialog.Content = new StackPanel
         {
-            Margin = new Avalonia.Thickness(24),
+            Margin = new global::Avalonia.Thickness(24),
             Spacing = 18,
             Children =
             {
                 new TextBlock
                 {
                     Text = content,
-                    TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                    TextWrapping = global::Avalonia.Media.TextWrapping.Wrap,
                     FontSize = 13,
-                    Foreground = Avalonia.Media.Brushes.Black
+                    Foreground = global::Avalonia.Media.Brushes.Black
                 },
                 buttons
             }
