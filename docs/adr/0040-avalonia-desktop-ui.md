@@ -21,26 +21,34 @@ is desirable; the current media renderer itself is still Windows/D3D11.
    It creates the existing `NativePlaybackRuntime` only when media is opened
    (so the app can display a useful missing-DLL error), and delegates to the
    UI-neutral `DesktopPlaybackHost` for Open/Play/Pause/Seek/Close.
-3. `WindowsVideoSurface : NativeControlHost` owns an independent D3D11
-   child HWND and a hidden parking window. Avalonia visual-root transitions
-   park and reattach the child synchronously in Win32, **without blocking the
-   dispatcher on a render ACK**. Final shutdown calls
-   `DesktopPlaybackHost.DisposeAsync()` and waits for native worker teardown
-   **before** destroying the child HWND. No Avalonia composition object is
-   lent to the native renderer.
+3. `WindowsVideoSurface : NativeControlHost` owns a persistent D3D11
+   child HWND and a hidden independent parking window. Critically,
+   `base.CreateNativeControlCore(parent)` creates an **Avalonia-owned proxy
+   HWND**, with the GPU child nested below it. Avalonia may reparent/reuse
+   this proxy without calling CreateNativeControlCore again. If it defers
+   and eventually destroys the proxy, the GPU HWND is parked *before*
+   base.DestroyNativeControlCore releases the proxy. The next proxy
+   reattaches the same GPU child. No synchronous render ACK is awaited by
+   the dispatcher. Final shutdown awaits `DesktopPlaybackHost.DisposeAsync()`
+   before destroying the D3D11 child HWND.
 4. Keep playback commands and snapshots UI-neutral. Coalesce high-frequency
    observations so at most one dispatcher refresh is pending; read current
    snapshot rather than replaying stale captured state after Seek.
-5. Place all interaction chrome outside the HWND video rectangle. Avalonia's
+5. Avalonia arranges/resizes the proxy only. `WindowsVideoSurface` must
+   explicitly update the nested GPU HWND client size from arranged DIP
+   bounds * RenderScaling, triggering native DXGI/resize handling at the
+   correct physical dimensions. The Windows GPU acceptance asserts the
+   child is larger than 1x1 and tracks an explicit Avalonia host layout resize, regardless of virtual CI screen size.
+6. Place all interaction chrome outside the HWND video rectangle. Avalonia's
    NativeControlHost has **airspace/Z-order limitations**, so pretending
    transparent native subtitles/BD-J menus already overlay correctly would
    be unsafe. A future GPU compositor or properly shared rendering surface
    must own video/subtitles/menus/AI text ordering.
-6. WinForms remains in the solution as a legacy/regression harness only.
+7. WinForms remains in the solution as a legacy/regression harness only.
    No new product controls should be developed there. Retain its existing
    Windows GPU acceptance tests until equivalent Avalonia HW lifecycle and
    DPI/device-loss gates exist.
-7. Target `net10.0-windows` for the first runnable app. Avalonia's View and
+8. Target `net10.0-windows` for the first runnable app. Avalonia's View and
    ViewModel abstractions are portable, but the current D3D11/Win32 playback
    adapter cannot run on macOS/Linux; never claim cross-platform decoding.
 
@@ -50,10 +58,12 @@ is desirable; the current media renderer itself is still Windows/D3D11.
   compile XAML and cover BDMV locator validation and ViewModel playback
   state/error handling without loading native DLLs.
 - Existing Native/WinForms GPU tests remain compatibility gates.
-- **Open:** actual Avalonia + D3D11 first-frame acceptance, persistent HWND
-  across Avalonia visual-root transitions, 100/150/200% DPI, close under
-  GPU load, multi-monitor, suspend/resume, device removal, and subtitle/menu
-  compositor. Do not merge as release-ready until those are verified.
+- **New CI gate:** a full Avalonia desktop lifetime and D3D11 swap-chain
+  acceptance with a real FFmpeg media fixture, six NativeControlHost
+  detach/attach cycles, seek/replay and host-before-HWND shutdown ordering.
+- **Still open:** pixel-verified first-frame presentation, 100/150/200%
+  DPI, physical GPU/drivers, multi-monitor, suspend/resume, device removal,
+  multi-hour stability and a subtitle/menu GPU compositor. Not release-ready.
 
 ## Architectural consequence
 
