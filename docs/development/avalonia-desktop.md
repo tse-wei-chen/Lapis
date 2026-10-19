@@ -1,4 +1,4 @@
-# Avalonia desktop player — Windows first
+# Avalonia library-first cinema desktop — Windows first
 
 **Product UI:** `src/Lapis.Desktop.Avalonia` (Avalonia 11.3.22 with MVVM).
 **Former WinForms shell and tests:** removed.
@@ -22,8 +22,24 @@ beside its executable when it exists; codec dependencies also need to be
 on the DLL search path or deployed next to the app. The window can open
 without a Native DLL, but playing media cannot.
 
-Use **開啟影片** for local files and **開啟 BDMV** for an unprotected
-disc directory. A seek timeline is shown under the video whenever a known
+The app now starts on the **library**, not on the player surface. Import
+one or multiple local video files, or one **entire clear Blu-ray disc root**
+(containing BDMV/PLAYLIST and BDMV/STREAM). Both the disc root and its BDMV
+child normalize to **one** library entry; individual .m2ts clips are not
+implicitly cataloged as the movie. Import does not copy media or start
+Native MediaRuntime. The durable versioned catalog currently lives under
+`%LOCALAPPDATA%/Lapis/Library/catalog.v1.json` behind `IMediaLibrary` and
+is replaced atomically. An inaccessible original path is visible in the
+library and cannot be played until it becomes available again.
+
+Selecting a library card enters the separate **Watch** page. The same Native
+actor opens the typed locator and keeps the GPU child HWND lifetime unchanged.
+A disc sidebar lists available `.mpls` file **names only**, not selectable
+titles, clip orders or BD-J menus. Real Blu-ray navigation must be routed
+through the native navigation controller in a later milestone. Returning
+to the library closes the player before hiding its view.
+
+A seek timeline is shown under the video whenever a known
 positive duration is available; dragging previews without changing playback,
 and releasing commits one actor-owned Seek. A seek that crosses a newer
 PlaybackEpoch is discarded. At EOF the timeline is disabled, while Replay
@@ -35,8 +51,9 @@ translation are **not implemented** by this shell.
 ## Safety/ownership boundaries
 
 ```text
-MainWindow (Avalonia picker + lifetime)
-  -> PlayerViewModel (UI state, commands; no HWND or D3D)
+MainWindow (library-first shell + lifetime)
+  -> LibraryViewModel -> IMediaLibrary -> JsonMediaLibrary (LocalAppData)
+  -> explicit Watch selection -> PlayerViewModel (UI state; no HWND or D3D)
     -> IPlayerPlaybackService
       -> NativePlayerPlaybackService (Windows composition)
         -> DesktopPlaybackHost
@@ -73,7 +90,7 @@ exists. This is explicitly a blocker for final AI subtitles/BD-J UI.
 ## Tests
 
 `tests/Lapis.Desktop.Avalonia.Tests` covers local BDMV directory matching,
-typed locator forwarding, one-shot seek scrubbing (including epoch invalidation),
+library import/search/filter, typed locator forwarding, one-shot seek scrubbing (including epoch invalidation),
 enabled-state notifications and ViewModel errors without real Native DLLs.
 The Native Windows CI plane now runs a **dedicated opt-in REAL Avalonia
 lifecycle acceptance**, after building MediaRuntime: it starts a true

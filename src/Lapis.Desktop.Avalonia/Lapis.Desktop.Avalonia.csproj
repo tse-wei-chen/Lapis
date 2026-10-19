@@ -13,6 +13,7 @@
   <ItemGroup>
     <ProjectReference Include="../Lapis.Desktop.Hosting/Lapis.Desktop.Hosting.csproj" />
     <ProjectReference Include="../Lapis.Runtime.Native/Lapis.Runtime.Native.csproj" />
+    <ProjectReference Include="../Lapis.Library/Lapis.Library.csproj" />
   </ItemGroup>
   <!-- Native playback is Windows-only today; never silently claim macOS/Linux
        support merely because the presentation toolkit is cross-platform. -->

@@ -64,7 +64,7 @@ public sealed class ArchitectureBoundaryTests
     }
 
     [Fact]
-    public void AvaloniaShellReferencesHostingAndNativeOnly()
+    public void AvaloniaShellReferencesHostingNativeAndLibrary()
     {
         var project = LoadProject("src/Lapis.Desktop.Avalonia/Lapis.Desktop.Avalonia.csproj");
         var references = project.Descendants("ProjectReference")
@@ -75,8 +75,20 @@ public sealed class ArchitectureBoundaryTests
         Assert.Equal(new[]
         {
             "../Lapis.Desktop.Hosting/Lapis.Desktop.Hosting.csproj",
+            "../Lapis.Library/Lapis.Library.csproj",
             "../Lapis.Runtime.Native/Lapis.Runtime.Native.csproj"
         }, references);
+    }
+
+    [Fact]
+    public void LibraryCatalogOnlyDependsOnContracts()
+    {
+        var project = LoadProject("src/Lapis.Library/Lapis.Library.csproj");
+        var references = project.Descendants("ProjectReference")
+            .Select(element => element.Attribute("Include")?.Value.Replace('\\', '/'))
+            .Where(value => value is not null)
+            .ToArray();
+        Assert.Equal(new[] { "../Lapis.Contracts/Lapis.Contracts.csproj" }, references);
     }
 
     [Fact]

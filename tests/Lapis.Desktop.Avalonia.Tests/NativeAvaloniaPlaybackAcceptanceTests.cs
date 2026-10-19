@@ -63,6 +63,16 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
     internal static async Task ExerciseAsync(MainWindow window, string media)
     {
         using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        // The new product launches library-first. Acceptance explicitly enters
+        // the watch page before exercising the real NativeControlHost.
+        var libraryPage = window.FindControl<Grid>("LibraryPage")
+            ?? throw new InvalidOperationException("Missing library page.");
+        var watchPage = window.FindControl<Grid>("PlayerPage")
+            ?? throw new InvalidOperationException("Missing watch page.");
+        Assert.True(libraryPage.IsVisible);
+        Assert.False(watchPage.IsVisible);
+        libraryPage.IsVisible = false;
+        watchPage.IsVisible = true;
         var surface = window.FindControl<WindowsVideoSurface>("VideoSurface")
             ?? throw new InvalidOperationException("Avalonia video host is missing.");
 

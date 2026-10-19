@@ -8,6 +8,7 @@ Lapis separates the **control plane** from the **media data plane**:
 
 - `src/Lapis.Contracts` contains stable product/domain contracts only.
 - `src/Lapis.Application` owns product orchestration, serialized playback commands, state snapshots, epochs, and user-facing playback policy.
+- `src/Lapis.Library` owns independent source-catalog contracts, one-item-per-disc normalization, and persistent local indexes; it never decodes media.
 - `src/Lapis.Desktop.Hosting` owns UI-neutral host command/surface ordering; `src/Lapis.Desktop.Avalonia` is the **product desktop UI** with MVVM and a Windows-specific D3D11 HWND adapter. the retired WinForms shell and test project are removed.
 - `native/MediaRuntime` owns the hot media path, the executable immutable media graph, clocks/schedulers, and a stable C ABI.
 - third-party media libraries live behind native adapters; their types must not leak into managed contracts or native core contracts.
@@ -46,7 +47,7 @@ dotnet build Lapis.slnx -c Release
 dotnet run --project src/Lapis.Desktop.Avalonia -c Release --no-build
 ```
 
-The Avalonia project copies `build/native/Release/Lapis.MediaRuntime.dll` when present. Its first Windows vertical slice supports file/BDMV folder selection and Play/Pause, Stop and relative seek via the existing DesktopPlaybackHost. The renderer still uses a D3D11 child HWND hosted by Avalonia NativeControlHost: no transparent Avalonia subtitle or BD-J overlay is supported yet. BDMV requires the separate opt-in libbluray Native build; HDR, AI subtitles, packaging and real-disc hardware acceptance remain future milestones. Real Avalonia GPU acceptance and native Win32 soak tests cover HWND lifecycle regression. See [Avalonia desktop development notes](docs/development/avalonia-desktop.md) and [desktop-host notes](docs/development/desktop-host.md).
+The Avalonia project copies `build/native/Release/Lapis.MediaRuntime.dll` when present. It opens on a cinema **library home**; users import local videos or an entire BDMV disc root without copying bytes, then select a library card to enter a distinct Watch page with Play/Pause, Stop and seek. A disc sidebar previews MPLS filenames without claiming supported playlist selection or BD-J navigation. The renderer still uses a D3D11 child HWND hosted by Avalonia NativeControlHost: no transparent Avalonia subtitle or BD-J overlay is supported yet. BDMV requires the separate opt-in libbluray Native build; HDR, AI subtitles, packaging and real-disc hardware acceptance remain future milestones. Real Avalonia GPU acceptance and native Win32 soak tests cover HWND lifecycle regression. See [Avalonia desktop development notes](docs/development/avalonia-desktop.md) and [desktop-host notes](docs/development/desktop-host.md).
 
 ## Repository layout
 

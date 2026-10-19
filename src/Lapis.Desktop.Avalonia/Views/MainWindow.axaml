@@ -2,69 +2,266 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:video="clr-namespace:Lapis.Desktop.Avalonia.Controls"
         x:Class="Lapis.Desktop.Avalonia.Views.MainWindow"
-        Title="Lapis — Desktop Player" Width="1220" Height="780"
-        MinWidth="900" MinHeight="540"
-        Background="#0B1019" Foreground="#EAF0F7">
-  <Grid RowDefinitions="Auto,*,Auto,Auto" Margin="18" RowSpacing="14">
-    <Border Grid.Row="0" Background="#151E2C" CornerRadius="14" Padding="14">
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="12">
-        <StackPanel Grid.Column="0" Spacing="2">
-          <TextBlock Text="LAPIS" FontWeight="Bold" FontSize="22"/>
-          <TextBlock Text="DESKTOP PLAYER" Foreground="#8FA4BC" FontSize="10"/>
+        Title="Lapis — Cinema Library" Width="1320" Height="810"
+        MinWidth="980" MinHeight="580"
+        Background="#0A0E15" Foreground="#EDF3FB">
+  <Window.Styles>
+    <Style Selector="Button">
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="#6D99F4"/>
+      <Setter Property="Foreground" Value="#09111E"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="CornerRadius" Value="10"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Padding" Value="20,11"/>
+    </Style>
+    <Style Selector="Button.library-card">
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    </Style>
+    <Style Selector="Button.library-card:pointerover">
+      <Setter Property="Opacity" Value="0.86"/>
+    </Style>
+  </Window.Styles>
+
+  <Grid>
+  <!-- LIBRARY is the launch experience. No media session is opened here. -->
+  <Grid x:Name="LibraryPage" RowDefinitions="Auto,*" IsVisible="True"
+        Background="#0A0E15">
+    <Border Grid.Row="0" BorderBrush="#253042" BorderThickness="0,0,0,1"
+            Background="#111826" Padding="30,17">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="13">
+        <StackPanel Spacing="1">
+          <TextBlock Text="L A P I S" FontWeight="Bold" FontSize="23"
+                     Foreground="#DCE9FF"/>
+          <TextBlock Text="YOUR CINEMA, YOUR COLLECTION" FontSize="9"
+                     Foreground="#91A8C6"/>
         </StackPanel>
-        <TextBlock Grid.Column="1" Text="{Binding MediaTitle}"
-                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
-                   FontSize="15" Foreground="#D9E5F2" Margin="18,0,0,0"/>
-        <Button Grid.Column="2" Content="開啟影片" Click="OpenFile_Click"
-                MinWidth="108" VerticalAlignment="Center"/>
-        <Button Grid.Column="3" Content="開啟 BDMV" Click="OpenBdmv_Click"
-                MinWidth="118" VerticalAlignment="Center"/>
+        <TextBlock Grid.Column="1" Text="電影收藏庫" VerticalAlignment="Center"
+                   HorizontalAlignment="Center" FontSize="14" Foreground="#B2C4DF"/>
+        <Button Grid.Column="2" Content="＋ 匯入影片" Click="ImportFiles_Click"
+                Classes="primary" VerticalAlignment="Center"/>
+        <Button Grid.Column="3" Content="匯入 Blu-ray 資料夾"
+                Click="ImportDisc_Click" Padding="15,10" VerticalAlignment="Center"
+                Background="#24324B" Foreground="#DBE8FB" CornerRadius="10"/>
       </Grid>
     </Border>
 
-    <!-- HWND airspace: no Avalonia overlays are placed over NativeControlHost.
-         Subtitle/menu compositing is a separate GPU surface milestone. -->
-    <Border Grid.Row="1" Background="#030508" CornerRadius="12"
-            ClipToBounds="True" BorderThickness="1" BorderBrush="#26354A">
+    <Grid Grid.Row="1" ColumnDefinitions="214,*">
+      <Border Grid.Column="0" Background="#101723" BorderBrush="#202C3F"
+              BorderThickness="0,0,1,0" Padding="20,31">
+        <StackPanel Spacing="13">
+          <TextBlock Text="探索" Foreground="#6E85A4" FontSize="11"
+                     FontWeight="SemiBold" Margin="8,0,0,4"/>
+          <Button Content="▦  所有收藏" Click="ShowAll_Click"
+                  HorizontalContentAlignment="Left" Padding="13,11"
+                  Background="#283755" CornerRadius="10"/>
+          <Button Content="▣  Blu-ray 光碟" Click="ShowDiscs_Click"
+                  HorizontalContentAlignment="Left" Padding="13,11"
+                  Background="Transparent" CornerRadius="10"/>
+          <Border Height="1" Background="#273449" Margin="4,18"/>
+          <TextBlock Text="{Binding CountText}" Foreground="#A7BCD4"
+                     FontSize="12" Margin="8,0"/>
+          <TextBlock Text="片源留在原本的位置；收藏庫只保存索引，不佔用額外影片空間。"
+                     TextWrapping="Wrap" Foreground="#7489A4" FontSize="11"
+                     Margin="8,8" LineHeight="20"/>
+        </StackPanel>
+      </Border>
+
+      <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="32,30,32,45" Spacing="23">
+          <Border Background="#19263A" CornerRadius="19" MinHeight="186" Padding="30,23">
+            <Grid ColumnDefinitions="*,220">
+              <StackPanel VerticalAlignment="Center" Spacing="9">
+                <TextBlock Text="PERSONAL HOME CINEMA" FontSize="11"
+                           Foreground="#8FBDFF" FontWeight="Bold"/>
+                <TextBlock Text="每一部電影，都值得好好收藏。" FontWeight="SemiBold"
+                           FontSize="27" Foreground="#F2F6FF"/>
+                <TextBlock Text="整理你的影片與完整 Blu-ray 光碟，從這裡進入沉浸式觀影。"
+                           Foreground="#C1D0E4" FontSize="13" TextWrapping="Wrap"/>
+                <TextBlock Text="影片不會在啟動時自動播放" Foreground="#85A0BF" FontSize="11"/>
+              </StackPanel>
+              <Border Grid.Column="1" CornerRadius="15" Margin="15,0,0,0"
+                      Background="#283D5E">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                            Spacing="6">
+                  <TextBlock Text="L" FontSize="82" Foreground="#739EEB"
+                             FontWeight="Light" HorizontalAlignment="Center"/>
+                  <TextBlock Text="CINEMA EDITION" FontSize="10"
+                             Foreground="#D4E1F5" LetterSpacing="2"/>
+                </StackPanel>
+              </Border>
+            </Grid>
+          </Border>
+
+          <Grid ColumnDefinitions="*,280" ColumnSpacing="20">
+            <StackPanel VerticalAlignment="Center" Spacing="3">
+              <TextBlock Text="{Binding CurrentFilterLabel}" FontSize="23"
+                         FontWeight="SemiBold"/>
+              <TextBlock Text="從封面進入播放；不必再尋找 BDMV 裡的片段檔。"
+                         FontSize="12" Foreground="#839BB9"/>
+            </StackPanel>
+            <TextBox Grid.Column="1" Text="{Binding SearchText, Mode=TwoWay}"
+                     Watermark="搜尋電影名稱或檔案路徑…" Height="41"
+                     Background="#1B2638" BorderBrush="#36445B"
+                     CornerRadius="10" VerticalAlignment="Center"/>
+          </Grid>
+
+          <Border IsVisible="{Binding IsEmpty}" Background="#152033"
+                  CornerRadius="16" Padding="48" MinHeight="205">
+            <StackPanel Spacing="12" VerticalAlignment="Center"
+                        HorizontalAlignment="Center">
+              <TextBlock Text="你的收藏庫還是空的" FontSize="20"
+                         HorizontalAlignment="Center" FontWeight="SemiBold"/>
+              <TextBlock Text="從右上角匯入影片或完整 Blu-ray 資料夾，建立第一張電影收藏卡。"
+                         Foreground="#9AB0CE" TextWrapping="Wrap" TextAlignment="Center"/>
+            </StackPanel>
+          </Border>
+          <TextBlock IsVisible="{Binding HasNoResults}"
+                     Text="沒有符合搜尋條件的收藏。" Foreground="#9AB0CE"
+                     FontSize="14" Margin="4,20"/>
+
+          <ItemsControl ItemsSource="{Binding VisibleItems}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <WrapPanel Orientation="Horizontal"/>
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Button Classes="library-card" Click="PlayLibraryItem_Click"
+                        CommandParameter="{Binding}" Margin="0,0,18,24">
+                  <StackPanel Width="186" Spacing="8">
+                    <Border Height="245" CornerRadius="13" Background="#202E46"
+                            BorderBrush="#384A67" BorderThickness="1" ClipToBounds="True">
+                      <Grid RowDefinitions="Auto,*,Auto" Margin="15">
+                        <TextBlock Text="{Binding KindLabel}" FontSize="10"
+                                   Foreground="#9EC4FF" FontWeight="SemiBold"/>
+                        <TextBlock Grid.Row="1" Text="L" FontSize="94" FontWeight="Light"
+                                   VerticalAlignment="Center" HorizontalAlignment="Center"
+                                   Foreground="#455F86"/>
+                        <Border Grid.Row="2" Background="#344B70" CornerRadius="6"
+                                HorizontalAlignment="Left" Padding="9,4">
+                          <TextBlock Text="▶  觀賞" FontSize="11" Foreground="#E7F0FD"/>
+                        </Border>
+                      </Grid>
+                    </Border>
+                    <TextBlock Text="{Binding Title}" FontSize="14"
+                               FontWeight="SemiBold" Foreground="#E7EFFB"
+                               TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding AvailabilityLabel}" FontSize="11"
+                               Foreground="#8EA5C2" TextTrimming="CharacterEllipsis"/>
+                  </StackPanel>
+                </Button>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock Text="{Binding StatusText}" Foreground="#95ADC8" FontSize="12"
+                     TextWrapping="Wrap"/>
+        </StackPanel>
+      </ScrollViewer>
+    </Grid>
+  </Grid>
+
+  <!-- WATCH is opened only after explicitly selecting a library item.
+       NativeControlHost cannot be covered with alpha overlays. -->
+  <Grid x:Name="PlayerPage" IsVisible="False" RowDefinitions="Auto,*,Auto,Auto"
+        ColumnDefinitions="*,Auto" Margin="17" RowSpacing="12" ColumnSpacing="13">
+    <Border Grid.Row="0" Grid.ColumnSpan="2" Background="#141D2C"
+            CornerRadius="13" Padding="12">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <Button Content="← 返回收藏庫" Click="BackToLibrary_Click"
+                Background="#263651" Foreground="#E4EDF9" Padding="18,10"
+                CornerRadius="9"/>
+        <TextBlock Grid.Column="1" Text="{Binding MediaTitle}" FontSize="17"
+                   Foreground="#ECF2FA" VerticalAlignment="Center"
+                   Margin="20,0" TextTrimming="CharacterEllipsis"/>
+        <TextBlock Grid.Column="2" Text="LAPIS / WATCH" VerticalAlignment="Center"
+                   Foreground="#8198B6" FontSize="11" Margin="12"/>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1" Grid.Column="0" Background="#030508"
+            CornerRadius="12" BorderBrush="#24334A" BorderThickness="1"
+            ClipToBounds="True">
       <video:WindowsVideoSurface x:Name="VideoSurface"/>
     </Border>
 
-    <Border Grid.Row="2" Background="#151E2C" CornerRadius="12" Padding="14">
+    <Border Grid.Row="1" Grid.Column="1" x:Name="DiscMenuPanel"
+            Width="286" IsVisible="False" Background="#161F2E"
+            CornerRadius="12" Padding="17">
+      <ScrollViewer>
+        <StackPanel Spacing="12">
+          <TextBlock Text="BLU-RAY DISC" Foreground="#91B9F2"
+                     FontSize="11" FontWeight="Bold"/>
+          <TextBlock Text="光碟導覽" FontSize="22" FontWeight="SemiBold"/>
+          <TextBlock Text="目前預設播放主影片。光碟 Playlist 檔案列於下方；切換 Title / Playlist / Chapter、原始選單及 BD-J 需要後續 Native 導覽整合。"
+                     Foreground="#9FB1CA" FontSize="12" TextWrapping="Wrap"
+                     LineHeight="20"/>
+          <Border Height="1" Background="#34445A" Margin="0,5"/>
+          <TextBlock Text="PLAYLIST / MPLS 索引" FontSize="12"
+                     Foreground="#D3E2F7" FontWeight="SemiBold"/>
+          <ItemsControl x:Name="DiscPlaylistList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Background="#21304A" CornerRadius="6"
+                        Padding="10,7" Margin="0,0,0,5">
+                  <TextBlock Text="{Binding}" Foreground="#D0DFF2" FontSize="12"/>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock Text="僅顯示檔名索引，不代表已解析或可切換播放。"
+                     FontSize="11" Foreground="#7F92B0" TextWrapping="Wrap"/>
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+
+    <Border Grid.Row="2" Grid.Column="0" Background="#151E2C"
+            CornerRadius="12" Padding="14">
       <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="10">
-        <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
-          <TextBlock Grid.Column="0" Text="{Binding PositionText}"
-                     Foreground="#B7C9DD" FontSize="13"/>
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Text="{Binding PositionText}" Foreground="#B8CDE6"
+                     FontSize="13"/>
           <TextBlock Grid.Column="1" Text="{Binding TransportText}"
-                     Foreground="#98C8FF" FontSize="13"/>
+                     Foreground="#9EC9FF" FontSize="12"/>
         </Grid>
-        <!-- A real seek preview. Binding updates never issue Seek; only
-             pointer release commits a single actor command. -->
-        <Slider x:Name="PlaybackTimeline" Grid.Row="1"
-                Minimum="0" Maximum="{Binding SeekDurationSeconds}"
+        <Slider x:Name="PlaybackTimeline" Grid.Row="1" Minimum="0"
+                Maximum="{Binding SeekDurationSeconds}"
                 Value="{Binding SeekPositionSeconds, Mode=TwoWay}"
-                IsEnabled="{Binding CanScrub}"
-                TickFrequency="1" IsSnapToTickEnabled="False"
+                IsEnabled="{Binding CanScrub}" TickFrequency="1"
+                IsSnapToTickEnabled="False"
                 AutomationProperties.Name="播放進度時間軸"/>
-        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10">
-          <Button Content="◀ 10 秒" Command="{Binding BackCommand}" IsEnabled="{Binding CanSeek}" MinWidth="90"/>
-          <Button Content="{Binding PlayPauseLabel}" Command="{Binding ToggleCommand}" IsEnabled="{Binding CanTransport}"
-                  MinWidth="130"/>
-          <Button Content="10 秒 ▶" Command="{Binding ForwardCommand}" IsEnabled="{Binding CanSeek}" MinWidth="90"/>
-          <Button Content="停止" Command="{Binding StopCommand}" IsEnabled="{Binding CanTransport}" MinWidth="82"/>
-          <TextBlock Text="影片播放與聲音仍由 Native MediaRuntime 處理"
-                     VerticalAlignment="Center" Foreground="#8298AD"
-                     Margin="20,0,0,0"/>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="11">
+          <Button Content="◀ 10 秒" Command="{Binding BackCommand}"
+                  IsEnabled="{Binding CanSeek}" MinWidth="88"/>
+          <Button Content="{Binding PlayPauseLabel}" Command="{Binding ToggleCommand}"
+                  IsEnabled="{Binding CanTransport}" MinWidth="120"
+                  Background="#2D456A" Foreground="#EAF3FF"/>
+          <Button Content="10 秒 ▶" Command="{Binding ForwardCommand}"
+                  IsEnabled="{Binding CanSeek}" MinWidth="88"/>
+          <Button Content="停止" Command="{Binding StopCommand}"
+                  IsEnabled="{Binding CanTransport}" MinWidth="75"/>
+          <TextBlock Text="劇院播放 · D3D11 原生輸出"
+                     VerticalAlignment="Center" Foreground="#829BB8"
+                     Margin="14,0,0,0" FontSize="11"/>
         </StackPanel>
       </Grid>
     </Border>
-
-    <Border Grid.Row="3" Background="#111927" CornerRadius="9" Padding="11,8">
+    <Border Grid.Row="3" Grid.ColumnSpan="2" Background="#101826"
+            CornerRadius="9" Padding="12,9">
       <Grid ColumnDefinitions="*,Auto">
-        <TextBlock Grid.Column="0" Text="{Binding StatusText}" Foreground="#B5C7D9"
-                   TextTrimming="CharacterEllipsis"/>
-        <TextBlock Grid.Column="1" Text="AI 翻譯字幕 · 規劃中"
-                   Foreground="#8698AB" Margin="16,0,0,0"/>
+        <TextBlock Text="{Binding StatusText}" Foreground="#BACBE0"
+                   TextTrimming="CharacterEllipsis" FontSize="12"/>
+        <TextBlock Grid.Column="1" Text="AI 雙字幕 / BD-J 選單 · 尚待整合"
+                   Foreground="#8198B5" FontSize="11"/>
       </Grid>
     </Border>
+  </Grid>
   </Grid>
 </Window>

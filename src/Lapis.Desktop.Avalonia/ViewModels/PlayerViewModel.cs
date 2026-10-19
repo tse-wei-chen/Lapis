@@ -153,6 +153,9 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
         });
     }
 
+    /// <summary>Stop/detach media before leaving the watch screen.</summary>
+    public Task CloseAsync() => RunAsync(() => _player.CloseAsync(_lifetime.Token));
+
     public void ReportError(string message) => StatusText = message;
 
     private async Task ToggleCoreAsync()
