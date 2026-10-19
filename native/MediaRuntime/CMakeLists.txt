@@ -191,12 +191,14 @@ if(BUILD_TESTING)
     target_compile_features(Lapis.MediaRuntime.BluraySourceTests
         PRIVATE cxx_std_20)
     target_compile_definitions(Lapis.MediaRuntime.BluraySourceTests
-        PRIVATE LAPIS_TEST_MEDIA_PATH="${LAPIS_TEST_MEDIA_PATH}")
+        PRIVATE LAPIS_TEST_MEDIA_PATH="tests/assets/test.y4m")
     target_link_libraries(Lapis.MediaRuntime.BluraySourceTests
         PRIVATE Lapis.MediaRuntime.Core)
     lapis_enable_strict_warnings(Lapis.MediaRuntime.BluraySourceTests)
     add_test(NAME bluray_source_contract
         COMMAND Lapis.MediaRuntime.BluraySourceTests)
+    set_tests_properties(bluray_source_contract PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 
     add_executable(Lapis.MediaRuntime.NavigationContractTests
         tests/navigation_contract.cpp)
