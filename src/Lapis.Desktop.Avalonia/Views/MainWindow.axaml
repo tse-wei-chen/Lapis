@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:video="clr-namespace:Lapis.Desktop.Avalonia.Controls"
+        xmlns:views="clr-namespace:Lapis.Desktop.Avalonia.Views"
         x:Class="Lapis.Desktop.Avalonia.Views.MainWindow"
         Title="Lapis — Cinema Library" Width="1320" Height="810"
         MinWidth="980" MinHeight="580"
@@ -161,7 +162,7 @@
           IsVisible="True" DragDrop.AllowDrop="True"
           Background="{StaticResource LibraryCanvas}">
 
-      <Border Grid.Row="0" Background="{StaticResource LibrarySurface}" BorderBrush="{StaticResource LibraryBorder}"
+      <Border x:Name="LegacyLibraryHeader" Grid.Row="0" IsVisible="False" Background="{StaticResource LibrarySurface}" BorderBrush="{StaticResource LibraryBorder}"
               BorderThickness="0,0,0,1" Padding="23,12" MinHeight="64">
         <Grid ColumnDefinitions="210,*,Auto" ColumnSpacing="16">
           <StackPanel VerticalAlignment="Center" Spacing="2">
@@ -183,7 +184,7 @@
         </Grid>
       </Border>
 
-      <Grid Grid.Row="1" ColumnDefinitions="208,*">
+      <Grid x:Name="LegacyLibraryBody" Grid.Row="1" IsVisible="False" ColumnDefinitions="208,*">
         <Border Background="{StaticResource LibrarySurface}" BorderBrush="{StaticResource LibraryBorder}"
                 BorderThickness="0,0,1,0" Grid.Column="0">
           <Grid x:Name="LibraryNavigationHost">
@@ -423,6 +424,9 @@
           </Grid>
         </Grid>
       </Grid>
+      <views:BigPictureLibraryView x:Name="BigPictureLibrary"
+                                   Grid.RowSpan="2" ZIndex="30"/>
+
       <!-- Non-interactive drag preview over the entire library surface.
            Do not overlay NativeControlHost; drop only indexes the catalog. -->
       <Grid x:Name="LibraryDropOverlay" Grid.RowSpan="2" ZIndex="100"

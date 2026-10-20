@@ -29,9 +29,24 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
     private LibraryDisplayMode _displayMode = LibraryDisplayMode.Grid;
     private LibrarySortChoice _selectedSort = SortChoices[0];
     private bool _loaded;
+    private LibraryCardViewModel? _featuredCard;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public ObservableCollection<LibraryCardViewModel> VisibleItems { get; } = [];
+    public ObservableCollection<LibraryCardViewModel> RecentItems { get; } = [];
+
+    public LibraryCardViewModel? FeaturedCard => _featuredCard;
+    public bool HasFeaturedCard => _featuredCard is not null;
+
+    public void SelectFeatured(LibraryCardViewModel? card)
+    {
+        if (card is not null && !VisibleItems.Contains(card)) return;
+        if (ReferenceEquals(_featuredCard, card)) return;
+        _featuredCard = card;
+        _featuredCard?.EnsurePosterLoaded();
+        Notify(nameof(FeaturedCard));
+        Notify(nameof(HasFeaturedCard));
+    }
 
     public static IReadOnlyList<LibrarySortChoice> SortChoices { get; } =
     [
@@ -272,11 +287,31 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         }
         while (VisibleItems.Count > desired.Length)
             VisibleItems.RemoveAt(VisibleItems.Count - 1);
+
+        var latest = desired.OrderByDescending(item => item.Item.ImportedAtUtc)
+            .ThenBy(item => item.Item.Id).Take(8).ToArray();
+        ReconcileItems(RecentItems, latest);
+        if (_featuredCard is null || !VisibleItems.Contains(_featuredCard))
+            SelectFeatured(desired.FirstOrDefault());
         Notify(nameof(CurrentFilterLabel));
         Notify(nameof(ResultText));
         Notify(nameof(IsEmpty));
         Notify(nameof(HasNoResults));
         Notify(nameof(IsRecentlyAddedSort));
+    }
+
+    private static void ReconcileItems(ObservableCollection<LibraryCardViewModel> target,
+        IReadOnlyList<LibraryCardViewModel> desired)
+    {
+        for (var i = 0; i < desired.Count; i++)
+        {
+            if (i < target.Count && ReferenceEquals(target[i], desired[i])) continue;
+            var found = target.IndexOf(desired[i]);
+            if (found >= 0) target.Move(found, i);
+            else target.Insert(i, desired[i]);
+        }
+        while (target.Count > desired.Count)
+            target.RemoveAt(target.Count - 1);
     }
 
     public void Dispose()
@@ -286,6 +321,8 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         foreach (var card in _cards.Values) card.Dispose();
         _cards.Clear();
         VisibleItems.Clear();
+        RecentItems.Clear();
+        _featuredCard = null;
     }
 
     private void Notify([CallerMemberName] string property = "") =>

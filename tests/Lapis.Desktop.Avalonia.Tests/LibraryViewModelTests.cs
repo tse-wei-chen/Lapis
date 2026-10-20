@@ -116,6 +116,34 @@ public sealed class LibraryViewModelTests
     }
 
     [Fact]
+    public async Task BigPictureFeaturedAndRecentShelvesShareCatalogIdentity()
+    {
+        var storage = new FakeLibrary();
+        using var view = new LibraryViewModel(storage);
+        await view.LoadAsync();
+        Assert.Null(view.FeaturedCard);
+
+        await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, "Alpha.mp4"));
+        await view.ImportAsync(new MediaLocator(MediaLocatorKind.Directory, "BluRay"));
+        await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, "Zebra.mkv"));
+
+        Assert.Equal(3, view.RecentItems.Count);
+        Assert.Contains(view.FeaturedCard!, view.VisibleItems);
+        Assert.Equal("Alpha", view.FeaturedCard!.Title); // Import preserves user selection.
+        var candidate = view.VisibleItems[1];
+        view.SelectFeatured(candidate);
+        Assert.Same(candidate, view.FeaturedCard);
+        view.ShowDiscs();
+        Assert.Equal("Blu-ray", Assert.Single(view.VisibleItems).Title);
+        Assert.Single(view.RecentItems);
+        Assert.Equal("Blu-ray", view.FeaturedCard!.Title);
+        view.ShowAll();
+        Assert.Equal(3, view.RecentItems.Count);
+        Assert.Same(view.VisibleItems.Single(x => x.Title == "Blu-ray"),
+            view.FeaturedCard);
+    }
+
+    [Fact]
     public async Task SidebarNavigationMaintainsExactlyOneActiveTarget()
     {
         using var view = new LibraryViewModel(new FakeLibrary());
