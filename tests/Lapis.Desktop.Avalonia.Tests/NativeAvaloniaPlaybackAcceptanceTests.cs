@@ -73,6 +73,14 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
             ?? throw new InvalidOperationException("Missing watch page.");
         Assert.True(libraryPage.IsVisible);
         Assert.False(watchPage.IsVisible);
+        var bigPicture = window.FindControl<BigPictureLibraryView>("BigPictureLibrary")
+            ?? throw new InvalidOperationException("Big Picture view missing.");
+        Assert.True(bigPicture.IsVisible);
+        bigPicture.HandleGamepadAction(GamepadAction.NextCategory);
+        bigPicture.HandleGamepadAction(GamepadAction.PreviousCategory);
+        bigPicture.HandleGamepadAction(GamepadAction.Back);
+        Assert.True(libraryPage.IsVisible);
+        Assert.False(watchPage.IsVisible);
         libraryPage.IsVisible = false;
         watchPage.IsVisible = true;
         var surface = window.FindControl<WindowsVideoSurface>("VideoSurface")
@@ -126,6 +134,17 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
                         "1\n00:00:00,000 --> 00:00:02,000\n字幕測試\n"));
                     await Task.Delay(180, cancel.Token);
                     Assert.True(IsWindow(output));
+                    var subtitle = chrome.FindControl<TextBlock>("WatchSubtitleText");
+                    var subtitleHost = chrome.FindControl<Border>("WatchSubtitleHost");
+                    Assert.NotNull(subtitle);
+                    Assert.NotNull(subtitleHost);
+                    Assert.Equal("字幕測試", subtitle!.Text);
+                    Assert.True(subtitleHost!.IsVisible);
+                    var controls = chrome.FindControl<Border>("WatchControls");
+                    Assert.NotNull(controls);
+                    Assert.True(controls!.IsVisible);
+                    chrome.NotifyPointerActivity();
+                    Assert.True(controls.IsVisible);
                 }
                 finally
                 {
