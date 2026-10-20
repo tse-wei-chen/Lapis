@@ -1,31 +1,26 @@
-# M1d source import status — PR #41
+# M1d GitHub baseline import — complete source transfer
 
-Verified artifact: `bdmv-player-v0.2-m1d.zip`, SHA-256 `06355de16608252f79e7f4194d24a7192c4764e78db742c84335f3fb8ccd2932`.
+Archive: `bdmv-player-v0.2-m1d.zip`; SHA-256: `06355de16608252f79e7f4194d24a7192c4764e78db742c84335f3fb8ccd2932`.
 
-## GitHub source transfer
-- **29 / 67 original ZIP files** now committed, all checked byte-for-byte using Git Blob SHA against the original archive.
-- Includes native C++20 MediaRuntime, Session, DecodePump, FileSource, synthetic adapter, C ABI header/interop, CMake runtime build, P/Invoke `Player.Contracts`, managed smoke source, selected native contract tests, architecture boundary script and file probe source.
-- Added two independent validation scripts not in the ZIP: `scripts/test-imported-core.sh` and `scripts/test-native-abi.sh`; neither claims real media playback.
+All **67 original ZIP entry contents** are now in this branch, byte-for-byte verified by Git Blob SHA. Two entries intentionally live under historical paths to preserve the repository's Git workflow files:
+- Original `README.md` → `docs/historical/m1d-README.md`.
+- Original `.gitignore` → `docs/historical/m1d.gitignore`.
 
-## Reproduction from the current partial branch
+The remaining 65 ZIP paths match exactly, including the manual-only `.github/workflows/manual-portability.yml`. Additional branch setup files are kept (import script, PR template, independent smoke tests).
 
-```bash
-bash scripts/test-imported-core.sh
-bash scripts/test-native-abi.sh
-python3 tests/architecture/test_boundaries.py
-```
+## Baseline verification — independently reproduced from verified ZIP
 
-The native ABI script explicitly builds with `BDMV_BUILD_TESTS=OFF` and `BDMV_WITH_FFMPEG=OFF`, because **38 original entries are still missing**, including the native CTest CMake file and FFmpeg adapter. It then calls the compiled shared library from GCC and Clang test executables to read **16 finite synthetic video/audio blocks**, validates the C ABI, and checks Seek/Epoch generation.
+- Linux GCC 14.2 Release, FFmpeg disabled, default CMake/CTest: **10/10 passed**.
+- Linux GCC 14.2 Release, SDL2 dummy-driver preview enabled: **11/11 passed** in an earlier local build.
+- Native ABI smoke: GCC and Clang both passed on exact source subset (16 synthetic blocks).
+- Full FFmpeg-on build not verified here: development headers missing.
+- Windows/MSVC, SteamOS/Steam Deck, physical A/V output, .NET 10 executable not verified.
 
-## Verification evidence and limitations
+## Required before release claims
 
-- Locally reconstructed exact imported native source subset: **CMake/GCC Release built `libMediaRuntime.so` successfully**.
-- Native ABI C++ smoke: **GCC and Clang both passed** (16 synthetic frames each).
-- Architecture boundary audit: **passed** against the full local M1d ZIP.
-- Full M1d ZIP was previously tested separately (10/10 core and 11/11 SDL dummy), but **these are not tests from a fresh GitHub checkout**.
-- `.NET 10` SDK is unavailable in this Linux environment: managed source is SHA-verified but **not compiled here**.
-- FFmpeg native adapter, real MKV/MP4 playback, actual video/audio output, Windows and SteamOS remain unverified.
+1. Rebuild the complete GitHub branch using the normal CMake configuration and run CTest.
+2. Inspect the draft PR for accidental binary/generated files; check manual-only workflow.
+3. Review code before merge. **Do not treat synthetic SDL dummy output as successful video playback.**
+4. After accepted baseline merge, branch M1e from `master` and validate the real in-process FFmpeg adapter using MP4/MKV fixtures.
 
-## Merge gate
-
-Do not merge Draft PR #41 until all original 67 entries are imported safely (README and .gitignore deliberately retained as repo policy, original README saved under historical docs), the full normal CMake + CTest matrix passes, manual-only Actions configuration is confirmed, and code review is complete.
+The archival report `docs/validation-report.md` records the earlier test snapshot and does not prove that SteamOS or physical devices were tested.

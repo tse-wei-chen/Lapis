@@ -1,0 +1,35 @@
+name: Manual portability smoke
+# Intentionally manual: no Actions billed on every commit/push.
+on: workflow_dispatch
+
+jobs:
+  native-and-managed:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Configure
+        run: cmake -S . -B build -DBDMV_BUILD_TESTS=ON -DBDMV_ENABLE_TEST_SOURCE=ON
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Native and architecture tests
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Managed contract compilation
+        run: dotnet build src/Player.Smoke/Player.Smoke.csproj -c Release
+      # Copy native runtime beside the managed executable so P/Invoke resolves.
+      - name: Stage native runtime (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: cp build/native/MediaRuntime/libMediaRuntime.so* src/Player.Smoke/bin/Release/net10.0/
+      - name: Stage native runtime (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Copy-Item build/native/MediaRuntime/Release/MediaRuntime.dll src/Player.Smoke/bin/Release/net10.0/
+      - name: Managed/native runtime integration
+        run: dotnet run --no-build --project src/Player.Smoke/Player.Smoke.csproj -c Release
