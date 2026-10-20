@@ -45,6 +45,8 @@ The test runner needs:
 - `LAPIS_E2E_MEDIA`: an existing playable local MP4;
 - `LAPIS_E2E_ARTIFACTS`: path for screen PNGs, UI Automation tree dumps,
   and xUnit TRX logs. These are uploaded even when the test fails.
+Monitor rectangles come from Win32 `EnumDisplayMonitors`; Windows-only
+`System.Drawing.Common` encodes PNGs. No Windows Forms dependency is enabled.
 
 Run locally on Windows after the Native runtime has been built:
 

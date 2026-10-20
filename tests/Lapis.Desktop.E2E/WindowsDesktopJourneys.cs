@@ -202,6 +202,20 @@ internal sealed class DesktopSession : IDisposable
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetWindowText(nint hwnd, StringBuilder title, int capacity);
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MonitorRect
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    private delegate bool MonitorEnumCallback(
+        nint monitor, nint hdc, ref MonitorRect rect, nint data);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumDisplayMonitors(
+        nint hdc, nint clipRect, MonitorEnumCallback callback, nint data);
+
     public AutomationElement WaitFor(Window window, string automationId,
         TimeSpan? timeout = null) =>
         Eventually(() => window.FindFirstDescendant(
@@ -241,15 +255,29 @@ internal sealed class DesktopSession : IDisposable
             $"Last UIA error: {last?.Message}. Artifacts: {_artifactRoot}");
     }
 
+    private static IReadOnlyList<Rectangle> EnumerateScreenBounds()
+    {
+        var monitors = new List<Rectangle>();
+        MonitorEnumCallback callback = (nint monitor, nint hdc, ref MonitorRect rect, nint data) =>
+        {
+            monitors.Add(Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom));
+            return true;
+        };
+        if (!EnumDisplayMonitors(nint.Zero, nint.Zero, callback, nint.Zero))
+            throw new InvalidOperationException(
+                $"EnumDisplayMonitors failed: Win32 error {Marshal.GetLastWin32Error()}");
+        return monitors;
+    }
+
     public void Snapshot(string stage)
     {
         try
         {
-            // Capture the real desktop pixels, not a headless visual tree.
-            foreach (var (screen, index) in System.Windows.Forms.Screen.AllScreens
-                .Select((screen, index) => (screen, index)))
+            // Capture each physical desktop monitor; no Windows Forms dependency.
+            var screens = EnumerateScreenBounds();
+            for (var index = 0; index < screens.Count; index++)
             {
-                var bounds = screen.Bounds;
+                var bounds = screens[index];
                 if (bounds.Width <= 0 || bounds.Height <= 0) continue;
                 using var bitmap = new Bitmap(bounds.Width, bounds.Height);
                 using (var graphics = Graphics.FromImage(bitmap))
