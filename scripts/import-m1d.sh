@@ -74,12 +74,14 @@ with zipfile.ZipFile(archive) as z:
         if not target.is_relative_to(root):
             raise SystemExit(f'Path escape: {rel!r}')
         if target.exists():
-            raise SystemExit(f'Refusing to overwrite existing file: {target_rel}')
+            if target.is_file() and target.read_bytes() == z.read(info):
+                continue  # Previously imported exact bytes; never overwrite.
+            raise SystemExit(f'Existing file differs from verified archive: {target_rel}')
         target.parent.mkdir(parents=True, exist_ok=True)
         with z.open(info) as src, target.open('wb') as dst:
             while chunk := src.read(65536):
                 dst.write(chunk)
-print(f'Imported {len(entries)} entries: README preserved historically; existing .gitignore retained.')
+print(f'Verified/imported {len(entries)} entries: README preserved historically; existing .gitignore retained.')
 PY
 
 echo 'Review imported files and run the local test matrix before staging.'
