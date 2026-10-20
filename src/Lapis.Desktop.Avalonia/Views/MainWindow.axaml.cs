@@ -23,11 +23,10 @@ namespace Lapis.Desktop.Avalonia.Views;
 public sealed partial class MainWindow : Window
 {
     private readonly WindowsVideoSurface _videoSurface;
-    private readonly Slider _timeline;
     private readonly Grid _libraryPage;
     private readonly Grid _playerPage;
-    private readonly Border _discMenuPanel;
-    private readonly ItemsControl _discPlaylistList;
+    private WatchChromeWindow? _watchChrome;
+    private WindowState _windowStateBeforeWatch = WindowState.Normal;
     private readonly ScrollViewer _gridSurface;
     private readonly Border _listSurface;
     private readonly Grid _dropOverlay;
@@ -51,14 +50,8 @@ public sealed partial class MainWindow : Window
             ?? throw new InvalidOperationException("Missing library page.");
         _playerPage = this.FindControl<Grid>("PlayerPage")
             ?? throw new InvalidOperationException("Missing watch page.");
-        _discMenuPanel = this.FindControl<Border>("DiscMenuPanel")
-            ?? throw new InvalidOperationException("Missing disc navigation panel.");
-        _discPlaylistList = this.FindControl<ItemsControl>("DiscPlaylistList")
-            ?? throw new InvalidOperationException("Missing disc playlist index.");
         _videoSurface = this.FindControl<WindowsVideoSurface>("VideoSurface")
             ?? throw new InvalidOperationException("Missing D3D11 surface host.");
-        _timeline = this.FindControl<Slider>("PlaybackTimeline")
-            ?? throw new InvalidOperationException("Missing playback timeline.");
         _gridSurface = this.FindControl<ScrollViewer>("LibraryGridSurface")
             ?? throw new InvalidOperationException("Missing library grid viewport.");
         _listSurface = this.FindControl<Border>("LibraryListSurface")
@@ -114,12 +107,7 @@ public sealed partial class MainWindow : Window
         _libraryPage.AddHandler(DragDrop.DropEvent,
             LibraryDrop, RoutingStrategies.Bubble, handledEventsToo: true);
 
-        _timeline.AddHandler(InputElement.PointerPressedEvent,
-            TimelinePointerPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
-        _timeline.AddHandler(InputElement.PointerReleasedEvent,
-            TimelinePointerReleased, RoutingStrategies.Tunnel, handledEventsToo: true);
-        _timeline.AddHandler(InputElement.PointerCaptureLostEvent,
-            TimelinePointerCaptureLost, RoutingStrategies.Bubble, handledEventsToo: true);
+        KeyDown += WatchKeyDown;
         Closing += OnClosing;
     }
 
@@ -204,17 +192,41 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void TimelinePointerPressed(object? sender, PointerPressedEventArgs args)
+    private async void WatchKeyDown(object? sender, KeyEventArgs args)
     {
-        if (args.GetCurrentPoint(_timeline).Properties.IsLeftButtonPressed)
-            _player.BeginScrub();
+        if (!_playerPage.IsVisible) return;
+        switch (args.Key)
+        {
+            case Key.Escape:
+                args.Handled = true;
+                await BackToLibraryAsync();
+                break;
+            case Key.F11:
+            case Key.F:
+                args.Handled = true;
+                ToggleWatchFullscreen();
+                break;
+            case Key.Space:
+            case Key.K:
+                args.Handled = true;
+                if (_player.ToggleCommand.CanExecute(null))
+                    _player.ToggleCommand.Execute(null);
+                break;
+            case Key.Left:
+            case Key.J:
+                args.Handled = true;
+                if (_player.BackCommand.CanExecute(null))
+                    _player.BackCommand.Execute(null);
+                break;
+            case Key.Right:
+            case Key.L:
+                args.Handled = true;
+                if (_player.ForwardCommand.CanExecute(null))
+                    _player.ForwardCommand.Execute(null);
+                break;
+        }
+        _watchChrome?.NotifyPointerActivity();
     }
-
-    private async void TimelinePointerReleased(object? sender, PointerReleasedEventArgs args) =>
-        await _player.CommitScrubAsync();
-
-    private void TimelinePointerCaptureLost(object? sender, PointerCaptureLostEventArgs args) =>
-        _player.CancelScrub();
 
     private async void ImportFiles_Click(object? sender, RoutedEventArgs args)
     {
@@ -483,36 +495,65 @@ public sealed partial class MainWindow : Window
         var item = card.Item;
         try
         {
-            // Validate that the referenced source still exists before switching
-            // UI. Opening never copies a disc or treats .m2ts as a title.
             var source = LibrarySourcePaths.Normalize(item.ToLocator());
-
-            _discMenuPanel.IsVisible = item.IsDisc;
-            _discPlaylistList.ItemsSource = item.IsDisc
-                ? DiscPlaylistIndex.ListIdentifiers(item)
-                    .Select(id => id + ".mpls").ToArray()
-                : [];
+            // Full-screen video is the primary surface. Chrome is an owned,
+            // separately composed transparent top-level window, NOT an
+            // Avalonia child under the NativeControlHost HWND.
+            _windowStateBeforeWatch = WindowState;
             _libraryPage.IsVisible = false;
             _playerPage.IsVisible = true;
+            WindowState = WindowState.FullScreen;
 
-            // A collapsed NativeControlHost does not necessarily have an HWND.
-            // Render/loaded dispatch passes must finish before native Open binds
-            // the borrowed output window. Do not block the UI dispatcher.
             await AwaitVideoSurfaceAsync();
             await _player.OpenAsync(source);
             if (!_player.CanTransport)
             {
                 _library.ReportError(_player.StatusText);
-                _playerPage.IsVisible = false;
-                _libraryPage.IsVisible = true;
+                RestoreLibraryView();
+                return;
+            }
+
+            var playlists = item.IsDisc
+                ? DiscPlaylistIndex.ListIdentifiers(item)
+                    .Select(id => id + ".mpls").ToArray()
+                : [];
+            _watchChrome = new WatchChromeWindow(this, _player, playlists,
+                BackToLibraryAsync, ToggleWatchFullscreen);
+            if (source.Kind == MediaLocatorKind.File)
+            {
+                var track = await SidecarSubtitleTrack.LoadForFileAsync(source.Value);
+                _watchChrome?.SetSubtitleTrack(track);
             }
         }
         catch (Exception exception)
         {
             _library.ReportError($"無法播放收藏項目：{exception.Message}");
-            _playerPage.IsVisible = false;
-            _libraryPage.IsVisible = true;
+            try { await _player.CloseAsync(); }
+            catch (Exception closeException)
+            {
+                _library.ReportError($"無法安全關閉播放：{closeException.Message}");
+            }
+            RestoreLibraryView();
         }
+    }
+
+    private void ToggleWatchFullscreen()
+    {
+        if (!_playerPage.IsVisible) return;
+        WindowState = WindowState == WindowState.FullScreen
+            ? WindowState.Maximized : WindowState.FullScreen;
+        _watchChrome?.NotifyPointerActivity();
+    }
+
+    private void RestoreLibraryView()
+    {
+        _watchChrome?.Close();
+        _watchChrome = null;
+        WindowState = _windowStateBeforeWatch;
+        _playerPage.IsVisible = false;
+        _libraryPage.IsVisible = true;
+        Dispatcher.UIThread.Post(() => UpdateNavigationMarker(initial: true),
+            DispatcherPriority.Loaded);
     }
 
     private async Task AwaitVideoSurfaceAsync()
@@ -533,14 +574,11 @@ public sealed partial class MainWindow : Window
         throw new InvalidOperationException("影片輸出視窗尚未建立，請重新開啟收藏項目。");
     }
 
-    private async void BackToLibrary_Click(object? sender, RoutedEventArgs args)
+    private async Task BackToLibraryAsync()
     {
-        // The normal actor Close/detach completes before hiding the watcher.
+        // Native render worker is stopped/detached before hiding the host.
         await _player.CloseAsync();
-        _playerPage.IsVisible = false;
-        _libraryPage.IsVisible = true;
-        Dispatcher.UIThread.Post(() => UpdateNavigationMarker(initial: true),
-            DispatcherPriority.Loaded);
+        RestoreLibraryView();
     }
 
     private async void OnClosing(object? sender, WindowClosingEventArgs args)
@@ -552,6 +590,8 @@ public sealed partial class MainWindow : Window
         try
         {
             // Native render worker joins before the persistent GPU HWND dies.
+            _watchChrome?.Close();
+            _watchChrome = null;
             await _player.DisposeAsync();
             _videoSurface.ReleaseAfterPlaybackStopped();
             _library.Dispose();

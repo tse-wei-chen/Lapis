@@ -1,0 +1,124 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Lapis.Desktop.Avalonia.Views.WatchChromeWindow"
+        Title="Lapis Watch Controls"
+        SystemDecorations="None" ShowInTaskbar="False"
+        ShowActivated="False" CanResize="False"
+        TransparencyLevelHint="Transparent" Background="Transparent"
+        Width="1280" Height="720">
+  <Window.Styles>
+    <Style Selector="Button.watch-action">
+      <Setter Property="Background" Value="#66314051"/>
+      <Setter Property="Foreground" Value="#F0F7FA"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="CornerRadius" Value="8"/>
+      <Setter Property="MinHeight" Value="38"/>
+      <Setter Property="Padding" Value="16,8"/>
+      <Setter Property="Transitions">
+        <Transitions>
+          <BrushTransition Property="Background" Duration="0:0:0.14"/>
+        </Transitions>
+      </Setter>
+    </Style>
+    <Style Selector="Button.watch-action:pointerover">
+      <Setter Property="Background" Value="#CC466477"/>
+    </Style>
+  </Window.Styles>
+  <Grid x:Name="WatchChromeRoot" RowDefinitions="Auto,*,Auto"
+        Background="Transparent" PointerMoved="WatchPointerMoved">
+    <Border x:Name="WatchHeader" Grid.Row="0"
+            Padding="20,14" Background="#C60A1018">
+      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
+        <Button Classes="watch-action" Content="← 收藏庫" Click="Back_Click"
+                AutomationProperties.Name="返回收藏庫"/>
+        <TextBlock Grid.Column="1" Text="{Binding MediaTitle}"
+                   TextTrimming="CharacterEllipsis" FontWeight="SemiBold"
+                   FontSize="17" Foreground="#EEF7FF" VerticalAlignment="Center"/>
+        <Button Grid.Column="2" Classes="watch-action" Content="☷ 光碟資訊"
+                x:Name="WatchDiscToggle" Click="Disc_Click"
+                AutomationProperties.Name="顯示或關閉光碟導覽"/>
+      </Grid>
+    </Border>
+
+    <Border x:Name="WatchDiscSidebar" Grid.Row="1" Width="316"
+            IsVisible="False" HorizontalAlignment="Right"
+            Background="#EC101925" Padding="18"
+            BorderBrush="#3B5163" BorderThickness="1,0,0,1"
+            CornerRadius="0,0,0,12">
+      <ScrollViewer>
+        <StackPanel Spacing="14">
+          <Grid ColumnDefinitions="*,Auto">
+            <TextBlock Text="BLU-RAY / PLAYLIST" FontSize="12"
+                       FontWeight="SemiBold" Foreground="#86CCDE"
+                       VerticalAlignment="Center"/>
+            <Button Grid.Column="1" Classes="watch-action" Content="✕"
+                    Click="Disc_Click" AutomationProperties.Name="關閉光碟導覽"/>
+          </Grid>
+          <TextBlock Text="光碟 Playlist 索引" FontSize="21"
+                     Foreground="#F2F5FA" FontWeight="Medium"/>
+          <TextBlock Text="以下僅為現有 MPLS 檔名；Title、Chapter 與 BD-J 尚未接上可操作的 Native 導覽。"
+                     TextWrapping="Wrap" Foreground="#A5B7C9"
+                     FontSize="12"/>
+          <ItemsControl x:Name="WatchDiscPlaylistList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Background="#263648" CornerRadius="6"
+                        Padding="11,8" Margin="0,0,0,6">
+                  <TextBlock Text="{Binding}" Foreground="#DEEDF8"
+                             FontSize="12"/>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+
+    <!-- Subtitles never share Chrome visibility. Fully transparent background,
+         only glyphs over the lower part of video. -->
+    <Border x:Name="WatchSubtitleHost" Grid.RowSpan="3"
+            Background="Transparent" IsVisible="False"
+            Margin="68,0,68,44" VerticalAlignment="Bottom"
+            IsHitTestVisible="False">
+      <TextBlock x:Name="WatchSubtitleText" TextAlignment="Center"
+                 FontSize="28" FontWeight="SemiBold" Foreground="#FFFFFF"
+                 TextWrapping="Wrap"
+                 HorizontalAlignment="Center"
+                 MaxWidth="1050"/>
+    </Border>
+
+    <Border x:Name="WatchControls" Grid.Row="2" Padding="22,17"
+            Background="#DC0A121C">
+      <StackPanel Spacing="11">
+        <Slider x:Name="WatchTimeline" Minimum="0"
+                Maximum="{Binding SeekDurationSeconds}"
+                Value="{Binding SeekPositionSeconds, Mode=TwoWay}"
+                IsEnabled="{Binding CanScrub}"
+                AutomationProperties.Name="影片時間軸"/>
+        <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto"
+              ColumnSpacing="9">
+          <Button Grid.Column="0" Classes="watch-action" Content="◀ 10s"
+                  Command="{Binding BackCommand}" IsEnabled="{Binding CanSeek}"
+                  AutomationProperties.Name="後退十秒"/>
+          <Button Grid.Column="1" Classes="watch-action"
+                  Content="{Binding PlayPauseLabel}"
+                  Command="{Binding ToggleCommand}"
+                  IsEnabled="{Binding CanTransport}"
+                  MinWidth="80" AutomationProperties.Name="播放暫停"/>
+          <Button Grid.Column="2" Classes="watch-action" Content="10s ▶"
+                  Command="{Binding ForwardCommand}" IsEnabled="{Binding CanSeek}"
+                  AutomationProperties.Name="前進十秒"/>
+          <TextBlock Grid.Column="3" Text="{Binding PositionText}"
+                     VerticalAlignment="Center" Margin="10,0"
+                     Foreground="#F2F5FA" FontSize="13"/>
+          <Button Grid.Column="4" Classes="watch-action" Content="☷"
+                  Click="Disc_Click" x:Name="WatchDiscBottom"
+                  AutomationProperties.Name="播放清單資訊"/>
+          <Button Grid.Column="5" Classes="watch-action" Content="⛶"
+                  Click="Fullscreen_Click"
+                  AutomationProperties.Name="切換全螢幕"/>
+        </Grid>
+      </StackPanel>
+    </Border>
+  </Grid>
+</Window>
