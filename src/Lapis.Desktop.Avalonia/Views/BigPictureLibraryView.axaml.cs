@@ -31,6 +31,9 @@ public sealed partial class BigPictureLibraryView : UserControl
             ?? throw new InvalidOperationException("Missing Big Picture scroll.");
         _hero = this.FindControl<Border>("BigPictureHero")
             ?? throw new InvalidOperationException("Missing Big Picture hero.");
+        // Tunnel before Button/ScrollViewer swallow navigation arrows.
+        AddHandler(InputElement.KeyDownEvent, BigPictureKeyDown,
+            RoutingStrategies.Tunnel, handledEventsToo: true);
     }
 
     private LibraryViewModel? Library => DataContext as LibraryViewModel;
@@ -118,42 +121,145 @@ public sealed partial class BigPictureLibraryView : UserControl
     private void Manage_Click(object? sender, RoutedEventArgs e) =>
         ManageRequested?.Invoke();
 
+    private static readonly LibraryCategory[] Categories =
+    [
+        LibraryCategory.All, LibraryCategory.RecentlyAdded,
+        LibraryCategory.BluRay, LibraryCategory.Videos
+    ];
+
+    /// <summary>
+    /// One semantic input path shared by keyboard navigation, XInput and a
+    /// future Steam Input / SDL adapter. The catalog and Playback Actor
+    /// remain unaware of physical controller events.
+    /// </summary>
+    public void HandleGamepadAction(GamepadAction action)
+    {
+        if (!IsVisible) return;
+        switch (action)
+        {
+            case GamepadAction.Up:
+            case GamepadAction.Down:
+            case GamepadAction.Left:
+            case GamepadAction.Right:
+                MoveFocus(action switch
+                {
+                    GamepadAction.Up => BigPictureDirection.Up,
+                    GamepadAction.Down => BigPictureDirection.Down,
+                    GamepadAction.Left => BigPictureDirection.Left,
+                    _ => BigPictureDirection.Right
+                });
+                break;
+            case GamepadAction.Accept:
+                var focus = InteractiveButtons().FirstOrDefault(b => b.IsFocused);
+                if (focus is null)
+                {
+                    if (Library?.FeaturedCard is { } card)
+                        PlayRequested?.Invoke(card);
+                }
+                else
+                {
+                    focus.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                }
+                break;
+            case GamepadAction.Back:
+                Navigate(() =>
+                {
+                    Library?.ShowAll();
+                    if (Library is { } view) view.SearchText = "";
+                });
+                RestoreMovieFocus();
+                break;
+            case GamepadAction.Menu:
+                ManageRequested?.Invoke();
+                break;
+            case GamepadAction.PreviousCategory:
+                CycleCategory(-1);
+                break;
+            case GamepadAction.NextCategory:
+                CycleCategory(1);
+                break;
+        }
+    }
+
+    private void CycleCategory(int delta)
+    {
+        if (Library is not { } view) return;
+        var index = Array.IndexOf(Categories, view.Category);
+        var target = Categories[(Math.Max(0, index) + delta + Categories.Length)
+            % Categories.Length];
+        Navigate(() =>
+        {
+            switch (target)
+            {
+                case LibraryCategory.All: view.ShowAll(); break;
+                case LibraryCategory.RecentlyAdded: view.ShowRecentlyAdded(); break;
+                case LibraryCategory.BluRay: view.ShowDiscs(); break;
+                case LibraryCategory.Videos: view.ShowVideos(); break;
+            }
+        });
+        RestoreMovieFocus();
+    }
+
+    private Button[] InteractiveButtons() => this.GetVisualDescendants()
+        .OfType<Button>()
+        .Where(button => button.IsVisible &&
+            button.Bounds.Width > 0 && button.Bounds.Height > 0 &&
+            (button.Classes.Contains("bp-tile") ||
+             button.Classes.Contains("bp-nav") ||
+             button.Classes.Contains("bp-primary") ||
+             button.Classes.Contains("bp-secondary")))
+        .ToArray();
+
+    private void MoveFocus(BigPictureDirection direction)
+    {
+        var candidates = InteractiveButtons();
+        if (candidates.Length == 0) return;
+        var positions = candidates.Select(b =>
+            global::Avalonia.VisualExtensions.TranslatePoint(
+                b, new Point(b.Bounds.Width / 2, b.Bounds.Height / 2), this)
+                ?? new Point(double.NaN, double.NaN)).ToArray();
+
+        var focused = Array.FindIndex(candidates, b => b.IsFocused);
+        if (focused < 0 && _focusedTile is { } last)
+            focused = Array.IndexOf(candidates, last);
+        if (focused < 0 && Library?.FeaturedCard is { } selected)
+            focused = Array.FindIndex(candidates,
+                b => b.Classes.Contains("bp-tile") &&
+                     ReferenceEquals(b.CommandParameter, selected));
+        var next = BigPictureFocusNavigator.FindNext(positions, focused, direction);
+        if (next < 0) return;
+        var target = candidates[next];
+        target.Focus();
+        // Native D3D11 HWND is not in this visual tree. Only UI moves.
+        LibraryMotion.Enter(target);
+    }
+
     private void BigPictureKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Source is TextBox or ComboBox) return;
+        if (e.Handled || !IsVisible) return;
+        // Never hijack typing, ComboBox selection or a nested text editor.
+        if (e.Source is Visual visual &&
+            (visual is TextBox or ComboBox ||
+             visual.GetVisualAncestors().Any(x => x is TextBox or ComboBox)))
+            return;
+
         if (e.Key == Key.Escape)
         {
-            Library?.ShowAll();
-            _scroll.Offset = new Vector(0, 0);
+            HandleGamepadAction(GamepadAction.Back);
             e.Handled = true;
             return;
         }
 
-        var direction = e.Key switch
+        var action = e.Key switch
         {
-            Key.Left => BigPictureDirection.Left,
-            Key.Right => BigPictureDirection.Right,
-            Key.Up => BigPictureDirection.Up,
-            Key.Down => BigPictureDirection.Down,
-            _ => (BigPictureDirection?)null
+            Key.Left => GamepadAction.Left,
+            Key.Right => GamepadAction.Right,
+            Key.Up => GamepadAction.Up,
+            Key.Down => GamepadAction.Down,
+            _ => (GamepadAction?)null
         };
-        if (direction is null) return;
-
-        var tiles = this.GetVisualDescendants()
-            .OfType<Button>()
-            .Where(button => button.IsVisible && button.Classes.Contains("bp-tile"))
-            .ToArray();
-        if (tiles.Length == 0) return;
-
-        var points = tiles.Select(tile =>
-            global::Avalonia.VisualExtensions.TranslatePoint(
-                tile, new Point(tile.Bounds.Width / 2, tile.Bounds.Height / 2), this)
-                ?? new Point(double.NaN, double.NaN)).ToArray();
-        var current = Array.IndexOf(tiles, _focusedTile);
-        var next = BigPictureFocusNavigator.FindNext(points, current,
-            direction.Value);
-        if (next < 0) return;
-        tiles[next].Focus();
+        if (action is not { } move) return;
+        HandleGamepadAction(move);
         e.Handled = true;
     }
 }
