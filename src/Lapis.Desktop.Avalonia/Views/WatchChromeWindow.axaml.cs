@@ -206,11 +206,16 @@ public sealed partial class WatchChromeWindow : Window
         NotifyPointerActivity();
     }
 
-    private void Disc_Click(object? sender, RoutedEventArgs args)
+    private void Disc_Click(object? sender, RoutedEventArgs args) =>
+        ToggleDiscNavigation();
+
+    public void ToggleDiscNavigation()
     {
+        if (_disposed || !_discBottom.IsVisible) return;
         _sidebarOpen = !_sidebarOpen;
         NotifyPointerActivity();
         _sidebar.IsVisible = _sidebarOpen;
+        if (_sidebarOpen) LibraryMotion.Enter(_sidebar);
     }
 
     private void Fullscreen_Click(object? sender, RoutedEventArgs args)

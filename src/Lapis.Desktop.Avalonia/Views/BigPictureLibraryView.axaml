@@ -72,7 +72,7 @@
     </Style>
   </UserControl.Styles>
   <Grid x:Name="BigPictureRoot" RowDefinitions="76,*,46"
-        Background="#0A111C" KeyDown="BigPictureKeyDown">
+        Background="#0A111C">
 
     <!-- Quiet console-style navigation that remains accessible from a couch. -->
     <Border Grid.Row="0" Background="#EA111C29" Padding="32,8"
@@ -319,7 +319,7 @@
                    FontSize="12" TextTrimming="CharacterEllipsis"
                    VerticalAlignment="Center"/>
         <TextBlock Grid.Column="1"
-                   Text="方向鍵：選取   Enter：播放   Esc：返回首頁   F11：全螢幕"
+                   Text="手把：左搖桿／方向鍵移動 · A 播放 · B 返回 · LB/RB 切分類 · Menu 管理   ｜   鍵盤：方向鍵／Enter／Esc"
                    Foreground="#AEC0CF" FontSize="12"
                    VerticalAlignment="Center"/>
       </Grid>

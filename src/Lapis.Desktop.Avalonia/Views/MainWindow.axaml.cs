@@ -46,6 +46,14 @@ public sealed partial class MainWindow : Window
     private bool _closeStarted;
     private bool _shutdownComplete;
 
+    // The UI consumes semantic actions, never XInput structs or device IDs.
+    private readonly IGamepadInputSource _gamepadSource = new WindowsXInputSource();
+    private readonly GamepadInputRepeater _gamepadRepeater = new();
+    private readonly Stopwatch _gamepadClock = Stopwatch.StartNew();
+    private readonly DispatcherTimer _gamepadTimer = new()
+        { Interval = TimeSpan.FromMilliseconds(33) };
+    private bool _controllerBackInFlight;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -106,6 +114,8 @@ public sealed partial class MainWindow : Window
             {
                 await _library.LoadAsync();
                 WindowState = WindowState.Maximized;
+                Dispatcher.UIThread.Post(_bigPicture.RestoreMovieFocus,
+                    DispatcherPriority.Loaded);
                 // The old management sidebar is kept as a deliberate secondary
                 // screen; it is not the default startup experience.
             }
@@ -124,6 +134,8 @@ public sealed partial class MainWindow : Window
             LibraryDrop, RoutingStrategies.Bubble, handledEventsToo: true);
 
         KeyDown += WatchKeyDown;
+        _gamepadTimer.Tick += GamepadTick;
+        Opened += (_, _) => _gamepadTimer.Start();
         Closing += OnClosing;
     }
 
@@ -206,6 +218,69 @@ public sealed partial class MainWindow : Window
             _dropBusy = false;
             _dropOverlay.IsVisible = false;
         }
+    }
+
+    private void GamepadTick(object? sender, EventArgs args)
+    {
+        // Never activate the player or move hidden tiles because a gamepad
+        // remains attached while the application is in the background.
+        if (_closeStarted || (!IsActive && _watchChrome?.IsActive != true))
+        {
+            _gamepadRepeater.Reset();
+            return;
+        }
+
+        var actions = _gamepadRepeater.Update(
+            _gamepadSource.Read(), _gamepadClock.Elapsed);
+        foreach (var action in actions)
+        {
+            if (_libraryPage.IsVisible)
+            {
+                if (_bigPicture.IsVisible)
+                    _bigPicture.HandleGamepadAction(action);
+                else if (action == GamepadAction.Back)
+                {
+                    ShowLibraryManagement(false);
+                    Dispatcher.UIThread.Post(_bigPicture.RestoreMovieFocus,
+                        DispatcherPriority.Loaded);
+                }
+                continue;
+            }
+
+            if (!_playerPage.IsVisible) continue;
+            _watchChrome?.NotifyPointerActivity();
+            switch (action)
+            {
+                case GamepadAction.Back:
+                    if (!_controllerBackInFlight)
+                        _ = ControllerBackToLibraryAsync();
+                    break;
+                case GamepadAction.Accept:
+                    if (_player.ToggleCommand.CanExecute(null))
+                        _player.ToggleCommand.Execute(null);
+                    break;
+                case GamepadAction.Left:
+                    if (_player.BackCommand.CanExecute(null))
+                        _player.BackCommand.Execute(null);
+                    break;
+                case GamepadAction.Right:
+                    if (_player.ForwardCommand.CanExecute(null))
+                        _player.ForwardCommand.Execute(null);
+                    break;
+                case GamepadAction.Menu:
+                    _watchChrome?.ToggleDiscNavigation();
+                    break;
+            }
+        }
+    }
+
+    private async Task ControllerBackToLibraryAsync()
+    {
+        if (_controllerBackInFlight) return;
+        _controllerBackInFlight = true;
+        try { await BackToLibraryAsync(); }
+        catch (Exception ex) { _library.ReportError($"返回收藏庫失敗：{ex.Message}"); }
+        finally { _controllerBackInFlight = false; }
     }
 
     private async void WatchKeyDown(object? sender, KeyEventArgs args)
@@ -649,6 +724,8 @@ public sealed partial class MainWindow : Window
         try
         {
             // Native render worker joins before the persistent GPU HWND dies.
+            _gamepadTimer.Stop();
+            _gamepadTimer.Tick -= GamepadTick;
             _watchChrome?.Close();
             _watchChrome = null;
             await _player.DisposeAsync();
