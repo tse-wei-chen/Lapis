@@ -1,0 +1,13 @@
+build/
+build-*/
+.build/
+**/bin/
+**/obj/
+.vs/
+.idea/
+*.user
+.DS_Store
+__pycache__/
+*.pyc
+*.ppm
+*.s16le
