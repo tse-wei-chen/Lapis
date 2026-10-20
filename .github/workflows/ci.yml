@@ -45,9 +45,9 @@ jobs:
                   managed=true
                   native=true
                   ;;
-                src/Lapis.Desktop.Avalonia/Views/WatchChromeWindow.*|tests/Lapis.Desktop.Avalonia.Tests/NativeAvaloniaPlaybackAcceptanceTests.cs)
-                  # Owned transparent chrome must be smoke-tested alongside
-                  # the real NativeControlHost/D3D11 HWND (airspace boundary).
+                src/Lapis.Desktop.Avalonia/*|tests/Lapis.Desktop.E2E/*|tests/Lapis.Desktop.Avalonia.Tests/NativeAvaloniaPlaybackAcceptanceTests.cs)
+                  # UI changes always exercise the actual Lapis.exe via Win32
+                  # UI Automation AND the native D3D11 playback acceptance.
                   managed=true
                   native=true
                   ;;
@@ -152,3 +152,31 @@ jobs:
             -c Release --no-build `
             --filter "FullyQualifiedName~NativeAvaloniaPlaybackAcceptanceTests" `
             --logger "trx;LogFileName=native-avalonia-acceptance.trx"
+
+      # Separate black-box E2E suite: launches the *built product EXE* in a
+      # child process, drives it through UI Automation and captures desktop
+      # screenshots and the accessibility tree. This is NOT a Headless mock.
+      - name: Actual Windows desktop UI E2E
+        shell: pwsh
+        timeout-minutes: 7
+        run: |
+          $app = (Resolve-Path "src/Lapis.Desktop.Avalonia/bin/Release/net10.0-windows/Lapis.Desktop.Avalonia.exe").Path
+          $media = (Resolve-Path "native/MediaRuntime/tests/assets/test_soak_churn.mp4").Path
+          $artifacts = Join-Path "${{ github.workspace }}" "build/e2e-artifacts"
+          New-Item -ItemType Directory -Force -Path $artifacts | Out-Null
+          $env:LAPIS_E2E_EXE = $app
+          $env:LAPIS_E2E_MEDIA = $media
+          $env:LAPIS_E2E_ARTIFACTS = $artifacts
+          dotnet test tests/Lapis.Desktop.E2E/Lapis.Desktop.E2E.csproj -c Release `
+            --logger "trx;LogFileName=windows-desktop-e2e.trx" `
+            --results-directory "$artifacts"
+      - name: Upload Windows E2E screenshots and TRX
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lapis-windows-desktop-e2e
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/e2e-artifacts/**
+

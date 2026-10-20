@@ -162,7 +162,7 @@
           IsVisible="True" DragDrop.AllowDrop="True"
           Background="{StaticResource LibraryCanvas}">
 
-      <Border x:Name="LegacyLibraryHeader" Grid.Row="0" IsVisible="False" Background="{StaticResource LibrarySurface}" BorderBrush="{StaticResource LibraryBorder}"
+      <Border x:Name="LegacyLibraryHeader" AutomationProperties.AutomationId="Lapis.Library.ManagementHeader" Grid.Row="0" IsVisible="False" Background="{StaticResource LibrarySurface}" BorderBrush="{StaticResource LibraryBorder}"
               BorderThickness="0,0,0,1" Padding="23,12" MinHeight="64">
         <Grid ColumnDefinitions="210,*,Auto" ColumnSpacing="16">
           <StackPanel VerticalAlignment="Center" Spacing="2">
@@ -184,7 +184,7 @@
         </Grid>
       </Border>
 
-      <Grid x:Name="LegacyLibraryBody" Grid.Row="1" IsVisible="False" ColumnDefinitions="208,*">
+      <Grid x:Name="LegacyLibraryBody" AutomationProperties.AutomationId="Lapis.Library.ManagementBody" Grid.Row="1" IsVisible="False" ColumnDefinitions="208,*">
         <Border Background="{StaticResource LibrarySurface}" BorderBrush="{StaticResource LibraryBorder}"
                 BorderThickness="0,0,1,0" Grid.Column="0">
           <Grid x:Name="LibraryNavigationHost">
