@@ -608,8 +608,11 @@ public sealed partial class MainWindow : Window
         WindowState = _windowStateBeforeWatch;
         _playerPage.IsVisible = false;
         _libraryPage.IsVisible = true;
-        Dispatcher.UIThread.Post(() => UpdateNavigationMarker(initial: true),
-            DispatcherPriority.Loaded);
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_bigPicture.IsVisible) _bigPicture.RestoreMovieFocus();
+            else UpdateNavigationMarker(initial: true);
+        }, DispatcherPriority.Loaded);
     }
 
     private async Task AwaitVideoSurfaceAsync()

@@ -128,7 +128,8 @@ public sealed class LibraryViewModelTests
         await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, "Zebra.mkv"));
 
         Assert.Equal(3, view.RecentItems.Count);
-        Assert.Same(view.VisibleItems[0], view.FeaturedCard);
+        Assert.Contains(view.FeaturedCard!, view.VisibleItems);
+        Assert.Equal("Alpha", view.FeaturedCard!.Title); // Import preserves user selection.
         var candidate = view.VisibleItems[1];
         view.SelectFeatured(candidate);
         Assert.Same(candidate, view.FeaturedCard);

@@ -35,6 +35,21 @@ public sealed partial class BigPictureLibraryView : UserControl
 
     private LibraryViewModel? Library => DataContext as LibraryViewModel;
 
+    /// <summary>
+    /// Return keyboard/controller focus to the previously selected movie
+    /// after exiting Watch, without recreating or re-sorting the catalog.
+    /// </summary>
+    public void RestoreMovieFocus()
+    {
+        if (!IsVisible) return;
+        var selected = Library?.FeaturedCard;
+        var tiles = this.GetVisualDescendants().OfType<Button>()
+            .Where(b => b.IsVisible && b.Classes.Contains("bp-tile")).ToArray();
+        var target = tiles.FirstOrDefault(b => ReferenceEquals(b.CommandParameter, selected))
+            ?? tiles.FirstOrDefault();
+        target?.Focus();
+    }
+
     private void All_Click(object? sender, RoutedEventArgs e) =>
         Navigate(() => Library?.ShowAll());
     private void Recent_Click(object? sender, RoutedEventArgs e) =>
