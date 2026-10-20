@@ -4,17 +4,17 @@
 
 The protected integration target is **`master`** (not `main`). Do not commit directly to it.
 
-1. Bootstrap the existing M1d source on `chore/bootstrap-m1d-baseline`.
-2. Validate the imported archive before marking the baseline PR ready.
-3. Merge baseline only after review and test verification.
-4. Branch `feat/m1e-native-ffmpeg` from the merged baseline, not from a speculative local snapshot.
+1. M1d source and historical docs are imported on `chore/bootstrap-m1d-baseline` and verified by Git Blob SHA (67/67).
+2. Review the verified GCC/Clang Linux test report and missing-platform limitations before merging baseline PR #41.
+3. Merge baseline only after review; use `master` as the stable integration target.
+4. Branch `feat/m1e-native-ffmpeg` from the merged baseline; no speculative partial snapshots.
 5. Each subsequent feature should have an independently reviewable branch and PR.
 
 Use one logical commit or a small number of meaningful commits per feature. Avoid commit-per-file and automated pushes. No forced updates to the default branch.
 
 ## Source-of-truth requirements
 
-- GitHub is the source of truth **after** M1d import and merge. Until then, the M1d ZIP remains the local source snapshot.
+- The complete import branch is now the proposed source of truth; after approval and merge, `master` becomes authoritative. The M1d ZIP remains a SHA-pinned verification artifact.
 - Do not represent SDL dummy-driver tests as real speaker or display playback.
 - Do not represent FFmpeg CLI diagnostics as in-process FFmpeg Adapter verification.
 - Record GCC/Clang, MSVC, FFmpeg-on, SDL dummy, and real-device test status independently.
@@ -45,9 +45,9 @@ Real FFmpeg decoder integration requires the FFmpeg development libraries and an
 
 Do **not** enable workflows with `push` or `pull_request` triggers during bootstrap. If a portability workflow is imported from the M1d archive, it must stay **`workflow_dispatch`-only**. Review test matrix cost before manual dispatch. Do not automatically rerun failed jobs without checking the cause.
 
-## Baseline import
+## Historical baseline import (optional reproducibility)
 
-Download the M1d ZIP from the project conversation and run:
+All original ZIP contents are already committed to PR #41. The following procedure is retained only to reproduce the import on a fresh staging checkout:
 
 ```bash
 git clone https://github.com/tse-wei-chen/Lapis.git
@@ -60,4 +60,4 @@ git status --short
 # Run local tests and review the diff, then explicitly commit/push once.
 ```
 
-Never merge the draft baseline PR until this import and the required review are complete.
+Do not merge without independent review and confirmation of the recorded test limitations.
