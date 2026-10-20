@@ -80,11 +80,17 @@
             Background="Transparent" IsVisible="False"
             Margin="68,0,68,44" VerticalAlignment="Bottom"
             IsHitTestVisible="False">
-      <TextBlock x:Name="WatchSubtitleText" TextAlignment="Center"
-                 FontSize="28" FontWeight="SemiBold" Foreground="#FFFFFF"
-                 TextWrapping="Wrap"
-                 HorizontalAlignment="Center"
-                 MaxWidth="1050"/>
+      <Grid HorizontalAlignment="Center">
+        <!-- Outlined-look glyph shadow, NOT an opaque subtitle background. -->
+        <TextBlock x:Name="WatchSubtitleShadow" TextAlignment="Center"
+                   FontSize="28" FontWeight="SemiBold" Foreground="#DD000000"
+                   Margin="2,2,0,0" TextWrapping="Wrap"
+                   HorizontalAlignment="Center" MaxWidth="1050"/>
+        <TextBlock x:Name="WatchSubtitleText" TextAlignment="Center"
+                   FontSize="28" FontWeight="SemiBold" Foreground="#FFFFFF"
+                   TextWrapping="Wrap" HorizontalAlignment="Center"
+                   MaxWidth="1050"/>
+      </Grid>
     </Border>
 
     <Border x:Name="WatchControls" Grid.Row="2" Padding="22,17"

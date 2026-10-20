@@ -27,6 +27,8 @@ public static class LibraryMotion
     public static bool ShouldAnimate(bool systemAnimationsEnabled, bool reduceMotion) =>
         systemAnimationsEnabled && !reduceMotion;
 
+    public static bool IsAnimationEnabled => CanAnimate();
+
     private static bool CanAnimate()
     {
         var overrideValue = Environment.GetEnvironmentVariable("LAPIS_REDUCE_MOTION");

@@ -45,6 +45,12 @@ jobs:
                   managed=true
                   native=true
                   ;;
+                src/Lapis.Desktop.Avalonia/Views/WatchChromeWindow.*|tests/Lapis.Desktop.Avalonia.Tests/NativeAvaloniaPlaybackAcceptanceTests.cs)
+                  # Owned transparent chrome must be smoke-tested alongside
+                  # the real NativeControlHost/D3D11 HWND (airspace boundary).
+                  managed=true
+                  native=true
+                  ;;
                 src/*|tests/*|Lapis.slnx|Directory.Build.props|Directory.Packages.props|global.json|.editorconfig)
                   managed=true
                   ;;

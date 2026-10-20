@@ -28,6 +28,7 @@ public sealed partial class WatchChromeWindow : Window
     private readonly Border _sidebar;
     private readonly Border _subtitleHost;
     private readonly TextBlock _subtitleText;
+    private readonly TextBlock _subtitleShadow;
     private readonly Slider _timeline;
     private readonly Button _discHeader;
     private readonly Button _discBottom;
@@ -40,24 +41,36 @@ public sealed partial class WatchChromeWindow : Window
     private CursorPoint _cursor;
     private DateTime _lastActivity = DateTime.UtcNow;
 
-    public WatchChromeWindow(Window owner, PlayerViewModel player,
-        IReadOnlyList<string> playlists, Func<Task> back, Action fullscreenToggle)
+    // Avalonia runtime XAML loading also requires a public empty ctor.
+    public WatchChromeWindow()
     {
-        _owner = owner;
-        _player = player;
-        _back = back;
-        _fullscreenToggle = fullscreenToggle;
+        _owner = null!;
+        _player = null!;
+        _back = null!;
+        _fullscreenToggle = null!;
         AvaloniaXamlLoader.Load(this);
-        DataContext = player;
         _header = this.FindControl<Border>("WatchHeader")!;
         _controls = this.FindControl<Border>("WatchControls")!;
         _sidebar = this.FindControl<Border>("WatchDiscSidebar")!;
         _subtitleHost = this.FindControl<Border>("WatchSubtitleHost")!;
         _subtitleText = this.FindControl<TextBlock>("WatchSubtitleText")!;
+        _subtitleShadow = this.FindControl<TextBlock>("WatchSubtitleShadow")!;
         _timeline = this.FindControl<Slider>("WatchTimeline")!;
         _discHeader = this.FindControl<Button>("WatchDiscToggle")!;
         _discBottom = this.FindControl<Button>("WatchDiscBottom")!;
         _playlistIndex = this.FindControl<ItemsControl>("WatchDiscPlaylistList")!;
+        _clock = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
+    }
+
+    public WatchChromeWindow(Window owner, PlayerViewModel player,
+        IReadOnlyList<string> playlists, Func<Task> back, Action fullscreenToggle)
+        : this()
+    {
+        _owner = owner;
+        _player = player;
+        _back = back;
+        _fullscreenToggle = fullscreenToggle;
+        DataContext = player;
         _playlistIndex.ItemsSource = playlists;
         _discHeader.IsVisible = playlists.Count != 0;
         _discBottom.IsVisible = playlists.Count != 0;
@@ -68,7 +81,7 @@ public sealed partial class WatchChromeWindow : Window
         _timeline.AddHandler(InputElement.PointerCaptureLostEvent,
             OnScrubCancelled, RoutingStrategies.Bubble, handledEventsToo: true);
         _player.PropertyChanged += PlayerChanged;
-        _clock = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
+        KeyDown += OnOverlayKeyDown;
         _clock.Tick += ClockTick;
         _clock.Start();
         Closed += (_, _) => DisposeOverlay();
@@ -154,7 +167,43 @@ public sealed partial class WatchChromeWindow : Window
     {
         var cue = _subtitleTrack.At(TimeSpan.FromSeconds(_player.SeekPositionSeconds));
         _subtitleText.Text = cue ?? "";
+        _subtitleShadow.Text = cue ?? "";
         _subtitleHost.IsVisible = !string.IsNullOrWhiteSpace(cue);
+    }
+
+    private async void OnOverlayKeyDown(object? sender, KeyEventArgs args)
+    {
+        switch (args.Key)
+        {
+            case Key.Escape:
+                args.Handled = true;
+                await _back();
+                return;
+            case Key.F11:
+            case Key.F:
+                args.Handled = true;
+                _fullscreenToggle();
+                break;
+            case Key.K:
+            case Key.Space when args.Source is not Button:
+                args.Handled = true;
+                if (_player.ToggleCommand.CanExecute(null))
+                    _player.ToggleCommand.Execute(null);
+                break;
+            case Key.J:
+            case Key.Left:
+                args.Handled = true;
+                if (_player.BackCommand.CanExecute(null))
+                    _player.BackCommand.Execute(null);
+                break;
+            case Key.L:
+            case Key.Right:
+                args.Handled = true;
+                if (_player.ForwardCommand.CanExecute(null))
+                    _player.ForwardCommand.Execute(null);
+                break;
+        }
+        NotifyPointerActivity();
     }
 
     private void Disc_Click(object? sender, RoutedEventArgs args)
@@ -198,6 +247,7 @@ public sealed partial class WatchChromeWindow : Window
         _clock.Stop();
         _clock.Tick -= ClockTick;
         _player.PropertyChanged -= PlayerChanged;
+        KeyDown -= OnOverlayKeyDown;
         _player.CancelScrub();
     }
 

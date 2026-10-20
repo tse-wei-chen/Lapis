@@ -7,6 +7,8 @@ using Avalonia.Themes.Fluent;
 using Lapis.Contracts.Playback;
 using Lapis.Desktop.Avalonia.Controls;
 using Lapis.Desktop.Avalonia.Views;
+using Lapis.Desktop.Avalonia.Services;
+using Lapis.Desktop.Avalonia.ViewModels;
 using Lapis.Desktop.Hosting;
 using Lapis.Runtime.Native;
 using Xunit;
@@ -102,6 +104,34 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
         {
             await host.OpenAndPlayAsync(media, output, cancel.Token);
             Assert.Equal(TransportState.Playing, host.Snapshot.Transport);
+
+            // Create the real owned transparent Avalonia top-level above the
+            // live D3D11 child. A XAML-only/headless test cannot prove HWND
+            // layering even at a basic smoke-test level.
+            await using (var overlayPlayer = new PlayerViewModel(
+                new NativePlayerPlaybackService(() => surface.OutputHandle)))
+            {
+                var chrome = new WatchChromeWindow(window, overlayPlayer, [],
+                    () => Task.CompletedTask, () => { });
+                try
+                {
+                    var overlayHwnd = chrome.TryGetPlatformHandle()?.Handle ?? 0;
+                    Assert.True(chrome.IsVisible);
+                    Assert.NotEqual(nint.Zero, overlayHwnd);
+                    Assert.NotEqual(windowHwnd, overlayHwnd);
+                    Assert.NotEqual(output, overlayHwnd);
+                    Assert.True(IsWindow(overlayHwnd));
+                    Assert.True(IsWindow(output));
+                    chrome.SetSubtitleTrack(SidecarSubtitleTrack.Parse(
+                        "1\n00:00:00,000 --> 00:00:02,000\n字幕測試\n"));
+                    await Task.Delay(180, cancel.Token);
+                    Assert.True(IsWindow(output));
+                }
+                finally
+                {
+                    chrome.Close();
+                }
+            }
             await WaitUntilAsync(
                 () => runtime.CaptureDiagnostics().Events.Any(e => e.Kind == 3),
                 TimeSpan.FromSeconds(12), cancel.Token); // SwapChainCreated
@@ -109,11 +139,14 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
             // Exercise Avalonia's actual NativeControlHost detach/re-attach.
             // The output HWND is a separate resource that D3D11 continues to
             // borrow; detaching the Avalonia visual must PARK, not destroy it.
-            var container = Assert.IsType<Border>(surface.Parent);
+            // The immersive Watch surface sits directly in a Grid rather
+            // than the old framed Border; test HWND lifecycle, not a
+            // particular choice of presentation container.
+            var container = Assert.IsAssignableFrom<Panel>(surface.Parent);
             var initialEpoch = host.Snapshot.Epoch;
             for (var i = 0; i < 6; i++)
             {
-                container.Child = null;
+                container.Children.Remove(surface);
                 await WaitUntilAsync(
                     () => IsWindow(output) &&
                           GetAncestor(output, 2) != windowHwnd,
@@ -125,7 +158,7 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
                 if ((i & 1) == 0)
                     await Task.Delay(85, cancel.Token);
 
-                container.Child = surface;
+                container.Children.Add(surface);
                 await WaitUntilAsync(
                     () => IsWindow(output) &&
                           GetAncestor(output, 2) == windowHwnd,
