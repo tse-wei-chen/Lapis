@@ -450,100 +450,10 @@
     </Grid>
   </ThemeVariantScope>
 
-  <!-- WATCH is opened only after explicitly selecting a library item.
-       NativeControlHost cannot be covered with alpha overlays. -->
-  <Grid x:Name="PlayerPage" IsVisible="False" RowDefinitions="Auto,*,Auto,Auto"
-        ColumnDefinitions="*,Auto" Margin="17" RowSpacing="12" ColumnSpacing="13">
-    <Border Grid.Row="0" Grid.ColumnSpan="2" Background="#141D2C"
-            CornerRadius="13" Padding="12">
-      <Grid ColumnDefinitions="Auto,*,Auto">
-        <Button Content="← 返回收藏庫" Click="BackToLibrary_Click"
-                Background="#263651" Foreground="#E4EDF9" Padding="18,10"
-                CornerRadius="9"/>
-        <TextBlock Grid.Column="1" Text="{Binding MediaTitle}" FontSize="17"
-                   Foreground="#ECF2FA" VerticalAlignment="Center"
-                   Margin="20,0" TextTrimming="CharacterEllipsis"/>
-        <TextBlock Grid.Column="2" Text="LAPIS / WATCH" VerticalAlignment="Center"
-                   Foreground="#8198B6" FontSize="11" Margin="12"/>
-      </Grid>
-    </Border>
-
-    <Border Grid.Row="1" Grid.Column="0" Background="#030508"
-            CornerRadius="12" BorderBrush="#24334A" BorderThickness="1"
-            ClipToBounds="True">
-      <video:WindowsVideoSurface x:Name="VideoSurface"/>
-    </Border>
-
-    <Border Grid.Row="1" Grid.Column="1" x:Name="DiscMenuPanel"
-            Width="286" IsVisible="False" Background="#161F2E"
-            CornerRadius="12" Padding="17">
-      <ScrollViewer>
-        <StackPanel Spacing="12">
-          <TextBlock Text="BLU-RAY DISC" Foreground="#91B9F2"
-                     FontSize="11" FontWeight="Bold"/>
-          <TextBlock Text="光碟導覽" FontSize="22" FontWeight="SemiBold"/>
-          <TextBlock Text="目前預設播放主影片。光碟 Playlist 檔案列於下方；切換 Title / Playlist / Chapter、原始選單及 BD-J 需要後續 Native 導覽整合。"
-                     Foreground="#9FB1CA" FontSize="12" TextWrapping="Wrap"
-                     LineHeight="20"/>
-          <Border Height="1" Background="#34445A" Margin="0,5"/>
-          <TextBlock Text="PLAYLIST / MPLS 索引" FontSize="12"
-                     Foreground="#D3E2F7" FontWeight="SemiBold"/>
-          <ItemsControl x:Name="DiscPlaylistList">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate>
-                <Border Background="#21304A" CornerRadius="6"
-                        Padding="10,7" Margin="0,0,0,5">
-                  <TextBlock Text="{Binding}" Foreground="#D0DFF2" FontSize="12"/>
-                </Border>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-          <TextBlock Text="僅顯示檔名索引，不代表已解析或可切換播放。"
-                     FontSize="11" Foreground="#7F92B0" TextWrapping="Wrap"/>
-        </StackPanel>
-      </ScrollViewer>
-    </Border>
-
-    <Border Grid.Row="2" Grid.Column="0" Background="#151E2C"
-            CornerRadius="12" Padding="14">
-      <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="10">
-        <Grid ColumnDefinitions="*,Auto">
-          <TextBlock Text="{Binding PositionText}" Foreground="#B8CDE6"
-                     FontSize="13"/>
-          <TextBlock Grid.Column="1" Text="{Binding TransportText}"
-                     Foreground="#9EC9FF" FontSize="12"/>
-        </Grid>
-        <Slider x:Name="PlaybackTimeline" Grid.Row="1" Minimum="0"
-                Maximum="{Binding SeekDurationSeconds}"
-                Value="{Binding SeekPositionSeconds, Mode=TwoWay}"
-                IsEnabled="{Binding CanScrub}" TickFrequency="1"
-                IsSnapToTickEnabled="False"
-                AutomationProperties.Name="播放進度時間軸"/>
-        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="11">
-          <Button Content="◀ 10 秒" Command="{Binding BackCommand}"
-                  IsEnabled="{Binding CanSeek}" MinWidth="88"/>
-          <Button Content="{Binding PlayPauseLabel}" Command="{Binding ToggleCommand}"
-                  IsEnabled="{Binding CanTransport}" MinWidth="120"
-                  Background="#2D456A" Foreground="#EAF3FF"/>
-          <Button Content="10 秒 ▶" Command="{Binding ForwardCommand}"
-                  IsEnabled="{Binding CanSeek}" MinWidth="88"/>
-          <Button Content="停止" Command="{Binding StopCommand}"
-                  IsEnabled="{Binding CanTransport}" MinWidth="75"/>
-          <TextBlock Text="劇院播放 · D3D11 原生輸出"
-                     VerticalAlignment="Center" Foreground="#829BB8"
-                     Margin="14,0,0,0" FontSize="11"/>
-        </StackPanel>
-      </Grid>
-    </Border>
-    <Border Grid.Row="3" Grid.ColumnSpan="2" Background="#101826"
-            CornerRadius="9" Padding="12,9">
-      <Grid ColumnDefinitions="*,Auto">
-        <TextBlock Text="{Binding StatusText}" Foreground="#BACBE0"
-                   TextTrimming="CharacterEllipsis" FontSize="12"/>
-        <TextBlock Grid.Column="1" Text="AI 雙字幕 / BD-J 選單 · 尚待整合"
-                   Foreground="#8198B5" FontSize="11"/>
-      </Grid>
-    </Border>
+  <!-- D3D11 has its own Win32 HWND. Video occupies the WHOLE Watch page.
+       The owned transparent WatchChromeWindow lives ABOVE that HWND. -->
+  <Grid x:Name="PlayerPage" IsVisible="False" Background="#000000">
+    <video:WindowsVideoSurface x:Name="VideoSurface"/>
   </Grid>
   </Grid>
 </Window>
