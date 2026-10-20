@@ -25,6 +25,9 @@ public sealed partial class MainWindow : Window
     private readonly WindowsVideoSurface _videoSurface;
     private readonly Grid _libraryPage;
     private readonly Grid _playerPage;
+    private readonly BigPictureLibraryView _bigPicture;
+    private readonly Border _legacyLibraryHeader;
+    private readonly Grid _legacyLibraryBody;
     private WatchChromeWindow? _watchChrome;
     private WindowState _windowStateBeforeWatch = WindowState.Normal;
     private readonly ScrollViewer _gridSurface;
@@ -50,6 +53,12 @@ public sealed partial class MainWindow : Window
             ?? throw new InvalidOperationException("Missing library page.");
         _playerPage = this.FindControl<Grid>("PlayerPage")
             ?? throw new InvalidOperationException("Missing watch page.");
+        _bigPicture = this.FindControl<BigPictureLibraryView>("BigPictureLibrary")
+            ?? throw new InvalidOperationException("Missing Big Picture library.");
+        _legacyLibraryHeader = this.FindControl<Border>("LegacyLibraryHeader")
+            ?? throw new InvalidOperationException("Missing library management header.");
+        _legacyLibraryBody = this.FindControl<Grid>("LegacyLibraryBody")
+            ?? throw new InvalidOperationException("Missing library management body.");
         _videoSurface = this.FindControl<WindowsVideoSurface>("VideoSurface")
             ?? throw new InvalidOperationException("Missing D3D11 surface host.");
         _gridSurface = this.FindControl<ScrollViewer>("LibraryGridSurface")
@@ -82,16 +91,23 @@ public sealed partial class MainWindow : Window
         _libraryPage.DataContext = _library;
         _playerPage.DataContext = _player;
 
+        _bigPicture.PlayRequested += card => _ = PlayLibraryItemAsync(card);
+        _bigPicture.ImportRequested += () => _ = ImportFromBigPictureAsync();
+        _bigPicture.ImportDiscRequested += () => _ = ImportDiscCoreAsync();
+        _bigPicture.ManageRequested += () => ShowLibraryManagement(true);
+
         // No player source, Native DLL or video pipeline is initialized at startup.
         _libraryPage.IsVisible = true;
         _playerPage.IsVisible = false;
+        ShowLibraryManagement(false);
         Opened += async (_, _) =>
         {
             try
             {
                 await _library.LoadAsync();
-                Dispatcher.UIThread.Post(() => UpdateNavigationMarker(initial: true),
-                    DispatcherPriority.Loaded);
+                WindowState = WindowState.Maximized;
+                // The old management sidebar is kept as a deliberate secondary
+                // screen; it is not the default startup experience.
             }
             catch (Exception exception) { _library.ReportError($"無法讀取收藏庫：{exception.Message}"); }
         };
@@ -194,6 +210,21 @@ public sealed partial class MainWindow : Window
 
     private async void WatchKeyDown(object? sender, KeyEventArgs args)
     {
+        if (_libraryPage.IsVisible)
+        {
+            if (args.Key == Key.F11)
+            {
+                WindowState = WindowState == WindowState.FullScreen
+                    ? WindowState.Maximized : WindowState.FullScreen;
+                args.Handled = true;
+            }
+            else if (args.Key == Key.Escape && !_bigPicture.IsVisible)
+            {
+                ShowLibraryManagement(false);
+                args.Handled = true;
+            }
+            return;
+        }
         if (!_playerPage.IsVisible) return;
         switch (args.Key)
         {
@@ -228,7 +259,29 @@ public sealed partial class MainWindow : Window
         _watchChrome?.NotifyPointerActivity();
     }
 
-    private async void ImportFiles_Click(object? sender, RoutedEventArgs args)
+    private void ShowLibraryManagement(bool show)
+    {
+        _bigPicture.IsVisible = !show;
+        _legacyLibraryHeader.IsVisible = show;
+        _legacyLibraryBody.IsVisible = show;
+        if (show)
+            Dispatcher.UIThread.Post(() => UpdateNavigationMarker(initial: true),
+                DispatcherPriority.Loaded);
+        else
+            Dispatcher.UIThread.Post(() => LibraryMotion.Enter(_bigPicture),
+                DispatcherPriority.Loaded);
+    }
+
+    private async Task ImportFromBigPictureAsync()
+    {
+        // Reuse the same picker and catalog API as the management screen.
+        await ImportFilesCoreAsync();
+    }
+
+    private async void ImportFiles_Click(object? sender, RoutedEventArgs args) =>
+        await ImportFilesCoreAsync();
+
+    private async Task ImportFilesCoreAsync()
     {
         try
         {
@@ -254,7 +307,10 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async void ImportDisc_Click(object? sender, RoutedEventArgs args)
+    private async void ImportDisc_Click(object? sender, RoutedEventArgs args) =>
+        await ImportDiscCoreAsync();
+
+    private async Task ImportDiscCoreAsync()
     {
         try
         {
