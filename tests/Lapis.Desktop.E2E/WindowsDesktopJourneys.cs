@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 using System.Text;
 using FlaUI.Core;
 using FlaUI.Core.AutomationElements;
@@ -36,7 +37,9 @@ public sealed class WindowsDesktopJourneys
 
         // UIA Invoke activates the real product Button, not the ViewModel.
         session.Click(session.WaitFor(main, "Lapis.Library.Manage"));
-        session.WaitFor(main, "Lapis.Library.ManagementBody");
+        // Windows UIA often omits non-interactive Grid containers. Verify
+        // a real focused/interactive management navigation button instead.
+        session.WaitFor(main, "Lapis.Library.ManagementAll");
         session.Snapshot("02-management");
         Assert.Null(main.FindFirstDescendant(cf => cf.ByAutomationId(
             "Lapis.Library.PlayFeatured")));
@@ -152,13 +155,52 @@ internal sealed class DesktopSession : IDisposable
         Assert.NotNull(_automation);
         return Eventually(() =>
         {
-            var windows = _automation!.GetDesktop().FindAllChildren(
-                cf => cf.ByProcessId(_process!.Id));
-            return windows.Select(x => x.AsWindow())
-                .FirstOrDefault(w => w is not null &&
-                    w.Title == "Lapis Watch Controls");
+            // An Avalonia owned transparent popup may not be a direct child
+            // in the UI Automation desktop tree. Get the actual HWND using
+            // Win32, then ask UIA for the element represented by that HWND.
+            foreach (var hwnd in ProcessWindowHandles())
+            {
+                if (ReadWindowTitle(hwnd) != "Lapis Watch Controls")
+                    continue;
+                var element = _automation!.FromHandle(hwnd);
+                if (element is not null)
+                    return element.AsWindow();
+            }
+            return null;
         }, TimeSpan.FromSeconds(18), "owned WatchChromeWindow");
     }
+
+    private IReadOnlyList<nint> ProcessWindowHandles()
+    {
+        var list = new List<nint>();
+        if (_process is null) return list;
+        EnumWindows((hwnd, data) =>
+        {
+            GetWindowThreadProcessId(hwnd, out var processId);
+            if (processId == (uint)_process.Id) list.Add(hwnd);
+            return true;
+        }, nint.Zero);
+        return list;
+    }
+
+    private static string ReadWindowTitle(nint hwnd)
+    {
+        var text = new StringBuilder(256);
+        _ = GetWindowText(hwnd, text, text.Capacity);
+        return text.ToString();
+    }
+
+    private delegate bool EnumWindowsCallback(nint hwnd, nint data);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumWindows(EnumWindowsCallback callback, nint data);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(nint hwnd, out uint processId);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(nint hwnd, StringBuilder title, int capacity);
 
     public AutomationElement WaitFor(Window window, string automationId,
         TimeSpan? timeout = null) =>
@@ -232,9 +274,9 @@ internal sealed class DesktopSession : IDisposable
             foreach (var window in _automation.GetDesktop().FindAllChildren(
                 cf => cf.ByProcessId(_process!.Id)))
             {
-                sb.AppendLine($"WINDOW {window.Name} / {window.AutomationId}");
+                sb.AppendLine($"WINDOW {SafeName(window)} / {SafeId(window)}");
                 foreach (var item in window.FindAllDescendants().Take(400))
-                    sb.AppendLine($"  {item.ControlType}: {item.AutomationId} / {item.Name}");
+                    sb.AppendLine($"  {item.ControlType}: {SafeId(item)} / {SafeName(item)}");
             }
             File.WriteAllText(Path.Combine(_artifactRoot, "uia-tree.txt"), sb.ToString());
         }
@@ -243,6 +285,18 @@ internal sealed class DesktopSession : IDisposable
             File.AppendAllText(Path.Combine(_artifactRoot, "diagnostics.txt"),
                 $"UIA tree capture failed: {ex}\n");
         }
+    }
+
+    private static string SafeId(AutomationElement item)
+    {
+        try { return item.AutomationId; }
+        catch (FlaUI.Core.Exceptions.PropertyNotSupportedException) { return "(unsupported)"; }
+    }
+
+    private static string SafeName(AutomationElement item)
+    {
+        try { return item.Name; }
+        catch (FlaUI.Core.Exceptions.PropertyNotSupportedException) { return "(unsupported)"; }
     }
 
     public void Dispose()

@@ -190,7 +190,7 @@
           <Grid x:Name="LibraryNavigationHost">
           <StackPanel Margin="14,24,14,18" Spacing="5">
             <TextBlock Text="收藏庫" Classes="sidebar-section" Margin="11,0,0,11"/>
-            <Button x:Name="NavigationAll" Classes="library-nav" Classes.selected="{Binding IsAllCategory}"
+            <Button x:Name="NavigationAll" AutomationProperties.AutomationId="Lapis.Library.ManagementAll" Classes="library-nav" Classes.selected="{Binding IsAllCategory}"
                     Content="▦   所有收藏" Click="ShowAll_Click"/>
             <Button x:Name="NavigationBluRay" Classes="library-nav" Classes.selected="{Binding IsBluRayCategory}"
                     Content="▤   Blu-ray 光碟" Click="ShowDiscs_Click"/>
