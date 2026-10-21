@@ -15,6 +15,8 @@ public sealed class DesktopPlaybackHost : IAsyncDisposable
 {
     private readonly PlaybackSession _session;
     private readonly IVideoOutputSurfaceBinding _surfaces;
+    private readonly IEmbeddedSubtitleTrackInventoryRuntime? _embeddedTracks;
+    private readonly IEmbeddedTextSubtitleCueRuntime? _embeddedCues;
     private readonly SemaphoreSlim _operations = new(1, 1);
     private readonly object _disposeGate = new();
     private Task? _disposeTask;
@@ -29,12 +31,82 @@ public sealed class DesktopPlaybackHost : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(playbackRuntime);
         ArgumentNullException.ThrowIfNull(surfaces);
         _surfaces = surfaces;
+        _embeddedTracks = playbackRuntime as IEmbeddedSubtitleTrackInventoryRuntime;
+        _embeddedCues = playbackRuntime as IEmbeddedTextSubtitleCueRuntime;
         _session = new PlaybackSession(playbackRuntime, sessionId);
     }
 
     public PlaybackSnapshot Snapshot => _session.Snapshot;
 
     public Exception? LastShutdownWarning { get; private set; }
+
+    /// <summary>
+    /// Metadata and cue operations use the same host command gate as Seek,
+    /// Open and Close. Every request is scoped to an expected immutable
+    /// playback snapshot, so a queued old-epoch read cannot attach to a
+    /// different media generation.
+    /// </summary>
+    public Task<bool> SupportsEmbeddedTextSubtitleCuesAsync(
+        PlaybackSnapshot expected, CancellationToken cancellationToken = default) =>
+        RunAsync(async () =>
+        {
+            _ = SubtitleContext(expected);
+            var source = _embeddedCues;
+            if (source is null) return false;
+            // Version resolution runs off the UI dispatcher just like the
+            // other native subtitle queries.
+            return await Task.Run(() => source.SupportsEmbeddedTextSubtitleCues,
+                cancellationToken).ConfigureAwait(false);
+        }, cancellationToken);
+
+    public Task<IReadOnlyList<EmbeddedSubtitleTrack>> ReadEmbeddedSubtitleTracksAsync(
+        PlaybackSnapshot expected, CancellationToken cancellationToken = default) =>
+        RunAsync(async () =>
+        {
+            var context = SubtitleContext(expected);
+            var source = _embeddedTracks ?? throw new NotSupportedException(
+                "This runtime does not provide embedded subtitle metadata.");
+            return await source.ReadEmbeddedSubtitleTracksAsync(
+                context, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken);
+
+    public Task StartEmbeddedTextSubtitleLoadAsync(
+        uint streamIndex, PlaybackSnapshot expected,
+        CancellationToken cancellationToken = default) =>
+        RunAsync(async () =>
+        {
+            var context = SubtitleContext(expected);
+            var source = _embeddedCues ?? throw new NotSupportedException(
+                "This runtime does not provide embedded text subtitles.");
+            await source.StartEmbeddedTextSubtitleLoadAsync(
+                streamIndex, context, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken);
+
+    public Task<EmbeddedTextSubtitleCuePage> ReadEmbeddedTextSubtitleCuesAsync(
+        uint startIndex, PlaybackSnapshot expected,
+        CancellationToken cancellationToken = default) =>
+        RunAsync(async () =>
+        {
+            var context = SubtitleContext(expected);
+            var source = _embeddedCues ?? throw new NotSupportedException(
+                "This runtime does not provide embedded text subtitles.");
+            return await source.ReadEmbeddedTextSubtitleCuesAsync(
+                startIndex, context, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken);
+
+    private RuntimeCommandContext SubtitleContext(PlaybackSnapshot expected)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        var active = _session.Snapshot;
+        if (active.SessionId != expected.SessionId ||
+            active.Epoch != expected.Epoch ||
+            active.Transport is not (TransportState.Ready or TransportState.Playing
+                or TransportState.Paused or TransportState.Ended))
+            throw new InvalidOperationException(
+                "Subtitle request belongs to a retired or closed playback generation.");
+        return new RuntimeCommandContext(active.SessionId, active.Epoch);
+    }
+
 
     public IAsyncEnumerable<PlaybackSnapshot> ObserveSnapshotsAsync(
         CancellationToken cancellationToken = default) =>

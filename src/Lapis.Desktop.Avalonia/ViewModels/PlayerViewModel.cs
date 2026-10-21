@@ -45,6 +45,12 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
         ForwardCommand = new AsyncCommand(() => RunAsync(() => SeekRelativeAsync(10)));
     }
 
+    // Observational only. The service/host still fences every optional
+    // embedded subtitle request against this exact SessionId and Epoch.
+    public PlaybackSnapshot PlaybackSnapshot => _player.Snapshot;
+    public IEmbeddedSubtitlePlaybackService? EmbeddedSubtitlePlayback =>
+        _player as IEmbeddedSubtitlePlaybackService;
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public ICommand ToggleCommand { get; }
