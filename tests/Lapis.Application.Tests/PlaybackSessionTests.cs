@@ -27,6 +27,60 @@ public sealed class PlaybackSessionTests
         Assert.Equal(new[] { "open:1", "play:1", "seek:2" }, runtime.Calls);
     }
 
+    [Theory]
+    [InlineData(60)]
+    [InlineData(90)]
+    public async Task SeekAtOrAfterDurationUsesDecodablePositionWithoutFault(long requestedSeconds)
+    {
+        var runtime = new DurationSeekRuntime();
+        await using var session = new PlaybackSession(runtime);
+        await session.ExecuteAsync(new OpenMediaCommand(
+            new MediaLocator(MediaLocatorKind.File, "movie.mkv")));
+        await session.ExecuteAsync(new PlayCommand());
+
+        await session.ExecuteAsync(new SeekCommand(MediaTime.FromSeconds(requestedSeconds)));
+
+        var safeEnd = MediaTime.FromMilliseconds(59_750);
+        Assert.Equal(safeEnd, runtime.LastSeekPosition);
+        Assert.Equal(safeEnd, session.Snapshot.Position);
+        Assert.Equal(TransportState.Playing, session.Snapshot.Transport);
+        Assert.Equal(new PlaybackEpoch(2), session.Snapshot.Epoch);
+        Assert.Null(session.Snapshot.LastError);
+    }
+
+    [Fact]
+    public async Task NegativeSeekIsRejectedWithoutFaultingPlayback()
+    {
+        var runtime = new DurationSeekRuntime();
+        await using var session = new PlaybackSession(runtime);
+        await session.ExecuteAsync(new OpenMediaCommand(
+            new MediaLocator(MediaLocatorKind.File, "movie.mkv")));
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            session.ExecuteAsync(new SeekCommand(new MediaTime(-1))).AsTask());
+        Assert.Equal(TransportState.Ready, session.Snapshot.Transport);
+        Assert.Equal(new PlaybackEpoch(1), session.Snapshot.Epoch);
+        Assert.Null(runtime.LastSeekPosition);
+        Assert.Null(session.Snapshot.LastError);
+    }
+
+    [Fact]
+    public async Task FailedNativeSeekPublishesFaultInsteadOfLeavingSeekingState()
+    {
+        var runtime = new DurationSeekRuntime { FailSeek = true };
+        await using var session = new PlaybackSession(runtime);
+        await session.ExecuteAsync(new OpenMediaCommand(
+            new MediaLocator(MediaLocatorKind.File, "movie.mkv")));
+        await session.ExecuteAsync(new PlayCommand());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            session.ExecuteAsync(new SeekCommand(MediaTime.FromSeconds(30))).AsTask());
+
+        Assert.Equal(TransportState.Faulted, session.Snapshot.Transport);
+        Assert.Equal(new PlaybackEpoch(2), session.Snapshot.Epoch);
+        Assert.Equal("SeekFailed", session.Snapshot.LastError?.Code);
+    }
+
     [Fact]
     public async Task ChapterSeekIsSerializedAndUsesTheExistingEpochAdvancingSeek()
     {
@@ -382,6 +436,30 @@ public sealed class PlaybackSessionTests
         {
             DisposeCount++;
             return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class DurationSeekRuntime : FakeRuntime
+    {
+        public bool FailSeek { get; init; }
+        public MediaTime? LastSeekPosition { get; private set; }
+
+        public override ValueTask<RuntimeOpenResult> OpenAsync(
+            MediaLocator locator, RuntimeCommandContext context,
+            CancellationToken cancellationToken)
+        {
+            _ = base.OpenAsync(locator, context, cancellationToken);
+            return ValueTask.FromResult(new RuntimeOpenResult(
+                MediaCapability.Chapters, MediaTime.FromSeconds(60)));
+        }
+
+        public override ValueTask SeekAsync(
+            MediaTime position, RuntimeCommandContext context,
+            CancellationToken cancellationToken)
+        {
+            LastSeekPosition = position;
+            if (FailSeek) throw new InvalidOperationException("Injected native seek failure.");
+            return base.SeekAsync(position, context, cancellationToken);
         }
     }
 

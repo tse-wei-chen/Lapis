@@ -663,19 +663,23 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
                 "Seek position cannot be negative.");
         }
 
-        lock (_gate)
+        // The ABI synchronously joins decoder/render generations and seeks
+        // through FFmpeg. Do not execute that native wait on the UI dispatcher.
+        return new ValueTask(Task.Run(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
-            ThrowIfDisposed();
-            var session = EnsureSession(context.SessionId);
-            var result = _api.SessionSeek(
-                session,
-                new NativeMediaTime { Nanoseconds = position.Nanoseconds },
-                new NativePlaybackEpoch { Value = context.Epoch.Value });
-            ThrowForResult(result, "session_seek");
-        }
-
-        return ValueTask.CompletedTask;
+            lock (_gate)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ThrowIfDisposed();
+                var session = EnsureSession(context.SessionId);
+                var result = _api.SessionSeek(
+                    session,
+                    new NativeMediaTime { Nanoseconds = position.Nanoseconds },
+                    new NativePlaybackEpoch { Value = context.Epoch.Value });
+                ThrowForResult(result, "session_seek");
+            }
+        }, cancellationToken));
     }
 
     public ValueTask CloseAsync(

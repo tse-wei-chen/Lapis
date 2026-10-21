@@ -9,6 +9,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 }
 
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -63,9 +64,16 @@ public:
     [[nodiscard]] static std::vector<SubtitleStreamInfo> inspect_subtitle_streams(
         const AVFormatContext& context);
     int read_packet(AVPacket& packet) override;
+    void request_interrupt() noexcept override;
+    void reset_interrupt() noexcept override;
     [[nodiscard]] bool seek(MediaTime target, int stream_index);
 
 private:
+    static int interrupt_callback(void* opaque) noexcept;
+
+    // Signalled by router.stop() before joining the demux thread. FFmpeg can
+    // observe it between AVIO operations, including when probing MPEG-TS.
+    std::atomic<bool> read_interrupt_requested_{false};
     // One probed packet is owned by the demuxer after a verified Y4M seek.
     // Router consumes it before reading the next FFmpeg packet.
     AVPacket* pending_packet_{};

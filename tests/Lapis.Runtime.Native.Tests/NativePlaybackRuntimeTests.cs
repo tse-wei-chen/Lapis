@@ -155,6 +155,48 @@ public sealed class NativePlaybackRuntimeTests
     }
 
     [Fact]
+    public async Task SeekDoesNotBlockCallingThreadWhileNativeGenerationStops()
+    {
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var api = new FakeNativeApi { BeforeSeek = () =>
+        {
+            entered.Set();
+            release.Wait();
+        } };
+        await using var runtime = new NativePlaybackRuntime(api);
+        var sessionId = new PlaybackSessionId(Guid.NewGuid());
+        await runtime.OpenAsync(
+            new MediaLocator(MediaLocatorKind.File, "clip.mp4"),
+            new RuntimeCommandContext(sessionId, new PlaybackEpoch(1)),
+            CancellationToken.None);
+
+        // Run the invocation off-thread so a regression to a synchronous ABI
+        // call fails its timeout instead of hanging the test thread forever.
+        var callReturned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var work = Task.Run(async () =>
+        {
+            var seek = runtime.SeekAsync(
+                MediaTime.FromSeconds(5),
+                new RuntimeCommandContext(sessionId, new PlaybackEpoch(2)),
+                CancellationToken.None);
+            callReturned.TrySetResult();
+            await seek;
+        });
+        try
+        {
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(2)));
+            await callReturned.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.False(work.IsCompleted);
+        }
+        finally
+        {
+            release.Set();
+        }
+        await work.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
     public async Task ChapterLookupIsReadOnlyEpochScopedAndRejectsUnsupportedVersions()
     {
         var api = new FakeNativeApi
@@ -1282,12 +1324,15 @@ public sealed class NativePlaybackRuntimeTests
             return NativeResult.Ok;
         }
 
+        internal Action? BeforeSeek { get; set; }
+
         public NativeResult SessionSeek(
             nint session,
             NativeMediaTime position,
             NativePlaybackEpoch epoch)
         {
             Assert.Equal((nint)22, session);
+            BeforeSeek?.Invoke();
             Calls.Add("session_seek");
             LastPosition = position;
             LastEpoch = epoch;
