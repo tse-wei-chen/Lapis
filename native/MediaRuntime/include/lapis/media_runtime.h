@@ -28,6 +28,8 @@ extern "C" {
 #define LAPIS_TEXT_SUBTITLE_CUES_API_VERSION 1u
 /* Optional request-scoped cancellation extension. Cue ABI v1 remains intact. */
 #define LAPIS_TEXT_SUBTITLE_CANCEL_API_VERSION 1u
+/* Optional temporary 2x forward-playback extension; ABI v2 stays unchanged. */
+#define LAPIS_FAST_FORWARD_API_VERSION 1u
 #define LAPIS_TEXT_SUBTITLE_MAX_PAGE 16u
 #define LAPIS_TEXT_SUBTITLE_MAX_PAGE_BYTES 65536u
 #define LAPIS_DIAGNOSTIC_RING_CAPACITY 128u
@@ -290,6 +292,17 @@ LAPIS_API lapis_result lapis_session_cancel_text_subtitle_load(
     lapis_session* session,
     lapis_playback_epoch expected_epoch,
     uint64_t request_id);
+
+/*
+ * Optional temporary 2x video fast-forward. Audio decode/output is suspended
+ * while enabled. Disabling it seeks/rebuilds the normal A/V graph at the
+ * current playback position. The expected epoch must still be current.
+ */
+LAPIS_API uint32_t lapis_runtime_get_fast_forward_api_version(void);
+LAPIS_API lapis_result lapis_session_set_fast_forward(
+    lapis_session* session,
+    lapis_playback_epoch expected_epoch,
+    uint32_t enabled);
 
 LAPIS_API lapis_result lapis_session_read_text_subtitle_cues(
     lapis_session* session,

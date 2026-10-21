@@ -41,6 +41,15 @@ internal static partial class NativeMethods
     [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
     internal static partial uint RuntimeGetTextSubtitleCancelApiVersion();
 
+    [LibraryImport(LibraryName, EntryPoint = "lapis_runtime_get_fast_forward_api_version")]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    internal static partial uint RuntimeGetFastForwardApiVersion();
+
+    [LibraryImport(LibraryName, EntryPoint = "lapis_session_set_fast_forward")]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    internal static partial NativeResult SessionSetFastForward(
+        nint session, NativePlaybackEpoch expectedEpoch, uint enabled);
+
     [LibraryImport(LibraryName, EntryPoint = "lapis_session_start_text_subtitle_load_with_id")]
     [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
     internal static partial NativeResult SessionStartTextSubtitleLoadWithId(

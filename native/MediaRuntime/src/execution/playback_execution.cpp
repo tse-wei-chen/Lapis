@@ -158,6 +158,27 @@ PlaybackExecutionResult PlaybackExecution::pause() {
         return fault_unlocked(PlaybackExecutionError::ClockFailure);
     }
 
+    if (temporary_fast_forward_) {
+        const auto clock_snapshot = clock_.snapshot(SteadyClockSource::now());
+        const auto position = clock_snapshot.position;
+        const auto epoch = clock_snapshot.epoch;
+        stop_generation_unlocked();
+        if (!media_.seek(position)) {
+            temporary_fast_forward_ = false;
+            (void)clock_.set_rate(1.0, SteadyClockSource::now());
+            clock_.reset(epoch, SteadyClockSource::now());
+            logical_state_ = PlaybackExecutionState::Faulted;
+            return {PlaybackExecutionError::MediaSeekFailed};
+        }
+        temporary_fast_forward_ = false;
+        if (!clock_.set_rate(1.0, SteadyClockSource::now()) ||
+            !start_generation_unlocked(epoch)) {
+            clock_.reset(epoch, SteadyClockSource::now());
+            logical_state_ = PlaybackExecutionState::Faulted;
+            return {PlaybackExecutionError::WorkerStartFailed};
+        }
+    }
+
     logical_state_ = PlaybackExecutionState::Paused;
     return {};
 }
@@ -207,6 +228,8 @@ PlaybackExecutionResult PlaybackExecution::seek(
         return fault_unlocked(PlaybackExecutionError::WorkerFailed);
     }
 
+    temporary_fast_forward_ = false;
+    (void)clock_.set_rate(1.0, SteadyClockSource::now());
     const auto prior_state = logical_state_;
     if (prior_state == PlaybackExecutionState::Running) {
         if (!pause_audio_unlocked()) {
@@ -263,6 +286,62 @@ PlaybackExecutionResult PlaybackExecution::seek(
     return {};
 }
 
+PlaybackExecutionResult PlaybackExecution::set_fast_forward(
+    PlaybackEpoch epoch,
+    bool enabled) {
+    std::scoped_lock lock(control_mutex_);
+    if (logical_state_ != PlaybackExecutionState::Running ||
+        !media_.has_video() ||
+        clock_.snapshot(SteadyClockSource::now()).epoch.value() != epoch.value()) {
+        return {PlaybackExecutionError::InvalidState};
+    }
+    if (temporary_fast_forward_ == enabled) {
+        return {};
+    }
+    if (workers_failed_unlocked()) {
+        return fault_unlocked(PlaybackExecutionError::WorkerFailed);
+    }
+
+    const auto position = clock_.snapshot(SteadyClockSource::now()).position;
+    const auto now = SteadyClockSource::now();
+    if (!clock_.pause(now)) {
+        return fault_unlocked(PlaybackExecutionError::ClockFailure);
+    }
+    stop_generation_unlocked();
+    if (!media_.seek(position)) {
+        temporary_fast_forward_ = false;
+        (void)clock_.set_rate(1.0, SteadyClockSource::now());
+        clock_.reset(epoch, SteadyClockSource::now());
+        logical_state_ = PlaybackExecutionState::Faulted;
+        return {PlaybackExecutionError::MediaSeekFailed};
+    }
+
+    temporary_fast_forward_ = enabled;
+    if (!clock_.rebase(epoch, position, SteadyClockSource::now()) ||
+        !clock_.set_rate(enabled ? 2.0 : 1.0, SteadyClockSource::now())) {
+        temporary_fast_forward_ = false;
+        clock_.reset(epoch, SteadyClockSource::now());
+        logical_state_ = PlaybackExecutionState::Faulted;
+        return {PlaybackExecutionError::ClockFailure};
+    }
+    if (!start_generation_unlocked(epoch)) {
+        temporary_fast_forward_ = false;
+        clock_.reset(epoch, SteadyClockSource::now());
+        logical_state_ = PlaybackExecutionState::Faulted;
+        return {PlaybackExecutionError::WorkerStartFailed};
+    }
+    if (!clock_.resume(SteadyClockSource::now())) {
+        stop_generation_unlocked();
+        temporary_fast_forward_ = false;
+        clock_.reset(epoch, SteadyClockSource::now());
+        logical_state_ = PlaybackExecutionState::Faulted;
+        return {PlaybackExecutionError::ClockFailure};
+    }
+
+    logical_state_ = PlaybackExecutionState::Running;
+    return {};
+}
+
 PlaybackExecutionResult PlaybackExecution::close(PlaybackEpoch epoch) {
     std::scoped_lock lock(control_mutex_);
     if (!epoch_advances_unlocked(epoch)) {
@@ -276,6 +355,7 @@ PlaybackExecutionResult PlaybackExecution::close(PlaybackEpoch epoch) {
     }
 
     stop_generation_unlocked();
+    temporary_fast_forward_ = false;
     clock_.reset(epoch, SteadyClockSource::now());
     stopped_timeline_prepared_ = false;
     logical_state_ = PlaybackExecutionState::Stopped;
@@ -426,7 +506,7 @@ bool PlaybackExecution::start_generation_unlocked(PlaybackEpoch epoch) {
         return false;
     }
 
-    const bool audio_configured =
+    const bool audio_configured = !temporary_fast_forward_ &&
         audio_output_provider_ != nullptr &&
         static_cast<bool>(audio_processor_factory_);
 

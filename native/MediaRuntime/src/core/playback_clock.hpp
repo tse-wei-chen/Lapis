@@ -36,6 +36,7 @@ public:
     [[nodiscard]] bool start(MediaTime position, MonotonicTime now);
     [[nodiscard]] bool pause(MonotonicTime now);
     [[nodiscard]] bool resume(MonotonicTime now);
+    [[nodiscard]] bool set_rate(double rate, MonotonicTime now);
     [[nodiscard]] bool rebase(
         PlaybackEpoch epoch,
         MediaTime position,
@@ -74,6 +75,7 @@ private:
     PlaybackEpoch epoch_{};
     MediaTime anchor_position_{};
     MonotonicTime anchor_time_{};
+    double rate_{1.0};
     std::uint64_t revision_{};
 };
 

@@ -60,6 +60,30 @@ public sealed class DesktopPlaybackHostTests
     }
 
     [Fact]
+    public async Task TemporaryFastForwardUsesActivePlaybackEpoch()
+    {
+        var calls = new List<string>();
+        var host = new DesktopPlaybackHost(
+            new FakeRuntime(calls), new FakeSurfaceBinding(calls));
+        await host.OpenAndPlayAsync("clip.mkv", (nint)11);
+        var expected = host.Snapshot;
+
+        Assert.True(await host.SupportsTemporaryFastForwardAsync(expected));
+        await host.SetTemporaryFastForwardAsync(true, expected);
+        await host.SetTemporaryFastForwardAsync(false, expected);
+
+        Assert.Equal(new[]
+        {
+            "open:1", "surface:Win32Window:1", "play:1",
+            "fast-forward:True:1", "fast-forward:False:1"
+        }, calls);
+        await host.SeekAsync(TimeSpan.FromSeconds(2));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            host.SetTemporaryFastForwardAsync(true, expected));
+        await host.DisposeAsync();
+    }
+
+    [Fact]
     public async Task CloseStopsBeforeDetachingWindow()
     {
         var calls = new List<string>();
@@ -369,12 +393,14 @@ public sealed class DesktopPlaybackHostTests
 
     private sealed class FakeRuntime(List<string> calls) :
         IPlaybackRuntime, IEmbeddedSubtitleTrackInventoryRuntime,
-        IEmbeddedTextSubtitleCueRuntime, IEmbeddedTextSubtitleCancellationRuntime
+        IEmbeddedTextSubtitleCueRuntime, IEmbeddedTextSubtitleCancellationRuntime,
+        ITemporaryFastForwardRuntime
     {
         public MediaLocator? LastLocator { get; private set; }
 
         public bool SupportsEmbeddedTextSubtitleCues { get; set; } = true;
         public bool SupportsEmbeddedTextSubtitleCancellation { get; set; } = true;
+        public bool SupportsTemporaryFastForward { get; set; } = true;
         public ulong ActiveSubtitleRequestId { get; private set; }
         public List<ulong> CancelledSubtitleRequests { get; } = [];
 
@@ -476,6 +502,15 @@ public sealed class DesktopPlaybackHostTests
             CancellationToken cancellationToken)
         {
             calls.Add($"seek:{context.Epoch.Value}:{position.Nanoseconds}");
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask SetTemporaryFastForwardAsync(
+            bool enabled,
+            RuntimeCommandContext context,
+            CancellationToken cancellationToken)
+        {
+            calls.Add($"fast-forward:{enabled}:{context.Epoch.Value}");
             return ValueTask.CompletedTask;
         }
 

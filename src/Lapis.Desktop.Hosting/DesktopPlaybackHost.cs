@@ -18,6 +18,7 @@ public sealed class DesktopPlaybackHost : IAsyncDisposable
     private readonly IEmbeddedSubtitleTrackInventoryRuntime? _embeddedTracks;
     private readonly IEmbeddedTextSubtitleCueRuntime? _embeddedCues;
     private readonly IEmbeddedTextSubtitleCancellationRuntime? _subtitleCancellation;
+    private readonly ITemporaryFastForwardRuntime? _fastForward;
     private readonly SemaphoreSlim _operations = new(1, 1);
     private readonly object _disposeGate = new();
     private Task? _disposeTask;
@@ -35,6 +36,7 @@ public sealed class DesktopPlaybackHost : IAsyncDisposable
         _embeddedTracks = playbackRuntime as IEmbeddedSubtitleTrackInventoryRuntime;
         _embeddedCues = playbackRuntime as IEmbeddedTextSubtitleCueRuntime;
         _subtitleCancellation = playbackRuntime as IEmbeddedTextSubtitleCancellationRuntime;
+        _fastForward = playbackRuntime as ITemporaryFastForwardRuntime;
         _session = new PlaybackSession(playbackRuntime, sessionId);
     }
 
@@ -59,6 +61,30 @@ public sealed class DesktopPlaybackHost : IAsyncDisposable
             // other native subtitle queries.
             return await Task.Run(() => source.SupportsEmbeddedTextSubtitleCues,
                 cancellationToken).ConfigureAwait(false);
+        }, cancellationToken);
+
+    public Task<bool> SupportsTemporaryFastForwardAsync(
+        PlaybackSnapshot expected, CancellationToken cancellationToken = default) =>
+        RunAsync(async () =>
+        {
+            _ = SubtitleContext(expected);
+            var source = _fastForward;
+            if (source is null) return false;
+            return await Task.Run(
+                () => source.SupportsTemporaryFastForward,
+                cancellationToken).ConfigureAwait(false);
+        }, cancellationToken);
+
+    public Task SetTemporaryFastForwardAsync(
+        bool enabled, PlaybackSnapshot expected,
+        CancellationToken cancellationToken = default) =>
+        RunAsync(async () =>
+        {
+            var context = SubtitleContext(expected);
+            var source = _fastForward ?? throw new NotSupportedException(
+                "This runtime does not provide temporary fast-forward.");
+            await source.SetTemporaryFastForwardAsync(
+                enabled, context, cancellationToken).ConfigureAwait(false);
         }, cancellationToken);
 
     public Task<bool> SupportsEmbeddedTextSubtitleCancellationAsync(

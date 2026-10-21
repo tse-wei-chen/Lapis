@@ -11,6 +11,7 @@ internal static class NativeAbi
     internal const uint SubtitleTracksVersion = 1;
     internal const uint TextSubtitleCuesVersion = 1;
     internal const uint TextSubtitleCancelVersion = 1;
+    internal const uint FastForwardVersion = 1;
     internal const int TextSubtitleMaxCues = 4096;
     internal const int TextSubtitlePageCapacity = 16;
     internal const int TextSubtitlePageBytes = 65_536;

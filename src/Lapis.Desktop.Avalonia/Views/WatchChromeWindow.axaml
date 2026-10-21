@@ -111,7 +111,8 @@
                 AutomationProperties.Name="影片時間軸"/>
         <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto"
               ColumnSpacing="9">
-          <Button Grid.Column="0" Classes="watch-action" Width="69"
+          <Button Grid.Column="0" x:Name="WatchBackSeek"
+                  Classes="watch-action" Width="69"
                   Command="{Binding BackCommand}" IsEnabled="{Binding CanSeek}"
                   ToolTip.Tip="後退 10 秒 (← / J)"
                   AutomationProperties.Name="後退十秒">
@@ -141,7 +142,8 @@
                     Fill="#10212E" IsVisible="{Binding IsNotPlaying}"/>
             </Grid>
           </Button>
-          <Button Grid.Column="2" Classes="watch-action" Width="69"
+          <Button Grid.Column="2" x:Name="WatchForwardSeek"
+                  Classes="watch-action" Width="69"
                   Command="{Binding ForwardCommand}" IsEnabled="{Binding CanSeek}"
                   ToolTip.Tip="前進 10 秒 (→ / L)"
                   AutomationProperties.Name="前進十秒">

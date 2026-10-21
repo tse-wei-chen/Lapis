@@ -27,8 +27,28 @@ public sealed class NativeMediaRuntimeException : Exception
 /// In-process adapter from the Application playback-runtime port to the stable
 /// native C ABI. One adapter instance binds to exactly one PlaybackSessionId.
 /// </summary>
-public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfaceBinding, IPlaybackRuntimeObserver, IChapterNavigationRuntime, IEmbeddedSubtitleTrackInventoryRuntime, IEmbeddedTextSubtitleCueRuntime, IEmbeddedTextSubtitleCancellationRuntime
+public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfaceBinding, IPlaybackRuntimeObserver, IChapterNavigationRuntime, IEmbeddedSubtitleTrackInventoryRuntime, IEmbeddedTextSubtitleCueRuntime, IEmbeddedTextSubtitleCancellationRuntime, ITemporaryFastForwardRuntime
 {
+    public bool SupportsTemporaryFastForward
+    {
+        get
+        {
+            lock (_gate)
+            {
+                if (_disposed || _session is null) return false;
+                try
+                {
+                    return _api.GetFastForwardApiVersion() ==
+                        NativeAbi.FastForwardVersion;
+                }
+                catch (EntryPointNotFoundException)
+                {
+                    return false;
+                }
+            }
+        }
+    }
+
     public bool SupportsEmbeddedTextSubtitleCues
     {
         get
@@ -511,6 +531,24 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
                 $"Native text subtitle cancellation API version {version} is unsupported.");
     }
 
+    private void EnsureFastForwardApiVersion()
+    {
+        uint version;
+        try
+        {
+            version = _api.GetFastForwardApiVersion();
+        }
+        catch (EntryPointNotFoundException exception)
+        {
+            throw new NotSupportedException(
+                "The installed native runtime does not support temporary fast-forward.",
+                exception);
+        }
+        if (version != NativeAbi.FastForwardVersion)
+            throw new NotSupportedException(
+                $"Native fast-forward API version {version} is unsupported.");
+    }
+
     /// <summary>
     /// Read one owned 16-cue page using the optional nonblocking native ABI.
     /// The 64-KiB text buffer is sufficient for 16 native 4-KiB cues.
@@ -678,6 +716,30 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
                     new NativeMediaTime { Nanoseconds = position.Nanoseconds },
                     new NativePlaybackEpoch { Value = context.Epoch.Value });
                 ThrowForResult(result, "session_seek");
+            }
+        }, cancellationToken));
+    }
+
+    public ValueTask SetTemporaryFastForwardAsync(
+        bool enabled,
+        RuntimeCommandContext context,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        EnsureFastForwardApiVersion();
+        return new ValueTask(Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_gate)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ThrowIfDisposed();
+                var session = EnsureSession(context.SessionId);
+                var result = _api.SessionSetFastForward(
+                    session,
+                    new NativePlaybackEpoch { Value = context.Epoch.Value },
+                    enabled ? 1u : 0u);
+                ThrowForResult(result, "session_set_fast_forward");
             }
         }, cancellationToken));
     }

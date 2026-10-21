@@ -1,6 +1,7 @@
 #include "core/playback_clock.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 
@@ -19,6 +20,7 @@ bool PlaybackClock::start(MediaTime position, MonotonicTime now) {
 
         anchor_position_ = position;
         anchor_time_ = now;
+        rate_ = 1.0;
         state_ = PlaybackClockState::Running;
         changed_unlocked();
     }
@@ -57,6 +59,22 @@ bool PlaybackClock::resume(MonotonicTime now) {
     return true;
 }
 
+bool PlaybackClock::set_rate(double rate, MonotonicTime now) {
+    if (!std::isfinite(rate) || rate <= 0.0) {
+        return false;
+    }
+
+    {
+        std::scoped_lock lock(mutex_);
+        anchor_position_ = position_unlocked(now);
+        anchor_time_ = now;
+        rate_ = rate;
+        changed_unlocked();
+    }
+    changed_.notify_all();
+    return true;
+}
+
 bool PlaybackClock::rebase(
     PlaybackEpoch epoch,
     MediaTime position,
@@ -70,6 +88,7 @@ bool PlaybackClock::rebase(
         epoch_ = epoch;
         anchor_position_ = position;
         anchor_time_ = now;
+        rate_ = 1.0;
         changed_unlocked();
     }
     changed_.notify_all();
@@ -123,6 +142,7 @@ void PlaybackClock::reset(PlaybackEpoch epoch, MonotonicTime now) {
         epoch_ = epoch;
         anchor_position_ = MediaTime{};
         anchor_time_ = now;
+        rate_ = 1.0;
         changed_unlocked();
     }
     changed_.notify_all();
@@ -199,7 +219,11 @@ MediaTime PlaybackClock::position_unlocked(MonotonicTime now) const noexcept {
     constexpr auto max_position = std::numeric_limits<std::int64_t>::max();
     const auto headroom = static_cast<std::uint64_t>(
         max_position - anchor_position_.nanoseconds);
-    const auto applied = std::min(elapsed, headroom);
+    const auto scaled = static_cast<long double>(elapsed) *
+        static_cast<long double>(rate_);
+    const auto applied = scaled >= static_cast<long double>(headroom)
+        ? headroom
+        : static_cast<std::uint64_t>(scaled);
 
     return MediaTime{
         anchor_position_.nanoseconds + static_cast<std::int64_t>(applied)

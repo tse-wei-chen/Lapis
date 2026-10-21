@@ -147,6 +147,32 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
     }
 
+    public async Task<bool> SetTemporaryFastForwardAsync(bool enabled)
+    {
+        if (_disposed ||
+            _player is not ITemporaryFastForwardPlaybackService service)
+            return false;
+
+        var succeeded = false;
+        await RunAsync(async () =>
+        {
+            await service.SetTemporaryFastForwardAsync(
+                enabled, _player.Snapshot, _lifetime.Token);
+            succeeded = true;
+        });
+        return succeeded;
+    }
+
+    public Task SeekToAsync(TimeSpan position)
+    {
+        if (!CanSeek) return Task.CompletedTask;
+        if (position < TimeSpan.Zero) position = TimeSpan.Zero;
+        if (_player.Snapshot.Duration is { } duration &&
+            position > duration.ToTimeSpan())
+            position = duration.ToTimeSpan();
+        return RunAsync(() => _player.SeekAsync(position, _lifetime.Token));
+    }
+
     public Task OpenAsync(MediaLocator locator)
     {
         ArgumentNullException.ThrowIfNull(locator);

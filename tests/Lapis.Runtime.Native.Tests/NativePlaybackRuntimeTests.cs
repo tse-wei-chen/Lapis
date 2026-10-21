@@ -189,11 +189,44 @@ public sealed class NativePlaybackRuntimeTests
             await callReturned.Task.WaitAsync(TimeSpan.FromSeconds(2));
             Assert.False(work.IsCompleted);
         }
+
         finally
         {
             release.Set();
         }
         await work.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public async Task OptionalFastForwardIsVersionCheckedAndUsesCapturedEpoch()
+    {
+        var api = new FakeNativeApi();
+        await using var runtime = new NativePlaybackRuntime(api);
+        var sessionId = new PlaybackSessionId(Guid.NewGuid());
+        var context = new RuntimeCommandContext(sessionId, new PlaybackEpoch(1));
+        await runtime.OpenAsync(
+            new MediaLocator(MediaLocatorKind.File, "clip.mp4"),
+            context, CancellationToken.None);
+
+        Assert.True(runtime.SupportsTemporaryFastForward);
+        await runtime.SetTemporaryFastForwardAsync(true, context, CancellationToken.None);
+        await runtime.SetTemporaryFastForwardAsync(false, context, CancellationToken.None);
+
+        Assert.Equal(
+            new[] { "session_set_fast_forward:1:1", "session_set_fast_forward:0:1" },
+            api.Calls.Where(call => call.StartsWith(
+                "session_set_fast_forward:", StringComparison.Ordinal)));
+
+        var oldApi = new FakeNativeApi { HasFastForwardVersionExport = false };
+        await using var oldRuntime = new NativePlaybackRuntime(oldApi);
+        await oldRuntime.OpenAsync(
+            new MediaLocator(MediaLocatorKind.File, "clip.mp4"),
+            context, CancellationToken.None);
+        Assert.False(oldRuntime.SupportsTemporaryFastForward);
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await oldRuntime.SetTemporaryFastForwardAsync(
+                true, context, CancellationToken.None));
+        Assert.DoesNotContain("session_set_fast_forward:1:1", oldApi.Calls);
     }
 
     [Fact]
@@ -1064,6 +1097,9 @@ public sealed class NativePlaybackRuntimeTests
         internal uint SubtitleVersion { get; set; } = NativeAbi.SubtitleTracksVersion;
         internal uint TextCueVersion { get; set; } = NativeAbi.TextSubtitleCuesVersion;
         internal uint CueCancelVersion { get; set; } = NativeAbi.TextSubtitleCancelVersion;
+        internal uint FastForwardVersion { get; set; } = NativeAbi.FastForwardVersion;
+        internal bool HasFastForwardVersionExport { get; set; } = true;
+        internal bool HasFastForwardExport { get; set; } = true;
         internal bool HasCueCancelVersionExport { get; set; } = true;
         internal bool HasCueCancelStartExport { get; set; } = true;
         internal bool HasCueCancelExport { get; set; } = true;
@@ -1125,6 +1161,21 @@ public sealed class NativePlaybackRuntimeTests
         public uint GetTextSubtitleCancelApiVersion() =>
             HasCueCancelVersionExport ? CueCancelVersion :
                 throw new EntryPointNotFoundException("Optional cue cancellation absent");
+        public uint GetFastForwardApiVersion() =>
+            HasFastForwardVersionExport ? FastForwardVersion :
+                throw new EntryPointNotFoundException("Optional fast-forward absent");
+
+        public NativeResult SessionSetFastForward(
+            nint session, NativePlaybackEpoch expectedEpoch, uint enabled)
+        {
+            if (!HasFastForwardExport)
+                throw new EntryPointNotFoundException("Optional fast-forward absent");
+            Assert.Equal((nint)22, session);
+            Assert.InRange(enabled, 0u, 1u);
+            Calls.Add($"session_set_fast_forward:{enabled}:{expectedEpoch.Value}");
+            LastEpoch = expectedEpoch;
+            return NativeResult.Ok;
+        }
 
         public NativeResult SessionStartTextSubtitleLoadWithId(
             nint session, NativePlaybackEpoch expectedEpoch, uint streamIndex,

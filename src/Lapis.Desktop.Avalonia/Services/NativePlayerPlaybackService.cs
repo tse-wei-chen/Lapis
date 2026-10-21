@@ -11,7 +11,8 @@ namespace Lapis.Desktop.Avalonia.Services;
 /// The existing UI-neutral DesktopPlaybackHost owns every playback command.
 /// </summary>
 public sealed class NativePlayerPlaybackService(Func<nint> getVideoHwnd)
-    : IPlayerPlaybackService, IEmbeddedSubtitlePlaybackService
+    : IPlayerPlaybackService, IEmbeddedSubtitlePlaybackService,
+        ITemporaryFastForwardPlaybackService
 {
     private readonly PlaybackSnapshot _initial =
         PlaybackSnapshot.CreateInitial(PlaybackSessionId.New());
@@ -63,6 +64,16 @@ public sealed class NativePlayerPlaybackService(Func<nint> getVideoHwnd)
 
     public Task SeekAsync(TimeSpan position, CancellationToken cancellationToken) =>
         RequireHost().SeekAsync(position, cancellationToken);
+
+    public Task<bool> SupportsTemporaryFastForwardAsync(
+        PlaybackSnapshot expected, CancellationToken cancellationToken) =>
+        RequireHost().SupportsTemporaryFastForwardAsync(expected, cancellationToken);
+
+    public Task SetTemporaryFastForwardAsync(
+        bool enabled, PlaybackSnapshot expected,
+        CancellationToken cancellationToken) =>
+        RequireHost().SetTemporaryFastForwardAsync(
+            enabled, expected, cancellationToken);
 
     public Task CloseAsync(CancellationToken cancellationToken) =>
         _host?.CloseMediaAsync(cancellationToken) ?? Task.CompletedTask;

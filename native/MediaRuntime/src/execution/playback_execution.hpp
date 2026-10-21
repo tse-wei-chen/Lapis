@@ -125,6 +125,9 @@ public:
     [[nodiscard]] PlaybackExecutionResult seek(
         PlaybackEpoch epoch,
         MediaTime position);
+    [[nodiscard]] PlaybackExecutionResult set_fast_forward(
+        PlaybackEpoch epoch,
+        bool enabled);
     [[nodiscard]] PlaybackExecutionResult close(PlaybackEpoch epoch);
 
     // Output-surface rebinding is presentation control, not a playback
@@ -174,6 +177,7 @@ private:
     std::optional<GraphPlan> active_graph_plan_;
     bool video_generation_active_{};
     bool audio_generation_active_{};
+    bool temporary_fast_forward_{};
     bool stopped_timeline_prepared_{};
     mutable std::mutex control_mutex_;
     PlaybackExecutionState logical_state_{PlaybackExecutionState::Stopped};

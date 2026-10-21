@@ -380,6 +380,10 @@ uint32_t lapis_runtime_get_text_subtitle_cancel_api_version(void) {
     return LAPIS_TEXT_SUBTITLE_CANCEL_API_VERSION;
 }
 
+uint32_t lapis_runtime_get_fast_forward_api_version(void) {
+    return LAPIS_FAST_FORWARD_API_VERSION;
+}
+
 lapis_result lapis_session_list_subtitle_tracks(
     lapis_session* session,
     lapis_playback_epoch expected_epoch,
@@ -1002,6 +1006,48 @@ lapis_result lapis_session_seek(
 
         session->position_ns = position.nanoseconds;
         session->transport = return_state;
+        return LAPIS_OK;
+    });
+}
+
+lapis_result lapis_session_set_fast_forward(
+    lapis_session* session,
+    lapis_playback_epoch expected_epoch,
+    uint32_t enabled) {
+    return guarded_result([&]() -> lapis_result {
+        if (session == nullptr || enabled > 1) {
+            return LAPIS_E_INVALID_ARGUMENT;
+        }
+
+        std::scoped_lock command_lock(session->command_mutex);
+        std::shared_ptr<RuntimePlaybackPipeline> pipeline;
+        {
+            std::scoped_lock lock(session->mutex);
+            if (!matches_epoch(*session, expected_epoch)) {
+                return LAPIS_E_STALE_EPOCH;
+            }
+            if (session->transport != LAPIS_TRANSPORT_PLAYING ||
+                session->pipeline == nullptr ||
+                session->pipeline->execution == nullptr) {
+                return LAPIS_E_INVALID_STATE;
+            }
+            pipeline = session->pipeline;
+        }
+
+        const auto result = pipeline->execution->set_fast_forward(
+            lapis::media::PlaybackEpoch{expected_epoch.value},
+            enabled != 0);
+        std::scoped_lock lock(session->mutex);
+        if (!matches_epoch(*session, expected_epoch)) {
+            return LAPIS_E_STALE_EPOCH;
+        }
+        if (!result.ok()) {
+            session->transport = LAPIS_TRANSPORT_FAULTED;
+            return map_execution_error(result.error);
+        }
+
+        const auto snapshot = pipeline->execution->snapshot();
+        session->position_ns = snapshot.clock.position.nanoseconds;
         return LAPIS_OK;
     });
 }

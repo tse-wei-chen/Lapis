@@ -44,6 +44,8 @@ public sealed partial class WatchChromeWindow : Window
     }
     private readonly Button _discHeader;
     private readonly Button _discBottom;
+    private readonly Button _backSeek;
+    private readonly Button _forwardSeek;
     private readonly ItemsControl _playlistIndex;
     private readonly TextSubtitleSourceCatalog _subtitleSources;
     private ITextSubtitleTrack _subtitleTrack = SidecarSubtitleTrack.Empty;
@@ -53,6 +55,15 @@ public sealed partial class WatchChromeWindow : Window
     private bool _haveCursor;
     private CursorPoint _cursor;
     private DateTime _lastActivity = DateTime.UtcNow;
+    private static readonly TimeSpan SeekHoldThreshold =
+        TimeSpan.FromMilliseconds(450);
+    private DateTime? _seekButtonPressedAt;
+    private bool _backSeekPressed;
+    private bool _forwardSeekPressed;
+    private bool _fastForwardActive;
+    private int _seekPressGeneration;
+    private CancellationTokenSource? _fastForwardDelay;
+    private Task<bool>? _fastForwardStartTask;
 
     // Avalonia runtime XAML loading also requires a public empty ctor.
     public WatchChromeWindow()
@@ -74,6 +85,8 @@ public sealed partial class WatchChromeWindow : Window
         _subtitlePicker.SelectionChanged += SubtitlePickerChanged;
         _discHeader = this.FindControl<Button>("WatchDiscToggle")!;
         _discBottom = this.FindControl<Button>("WatchDiscBottom")!;
+        _backSeek = this.FindControl<Button>("WatchBackSeek")!;
+        _forwardSeek = this.FindControl<Button>("WatchForwardSeek")!;
         _playlistIndex = this.FindControl<ItemsControl>("WatchDiscPlaylistList")!;
         _clock = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
     }
@@ -98,6 +111,18 @@ public sealed partial class WatchChromeWindow : Window
             OnScrubEnd, RoutingStrategies.Tunnel, handledEventsToo: true);
         _timeline.AddHandler(InputElement.PointerCaptureLostEvent,
             OnScrubCancelled, RoutingStrategies.Bubble, handledEventsToo: true);
+        _backSeek.AddHandler(InputElement.PointerPressedEvent,
+            OnBackSeekPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
+        _backSeek.AddHandler(InputElement.PointerReleasedEvent,
+            OnBackSeekReleased, RoutingStrategies.Tunnel, handledEventsToo: true);
+        _backSeek.AddHandler(InputElement.PointerCaptureLostEvent,
+            OnSeekButtonCaptureLost, RoutingStrategies.Bubble, handledEventsToo: true);
+        _forwardSeek.AddHandler(InputElement.PointerPressedEvent,
+            OnForwardSeekPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
+        _forwardSeek.AddHandler(InputElement.PointerReleasedEvent,
+            OnForwardSeekReleased, RoutingStrategies.Tunnel, handledEventsToo: true);
+        _forwardSeek.AddHandler(InputElement.PointerCaptureLostEvent,
+            OnSeekButtonCaptureLost, RoutingStrategies.Bubble, handledEventsToo: true);
         _player.PropertyChanged += PlayerChanged;
         KeyDown += OnOverlayKeyDown;
         _clock.Tick += ClockTick;
@@ -406,6 +431,156 @@ public sealed partial class WatchChromeWindow : Window
     private void OnScrubCancelled(object? sender, PointerCaptureLostEventArgs args) =>
         _player.CancelScrub();
 
+    private void OnBackSeekPressed(object? sender, PointerPressedEventArgs args)
+    {
+        if (!args.GetCurrentPoint(_backSeek).Properties.IsLeftButtonPressed)
+            return;
+        _backSeekPressed = true;
+        _seekButtonPressedAt = DateTime.UtcNow;
+        ++_seekPressGeneration;
+        NotifyPointerActivity();
+    }
+
+    private void OnForwardSeekPressed(object? sender, PointerPressedEventArgs args)
+    {
+        if (!args.GetCurrentPoint(_forwardSeek).Properties.IsLeftButtonPressed)
+            return;
+        _forwardSeekPressed = true;
+        _seekButtonPressedAt = DateTime.UtcNow;
+        var generation = ++_seekPressGeneration;
+        _fastForwardStartTask = null;
+        _fastForwardActive = false;
+        _fastForwardDelay?.Cancel();
+        _fastForwardDelay?.Dispose();
+        _fastForwardDelay = new CancellationTokenSource();
+        _ = StartFastForwardAfterDelayAsync(
+            generation, _fastForwardDelay.Token);
+        NotifyPointerActivity();
+    }
+
+    private async Task StartFastForwardAfterDelayAsync(
+        int generation, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(SeekHoldThreshold, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_disposed || !_forwardSeekPressed ||
+                generation != _seekPressGeneration ||
+                _fastForwardStartTask is not null)
+                return;
+            _fastForwardStartTask = _player.SetTemporaryFastForwardAsync(true);
+            _ = CompleteFastForwardStartAsync(generation, _fastForwardStartTask);
+        });
+    }
+
+    private async Task CompleteFastForwardStartAsync(
+        int generation, Task<bool> startTask)
+    {
+        var started = await startTask;
+        if (generation != _seekPressGeneration || !_forwardSeekPressed || _disposed)
+        {
+            if (started) await _player.SetTemporaryFastForwardAsync(false);
+            return;
+        }
+        _fastForwardActive = started;
+    }
+
+    private async void OnBackSeekReleased(object? sender, PointerReleasedEventArgs args)
+    {
+        if (!_backSeekPressed || _seekButtonPressedAt is not { } pressedAt)
+            return;
+        _backSeekPressed = false;
+        _seekButtonPressedAt = null;
+        var elapsed = DateTime.UtcNow - pressedAt;
+        if (elapsed < SeekHoldThreshold) return;
+
+        args.Handled = true;
+        var current = _player.PlaybackSnapshot.Position.ToTimeSpan();
+        var target = current - TimeSpan.FromSeconds(elapsed.TotalSeconds * 4);
+        await _player.SeekToAsync(target);
+        NotifyPointerActivity();
+    }
+
+    private async void OnForwardSeekReleased(object? sender, PointerReleasedEventArgs args)
+    {
+        if (!_forwardSeekPressed || _seekButtonPressedAt is not { } pressedAt)
+            return;
+        _forwardSeekPressed = false;
+        _seekButtonPressedAt = null;
+        var elapsed = DateTime.UtcNow - pressedAt;
+        _fastForwardDelay?.Cancel();
+        if (elapsed < SeekHoldThreshold)
+        {
+            _fastForwardDelay?.Dispose();
+            _fastForwardDelay = null;
+            return;
+        }
+
+        args.Handled = true;
+        var generation = _seekPressGeneration;
+        var startTask = _fastForwardStartTask;
+        if (startTask is null)
+        {
+            startTask = _player.SetTemporaryFastForwardAsync(true);
+            _fastForwardStartTask = startTask;
+        }
+
+        var started = await startTask;
+        if (started)
+        {
+            await _player.SetTemporaryFastForwardAsync(false);
+            _fastForwardActive = false;
+        }
+        else
+        {
+            var current = _player.PlaybackSnapshot.Position.ToTimeSpan();
+            var target = current + TimeSpan.FromSeconds(elapsed.TotalSeconds * 2);
+            await _player.SeekToAsync(target);
+        }
+        if (generation == _seekPressGeneration)
+        {
+            _fastForwardStartTask = null;
+            _fastForwardDelay?.Dispose();
+            _fastForwardDelay = null;
+        }
+        NotifyPointerActivity();
+    }
+
+    private void OnSeekButtonCaptureLost(
+        object? sender, PointerCaptureLostEventArgs args)
+    {
+        if (ReferenceEquals(sender, _forwardSeek) && _forwardSeekPressed)
+        {
+            _forwardSeekPressed = false;
+            _seekButtonPressedAt = null;
+            _fastForwardDelay?.Cancel();
+            ++_seekPressGeneration;
+            _ = RestoreFastForwardAfterPendingStartAsync();
+        }
+        else if (ReferenceEquals(sender, _backSeek))
+        {
+            _backSeekPressed = false;
+            _seekButtonPressedAt = null;
+        }
+    }
+
+    private async Task RestoreFastForwardAfterPendingStartAsync()
+    {
+        if (_fastForwardStartTask is { } startTask &&
+            await startTask &&
+            !_disposed)
+            await _player.SetTemporaryFastForwardAsync(false);
+        _fastForwardActive = false;
+    }
+
     private void DisposeOverlay()
     {
         if (_disposed) return;
@@ -423,6 +598,11 @@ public sealed partial class WatchChromeWindow : Window
         _player.PropertyChanged -= PlayerChanged;
         KeyDown -= OnOverlayKeyDown;
         _player.CancelScrub();
+        _fastForwardDelay?.Cancel();
+        _fastForwardDelay?.Dispose();
+        _fastForwardDelay = null;
+        ++_seekPressGeneration;
+        _ = RestoreFastForwardAfterPendingStartAsync();
     }
 
     [StructLayout(LayoutKind.Sequential)]

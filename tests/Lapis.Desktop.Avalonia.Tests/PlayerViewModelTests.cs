@@ -113,6 +113,22 @@ public sealed class PlayerViewModelTests
     }
 
     [Fact]
+    public async Task TemporaryFastForwardAndExplicitSeekUsePlaybackService()
+    {
+        var fake = new FakePlayer();
+        await using var viewModel = new PlayerViewModel(fake);
+        await viewModel.OpenAsync(new MediaLocator(MediaLocatorKind.File, "movie.mkv"));
+
+        Assert.True(await viewModel.SetTemporaryFastForwardAsync(true));
+        Assert.True(await viewModel.SetTemporaryFastForwardAsync(false));
+        await viewModel.SeekToAsync(TimeSpan.FromSeconds(75));
+
+        Assert.Equal(new[] { true, false }, fake.FastForwardRequests);
+        Assert.Equal(TimeSpan.FromSeconds(60), fake.LastSeek);
+        Assert.Equal(1, fake.SeekCount);
+    }
+
+    [Fact]
     public async Task RepeatedForwardInputDoesNotQueueSeeksWhileOneIsInFlight()
     {
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -169,7 +185,8 @@ public sealed class PlayerViewModelTests
         Assert.True(changes[^1]);
     }
 
-    private sealed class FakePlayer : IPlayerPlaybackService
+    private sealed class FakePlayer : IPlayerPlaybackService,
+        ITemporaryFastForwardPlaybackService
     {
         public MediaLocator? LastLocator { get; private set; }
         public bool FailOpen { get; set; }
@@ -178,6 +195,7 @@ public sealed class PlayerViewModelTests
         public TaskCompletionSource<TimeSpan> SeekObserved { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task? PendingSeekRelease { get; init; }
+        public List<bool> FastForwardRequests { get; } = [];
         public void AdvanceEpoch() =>
             Snapshot = Snapshot with { Epoch = new PlaybackEpoch(Snapshot.Epoch.Value + 1) };
         public TransportState OpenTransport { get; set; } = TransportState.Playing;
@@ -215,6 +233,16 @@ public sealed class PlayerViewModelTests
         }
         public Task CloseAsync(CancellationToken cancellationToken) =>
             Task.CompletedTask;
+        public Task<bool> SupportsTemporaryFastForwardAsync(
+            PlaybackSnapshot expected, CancellationToken cancellationToken) =>
+            Task.FromResult(true);
+        public Task SetTemporaryFastForwardAsync(
+            bool enabled, PlaybackSnapshot expected,
+            CancellationToken cancellationToken)
+        {
+            FastForwardRequests.Add(enabled);
+            return Task.CompletedTask;
+        }
         public async IAsyncEnumerable<PlaybackSnapshot> ObserveSnapshotsAsync(
             [EnumeratorCancellation] CancellationToken cancellationToken)
         {

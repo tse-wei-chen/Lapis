@@ -85,6 +85,20 @@ int main() {
     CHECK(!clock.start(MediaTime{-1}, MonotonicTime{}));
     CHECK(!clock.rebase(PlaybackEpoch{5}, MediaTime{-1}, MonotonicTime{}));
 
+    PlaybackClock rate_clock;
+    CHECK(rate_clock.rebase(PlaybackEpoch{1}, MediaTime{}, MonotonicTime{}));
+    CHECK(rate_clock.start(MediaTime{}, MonotonicTime{}));
+    CHECK(rate_clock.set_rate(2.0, MonotonicTime{}));
+    CHECK(rate_clock.snapshot(MonotonicTime{500'000'000}).position ==
+        MediaTime{1'000'000'000});
+    CHECK(!rate_clock.set_rate(0.0, MonotonicTime{500'000'000}));
+    CHECK(!rate_clock.set_rate(
+        std::numeric_limits<double>::infinity(), MonotonicTime{500'000'000}));
+    CHECK(rate_clock.rebase(
+        PlaybackEpoch{2}, MediaTime{}, MonotonicTime{500'000'000}));
+    CHECK(rate_clock.snapshot(MonotonicTime{1'000'000'000}).position ==
+        MediaTime{500'000'000});
+
     PlaybackClock saturating_clock;
     CHECK(saturating_clock.start(
         MediaTime{std::numeric_limits<std::int64_t>::max() - 10},
