@@ -148,6 +148,26 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME c_abi_header_smoke COMMAND Lapis.MediaRuntime.CAbiHeaderTests)
 
+    # Read-only subtitle inventory probes FFmpeg stream descriptors without
+    # starting the subtitle decoder or changing packet routing.
+    add_executable(Lapis.MediaRuntime.SubtitleInventoryTests
+        tests/subtitle_stream_inventory.cpp)
+    target_compile_features(Lapis.MediaRuntime.SubtitleInventoryTests PRIVATE cxx_std_20)
+    target_include_directories(Lapis.MediaRuntime.SubtitleInventoryTests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_include_directories(Lapis.MediaRuntime.SubtitleInventoryTests
+        SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
+    target_link_directories(Lapis.MediaRuntime.SubtitleInventoryTests
+        PRIVATE ${FFMPEG_LIBRARY_DIRS})
+    target_link_libraries(Lapis.MediaRuntime.SubtitleInventoryTests PRIVATE
+        Lapis.MediaRuntime.Core Lapis.MediaRuntime ${FFMPEG_LIBRARIES})
+    target_compile_definitions(Lapis.MediaRuntime.SubtitleInventoryTests
+        PRIVATE LAPIS_TEST_MEDIA_PATH="${LAPIS_TEST_MEDIA_PATH}")
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.SubtitleInventoryTests)
+    add_test(NAME embedded_subtitle_track_inventory
+        COMMAND Lapis.MediaRuntime.SubtitleInventoryTests)
+
     add_executable(Lapis.MediaRuntime.SourceFeatureTests tests/source_feature_flags.c)
     target_compile_features(Lapis.MediaRuntime.SourceFeatureTests PRIVATE c_std_17)
     target_include_directories(Lapis.MediaRuntime.SourceFeatureTests

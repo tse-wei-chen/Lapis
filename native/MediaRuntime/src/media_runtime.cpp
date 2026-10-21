@@ -16,6 +16,9 @@
 #endif
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <string_view>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -354,6 +357,76 @@ uint32_t lapis_runtime_get_diagnostics_api_version(void) {
 uint32_t lapis_runtime_get_navigation_api_version(void) {
     return LAPIS_NAVIGATION_API_VERSION;
 }
+
+uint32_t lapis_runtime_get_subtitle_tracks_api_version(void) {
+    return LAPIS_SUBTITLE_TRACKS_API_VERSION;
+}
+
+lapis_result lapis_session_list_subtitle_tracks(
+    lapis_session* session,
+    lapis_playback_epoch expected_epoch,
+    lapis_subtitle_track_info* tracks,
+    uint32_t capacity,
+    uint32_t* out_count) {
+    return guarded_result([&]() -> lapis_result {
+        if (out_count != nullptr) *out_count = 0;
+        if (session == nullptr || out_count == nullptr ||
+            capacity > LAPIS_SUBTITLE_TRACK_MAX ||
+            (capacity != 0 && tracks == nullptr)) {
+            return LAPIS_E_INVALID_ARGUMENT;
+        }
+
+        // The immutable snapshot belongs to the opened playback pipeline.
+        // Serializing with commands also fences a concurrent Seek/Close/Open.
+        std::scoped_lock command_lock(session->command_mutex);
+        std::shared_ptr<RuntimePlaybackPipeline> pipeline;
+        {
+            std::scoped_lock lock(session->mutex);
+            if (!matches_epoch(*session, expected_epoch))
+                return LAPIS_E_STALE_EPOCH;
+            if (session->transport != LAPIS_TRANSPORT_READY &&
+                session->transport != LAPIS_TRANSPORT_PLAYING &&
+                session->transport != LAPIS_TRANSPORT_PAUSED &&
+                session->transport != LAPIS_TRANSPORT_ENDED) {
+                return LAPIS_E_INVALID_STATE;
+            }
+            pipeline = session->pipeline;
+        }
+        if (pipeline == nullptr || pipeline->media == nullptr)
+            return LAPIS_E_INVALID_STATE;
+
+        const auto found = pipeline->media->subtitle_streams();
+        *out_count = static_cast<uint32_t>(found.size());
+        if (capacity == 0) return LAPIS_OK; // count-only probe, including 0 tracks
+        if (capacity < found.size()) return LAPIS_E_BUFFER_TOO_SMALL;
+
+        // ISO 639/BCP47 language tags and FFmpeg codec names are ASCII.
+        // Non-ASCII bytes are replaced with '?', ensuring valid UTF-8 output
+        // without truncating a multibyte sequence at the fixed-size ABI edge.
+        const auto copy_ascii = [](char* destination, std::size_t bound,
+                                   std::string_view value) {
+            std::size_t i = 0;
+            for (unsigned char ch : value) {
+                if (i + 1 >= bound) break;
+                destination[i++] =
+                    ch >= 0x20 && ch < 0x7f ? static_cast<char>(ch) : '?';
+            }
+            destination[i] = '\0';
+        };
+        for (std::size_t i = 0; i < found.size(); ++i) {
+            const auto& source = found[i];
+            lapis_subtitle_track_info dest{};
+            dest.stream_index = source.stream_index;
+            dest.kind = static_cast<uint32_t>(source.kind);
+            copy_ascii(dest.language_utf8, sizeof(dest.language_utf8), source.language);
+            copy_ascii(dest.codec_name_utf8, sizeof(dest.codec_name_utf8),
+                       source.codec_name);
+            tracks[i] = dest;
+        }
+        return LAPIS_OK;
+    });
+}
+
 
 lapis_result lapis_session_resolve_chapter(
     lapis_session* session,

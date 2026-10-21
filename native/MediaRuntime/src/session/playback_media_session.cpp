@@ -50,6 +50,7 @@ public:
         source.reset();
         video_stream_index = -1;
         audio_stream_index = -1;
+        subtitles.clear();
     }
 
     MediaSourceRegistry sources;
@@ -61,6 +62,7 @@ public:
     std::unique_ptr<GraphPlan> plan;
     int video_stream_index{-1};
     int audio_stream_index{-1};
+    std::vector<SubtitleStreamInfo> subtitles;
 };
 
 PlaybackMediaSession::PlaybackMediaSession()
@@ -172,6 +174,10 @@ MediaOpenInfo PlaybackMediaSession::open(const MediaLocator& locator) {
         impl_->audio_decoder = std::move(decoder);
     }
 
+    // Build the owned inventory at Open, before any packet decode worker starts.
+    // It survives seek unchanged and disappears on Close/new Open.
+    impl_->subtitles = demuxer->subtitle_streams();
+
     impl_->plan = std::make_unique<GraphPlan>(graph_builder.build());
     impl_->demuxer = std::move(demuxer);
     return result;
@@ -210,6 +216,10 @@ bool PlaybackMediaSession::start_decode_generation(MediaDecodeSelection selectio
 
 void PlaybackMediaSession::stop_decode_generation() noexcept {
     impl_->stop_decode_generation();
+}
+
+std::vector<SubtitleStreamInfo> PlaybackMediaSession::subtitle_streams() const {
+    return impl_->subtitles;
 }
 
 bool PlaybackMediaSession::has_video() const noexcept {

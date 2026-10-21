@@ -2,6 +2,7 @@
 
 #include "audio/audio_frame.hpp"
 #include "core/media_time.hpp"
+#include "core/subtitle_stream_info.hpp"
 #include "source/media_source.hpp"
 #include "video/video_frame.hpp"
 
@@ -9,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <stop_token>
+#include <vector>
 
 namespace lapis::media {
 
@@ -56,6 +58,10 @@ public:
     [[nodiscard]] std::optional<NavigationSnapshot> navigation_snapshot() const;
     [[nodiscard]] bool start_decode_generation(MediaDecodeSelection selection);
     void stop_decode_generation() noexcept;
+
+    // Snapshot is computed once during Open. Safe to copy while decode workers
+    // continue reading packets because no FFmpeg-owned memory is exposed.
+    [[nodiscard]] std::vector<SubtitleStreamInfo> subtitle_streams() const;
 
     [[nodiscard]] bool has_video() const noexcept;
     [[nodiscard]] bool has_audio() const noexcept;
