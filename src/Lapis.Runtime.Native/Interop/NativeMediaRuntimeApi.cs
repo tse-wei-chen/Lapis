@@ -9,6 +9,14 @@ internal interface INativeMediaRuntimeApi
     uint GetDiagnosticsApiVersion();
     uint GetNavigationApiVersion();
     uint GetSubtitleTracksApiVersion();
+    uint GetTextSubtitleCuesApiVersion();
+    NativeResult SessionStartTextSubtitleLoad(
+        nint session, NativePlaybackEpoch expectedEpoch, uint streamIndex);
+    NativeResult SessionReadTextSubtitleCues(
+        nint session, NativePlaybackEpoch expectedEpoch, uint startIndex,
+        NativeTextSubtitleCueInfo[] cues, byte[] utf8,
+        out uint count, out uint total, out uint requiredTextBytes,
+        out NativeTextSubtitleLoadState state);
     NativeResult SessionListSubtitleTracks(
         nint session, NativePlaybackEpoch expectedEpoch,
         NativeSubtitleTrackInfo[]? buffer, out uint count);
@@ -64,6 +72,38 @@ internal sealed class PInvokeNativeMediaRuntimeApi : INativeMediaRuntimeApi
 
     public uint GetSubtitleTracksApiVersion() =>
         NativeMethods.RuntimeGetSubtitleTracksApiVersion();
+
+    public uint GetTextSubtitleCuesApiVersion() =>
+        NativeMethods.RuntimeGetTextSubtitleCuesApiVersion();
+
+    public NativeResult SessionStartTextSubtitleLoad(
+        nint session, NativePlaybackEpoch expectedEpoch, uint streamIndex) =>
+        NativeMethods.SessionStartTextSubtitleLoad(
+            session, expectedEpoch, streamIndex);
+
+    public unsafe NativeResult SessionReadTextSubtitleCues(
+        nint session, NativePlaybackEpoch expectedEpoch, uint startIndex,
+        NativeTextSubtitleCueInfo[] cues, byte[] utf8,
+        out uint count, out uint total, out uint requiredTextBytes,
+        out NativeTextSubtitleLoadState state)
+    {
+        ArgumentNullException.ThrowIfNull(cues);
+        ArgumentNullException.ThrowIfNull(utf8);
+        if (cues.Length > NativeAbi.TextSubtitlePageCapacity ||
+            utf8.Length > NativeAbi.TextSubtitlePageBytes)
+            throw new ArgumentOutOfRangeException(nameof(cues),
+                "Subtitle page exceeds the native ABI memory budget.");
+
+        fixed (NativeTextSubtitleCueInfo* cuePointer = cues)
+        fixed (byte* utf8Pointer = utf8)
+        {
+            // The buffers remain pinned for exactly one unmanaged call.
+            return NativeMethods.SessionReadTextSubtitleCues(
+                session, expectedEpoch, startIndex, cuePointer,
+                checked((uint)cues.Length), utf8Pointer, checked((uint)utf8.Length),
+                out count, out total, out requiredTextBytes, out state);
+        }
+    }
 
     public unsafe NativeResult SessionListSubtitleTracks(
         nint session, NativePlaybackEpoch expectedEpoch,

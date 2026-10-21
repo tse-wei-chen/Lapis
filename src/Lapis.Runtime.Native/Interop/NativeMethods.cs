@@ -26,6 +26,24 @@ internal static partial class NativeMethods
         out ulong nextSequence,
         out ulong dropped);
 
+    // Optional, version-negotiated text cue extension (not base ABI v2).
+    [LibraryImport(LibraryName, EntryPoint = "lapis_runtime_get_text_subtitle_cues_api_version")]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    internal static partial uint RuntimeGetTextSubtitleCuesApiVersion();
+
+    [LibraryImport(LibraryName, EntryPoint = "lapis_session_start_text_subtitle_load")]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    internal static partial NativeResult SessionStartTextSubtitleLoad(
+        nint session, NativePlaybackEpoch expectedEpoch, uint streamIndex);
+
+    [LibraryImport(LibraryName, EntryPoint = "lapis_session_read_text_subtitle_cues")]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    internal static unsafe partial NativeResult SessionReadTextSubtitleCues(
+        nint session, NativePlaybackEpoch expectedEpoch, uint startIndex,
+        NativeTextSubtitleCueInfo* cues, uint cueCapacity,
+        byte* textUtf8, uint textCapacity, out uint count, out uint total,
+        out uint requiredTextBytes, out NativeTextSubtitleLoadState state);
+
     [LibraryImport(LibraryName, EntryPoint = "lapis_runtime_get_subtitle_tracks_api_version")]
     [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
     internal static partial uint RuntimeGetSubtitleTracksApiVersion();

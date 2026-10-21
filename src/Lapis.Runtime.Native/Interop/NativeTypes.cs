@@ -9,6 +9,10 @@ internal static class NativeAbi
     internal const uint DiagnosticsVersion = 1;
     internal const uint NavigationVersion = 1;
     internal const uint SubtitleTracksVersion = 1;
+    internal const uint TextSubtitleCuesVersion = 1;
+    internal const int TextSubtitleMaxCues = 4096;
+    internal const int TextSubtitlePageCapacity = 16;
+    internal const int TextSubtitlePageBytes = 65_536;
     internal const int SubtitleTrackCapacity = 64;
     internal const int DiagnosticRingCapacity = 128;
 }
@@ -43,6 +47,25 @@ internal enum NativeResult : int
 
 // Exact 72-byte native subtitle descriptor with owned, fixed UTF-8 fields.
 // Keep the two strings as inline byte buffers, never managed object pointers.
+internal enum NativeTextSubtitleLoadState : int
+{
+    Loading = 0,
+    Ready = 1,
+    Failed = 2,
+    LimitExceeded = 3,
+    Cancelled = 4
+}
+
+// 24-byte native wire record, no string pointer and no variable-length data.
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeTextSubtitleCueInfo
+{
+    public long StartNanoseconds;
+    public long EndNanoseconds;
+    public uint TextOffset;
+    public uint TextLength;
+}
+
 internal enum NativeSubtitleTrackKind : uint
 {
     Unknown = 0,

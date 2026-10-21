@@ -27,7 +27,7 @@ public sealed class NativeMediaRuntimeException : Exception
 /// In-process adapter from the Application playback-runtime port to the stable
 /// native C ABI. One adapter instance binds to exactly one PlaybackSessionId.
 /// </summary>
-public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfaceBinding, IPlaybackRuntimeObserver, IChapterNavigationRuntime, IEmbeddedSubtitleTrackInventoryRuntime
+public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfaceBinding, IPlaybackRuntimeObserver, IChapterNavigationRuntime, IEmbeddedSubtitleTrackInventoryRuntime, IEmbeddedTextSubtitleCueRuntime
 {
     private readonly object _gate = new();
     private readonly INativeMediaRuntimeApi _api;
@@ -333,6 +333,183 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
 
             return ValueTask.FromResult<IReadOnlyList<EmbeddedSubtitleTrack>>(tracks);
         }
+    }
+
+    /// <summary>
+    /// Starts a separate native local-file SubRip/mov_text decode generation.
+    /// A previous worker may need joining, so invoke on the thread pool,
+    /// never while holding the Avalonia presentation dispatcher.
+    /// </summary>
+    public ValueTask StartEmbeddedTextSubtitleLoadAsync(
+        uint streamIndex, RuntimeCommandContext context,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return new ValueTask(Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_gate)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ThrowIfDisposed();
+                var handle = RequireActiveSubtitleSession(context);
+                EnsureTextSubtitleCuesApiVersion();
+                NativeResult result;
+                try
+                {
+                    result = _api.SessionStartTextSubtitleLoad(
+                        handle, new NativePlaybackEpoch { Value = context.Epoch.Value },
+                        streamIndex);
+                }
+                catch (EntryPointNotFoundException exception)
+                {
+                    throw new NotSupportedException(
+                        "The installed native DLL has no embedded subtitle cue loader.",
+                        exception);
+                }
+                ThrowForResult(result, "session_start_text_subtitle_load");
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+        }, cancellationToken));
+    }
+
+    /// <summary>
+    /// Read one owned 16-cue page using the optional nonblocking native ABI.
+    /// The 64-KiB text buffer is sufficient for 16 native 4-KiB cues.
+    /// No unmanaged pointer, backing buffer or mutable cue array is returned.
+    /// </summary>
+    public ValueTask<EmbeddedTextSubtitleCuePage> ReadEmbeddedTextSubtitleCuesAsync(
+        uint startIndex, RuntimeCommandContext context,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return new ValueTask<EmbeddedTextSubtitleCuePage>(
+            Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                lock (_gate)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    ThrowIfDisposed();
+                    var handle = RequireActiveSubtitleSession(context);
+                    EnsureTextSubtitleCuesApiVersion();
+
+                    var descriptors = new NativeTextSubtitleCueInfo[
+                        NativeAbi.TextSubtitlePageCapacity];
+                    var text = new byte[NativeAbi.TextSubtitlePageBytes];
+                    NativeResult result;
+                    uint count, total, required;
+                    NativeTextSubtitleLoadState state;
+                    try
+                    {
+                        result = _api.SessionReadTextSubtitleCues(
+                            handle, new NativePlaybackEpoch { Value = context.Epoch.Value },
+                            startIndex, descriptors, text, out count, out total,
+                            out required, out state);
+                    }
+                    catch (EntryPointNotFoundException exception)
+                    {
+                        throw new NotSupportedException(
+                            "The installed native DLL has no embedded subtitle cue reader.",
+                            exception);
+                    }
+                    ThrowForResult(result, "session_read_text_subtitle_cues");
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return DecodeTextSubtitlePage(
+                        startIndex, descriptors, text, count, total, required, state);
+                }
+            }, cancellationToken));
+    }
+
+    private nint RequireActiveSubtitleSession(RuntimeCommandContext context)
+    {
+        if (_session is null || _boundSessionId != context.SessionId)
+            throw new InvalidOperationException(
+                "Embedded subtitle cues require the active opened playback session.");
+        return _session.Handle;
+    }
+
+    private void EnsureTextSubtitleCuesApiVersion()
+    {
+        uint version;
+        try
+        {
+            version = _api.GetTextSubtitleCuesApiVersion();
+        }
+        catch (EntryPointNotFoundException exception)
+        {
+            throw new NotSupportedException(
+                "The installed native runtime predates the optional text subtitle cue API.",
+                exception);
+        }
+        if (version != NativeAbi.TextSubtitleCuesVersion)
+            throw new NotSupportedException(
+                $"Native text subtitle cue API version {version} is unsupported.");
+    }
+
+    private static EmbeddedTextSubtitleCuePage DecodeTextSubtitlePage(
+        uint startIndex, NativeTextSubtitleCueInfo[] descriptors, byte[] text,
+        uint count, uint total, uint required, NativeTextSubtitleLoadState nativeState)
+    {
+        if (count > NativeAbi.TextSubtitlePageCapacity ||
+            total > NativeAbi.TextSubtitleMaxCues ||
+            required > NativeAbi.TextSubtitlePageBytes ||
+            count > descriptors.Length || required > text.Length ||
+            count > total ||
+            (count != 0 && (ulong)startIndex + count > total))
+            throw new InvalidOperationException(
+                "Native subtitle cue API returned an out-of-bounds page.");
+
+        var state = nativeState switch
+        {
+            NativeTextSubtitleLoadState.Loading => EmbeddedTextSubtitleLoadState.Loading,
+            NativeTextSubtitleLoadState.Ready => EmbeddedTextSubtitleLoadState.Ready,
+            NativeTextSubtitleLoadState.Failed => EmbeddedTextSubtitleLoadState.Failed,
+            NativeTextSubtitleLoadState.LimitExceeded => EmbeddedTextSubtitleLoadState.LimitExceeded,
+            NativeTextSubtitleLoadState.Cancelled => EmbeddedTextSubtitleLoadState.Cancelled,
+            _ => throw new InvalidOperationException(
+                "Native subtitle cue API returned an unknown load state.")
+        };
+
+        if (state != EmbeddedTextSubtitleLoadState.Ready)
+        {
+            if (count != 0 || total != 0 || required != 0)
+                throw new InvalidOperationException(
+                    "Incomplete subtitle timeline unexpectedly returned cues.");
+            return new EmbeddedTextSubtitleCuePage(state, 0, []);
+        }
+
+        var cues = new EmbeddedTextSubtitleCue[checked((int)count)];
+        var utf8 = new System.Text.UTF8Encoding(false, true);
+        for (var i = 0; i < cues.Length; i++)
+        {
+            var native = descriptors[i];
+            if (native.StartNanoseconds < 0 ||
+                native.EndNanoseconds <= native.StartNanoseconds ||
+                native.TextLength == 0 ||
+                (ulong)native.TextOffset + native.TextLength > required ||
+                (ulong)native.TextOffset + native.TextLength > (ulong)text.Length)
+                throw new InvalidOperationException(
+                    "Native subtitle cue contains an invalid time interval or UTF-8 range.");
+
+            string content;
+            try
+            {
+                content = utf8.GetString(
+                    text, checked((int)native.TextOffset),
+                    checked((int)native.TextLength));
+            }
+            catch (System.Text.DecoderFallbackException exception)
+            {
+                throw new InvalidOperationException(
+                    "Native subtitle cue contains invalid UTF-8.", exception);
+            }
+            if (string.IsNullOrWhiteSpace(content))
+                throw new InvalidOperationException("Native subtitle cue text is empty.");
+            cues[i] = new EmbeddedTextSubtitleCue(
+                native.StartNanoseconds, native.EndNanoseconds, content);
+        }
+        return new EmbeddedTextSubtitleCuePage(state, total, Array.AsReadOnly(cues));
     }
 
     public ValueTask SeekAsync(

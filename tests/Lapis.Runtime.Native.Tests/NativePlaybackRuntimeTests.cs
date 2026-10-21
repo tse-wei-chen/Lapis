@@ -662,6 +662,249 @@ public sealed class NativePlaybackRuntimeTests
         return track;
     }
 
+    [Fact]
+    public void NativeTextCueRecordLayoutMatchesCAbi()
+    {
+        Assert.Equal(24, Marshal.SizeOf<NativeTextSubtitleCueInfo>());
+        Assert.Equal(0L, Marshal.OffsetOf<NativeTextSubtitleCueInfo>(
+            nameof(NativeTextSubtitleCueInfo.StartNanoseconds)).ToInt64());
+        Assert.Equal(8L, Marshal.OffsetOf<NativeTextSubtitleCueInfo>(
+            nameof(NativeTextSubtitleCueInfo.EndNanoseconds)).ToInt64());
+        Assert.Equal(16L, Marshal.OffsetOf<NativeTextSubtitleCueInfo>(
+            nameof(NativeTextSubtitleCueInfo.TextOffset)).ToInt64());
+        Assert.Equal(20L, Marshal.OffsetOf<NativeTextSubtitleCueInfo>(
+            nameof(NativeTextSubtitleCueInfo.TextLength)).ToInt64());
+        Assert.Equal(16, NativeAbi.TextSubtitlePageCapacity);
+        Assert.Equal(65_536, NativeAbi.TextSubtitlePageBytes);
+    }
+
+    [Fact]
+    public async Task EmbeddedTextCuePortDoesNotCreateSessionAndHonorsCancellation()
+    {
+        var api = new FakeNativeApi();
+        await using var runtime = new NativePlaybackRuntime(api);
+        IEmbeddedTextSubtitleCueRuntime reader = runtime;
+        var context = new RuntimeCommandContext(
+            new PlaybackSessionId(Guid.NewGuid()), new PlaybackEpoch(1));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await reader.StartEmbeddedTextSubtitleLoadAsync(
+                2, context, CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await reader.ReadEmbeddedTextSubtitleCuesAsync(
+                0, context, CancellationToken.None));
+        Assert.Equal(0, api.SessionCreateCount);
+
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await reader.StartEmbeddedTextSubtitleLoadAsync(
+                2, context, cancelled.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await reader.ReadEmbeddedTextSubtitleCuesAsync(
+                0, context, cancelled.Token));
+        Assert.Equal(0, api.TextCueStartCalls);
+        Assert.Equal(0, api.TextCueReadCalls);
+    }
+
+    [Fact]
+    public async Task EmbeddedCueReaderMapsUnicodeBytesAndOriginalNanosecondTimes()
+    {
+        var subtitleText = "字幕 Hello 🌸";
+        var data = System.Text.Encoding.UTF8.GetBytes(subtitleText);
+        var api = new FakeNativeApi
+        {
+            TextCueDescriptors =
+            [
+                new NativeTextSubtitleCueInfo
+                {
+                    StartNanoseconds = 1_123_456_789,
+                    EndNanoseconds = 3_987_654_321,
+                    TextOffset = 0,
+                    TextLength = checked((uint)data.Length)
+                }
+            ],
+            TextCueUtf8 = data,
+            TextCueTotal = 1
+        };
+        await using var runtime = new NativePlaybackRuntime(api);
+        var id = new PlaybackSessionId(Guid.NewGuid());
+        var context = new RuntimeCommandContext(id, new PlaybackEpoch(3));
+        await runtime.OpenAsync(new MediaLocator(MediaLocatorKind.File, "movie.mkv"),
+            context, CancellationToken.None);
+        await runtime.StartEmbeddedTextSubtitleLoadAsync(5, context, CancellationToken.None);
+
+        IEmbeddedTextSubtitleCueRuntime reader = runtime;
+        var page = await reader.ReadEmbeddedTextSubtitleCuesAsync(
+            0, context, CancellationToken.None);
+        Assert.Equal(EmbeddedTextSubtitleLoadState.Ready, page.State);
+        Assert.Equal(1U, page.Total);
+        Assert.Equal(new EmbeddedTextSubtitleCue(
+            1_123_456_789, 3_987_654_321, subtitleText), Assert.Single(page.Cues));
+        Assert.Equal(5U, api.TextCueSelectedStreamIndex);
+        Assert.Equal(3UL, api.LastEpoch.Value);
+        Assert.Contains("session_start_text_subtitle_load", api.Calls);
+        Assert.Contains("session_read_text_subtitle_cues", api.Calls);
+        Assert.DoesNotContain("session_seek", api.Calls);
+    }
+
+    [Fact]
+    public async Task CuePollingStatesDoNotPublishIncompleteOrFailedText()
+    {
+        var api = new FakeNativeApi { TextCueState = NativeTextSubtitleLoadState.Loading };
+        await using var runtime = new NativePlaybackRuntime(api);
+        var id = new PlaybackSessionId(Guid.NewGuid());
+        var context = new RuntimeCommandContext(id, new PlaybackEpoch(1));
+        await runtime.OpenAsync(new MediaLocator(MediaLocatorKind.File, "movie.mkv"),
+            context, CancellationToken.None);
+        var states = new[]
+        {
+            (NativeTextSubtitleLoadState.Loading, EmbeddedTextSubtitleLoadState.Loading),
+            (NativeTextSubtitleLoadState.Failed, EmbeddedTextSubtitleLoadState.Failed),
+            (NativeTextSubtitleLoadState.Cancelled, EmbeddedTextSubtitleLoadState.Cancelled),
+            (NativeTextSubtitleLoadState.LimitExceeded, EmbeddedTextSubtitleLoadState.LimitExceeded)
+        };
+        foreach (var (native, expected) in states)
+        {
+            api.TextCueState = native;
+            var page = await runtime.ReadEmbeddedTextSubtitleCuesAsync(
+                0, context, CancellationToken.None);
+            Assert.Equal(expected, page.State);
+            Assert.Empty(page.Cues);
+            Assert.Equal(0U, page.Total);
+        }
+    }
+
+    [Fact]
+    public async Task IncompatibleAndMissingCueExportsDoNotBreakBaseRuntime()
+    {
+        var api = new FakeNativeApi();
+        await using var runtime = new NativePlaybackRuntime(api);
+        var id = new PlaybackSessionId(Guid.NewGuid());
+        var context = new RuntimeCommandContext(id, new PlaybackEpoch(1));
+        await runtime.OpenAsync(new MediaLocator(MediaLocatorKind.File, "movie.mkv"),
+            context, CancellationToken.None);
+
+        api.HasTextCueVersionExport = false;
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await runtime.StartEmbeddedTextSubtitleLoadAsync(
+                1, context, CancellationToken.None));
+        Assert.Equal(0, api.TextCueStartCalls);
+
+        api.HasTextCueVersionExport = true;
+        api.TextCueVersion = 99;
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await runtime.ReadEmbeddedTextSubtitleCuesAsync(
+                0, context, CancellationToken.None));
+        Assert.Equal(0, api.TextCueReadCalls);
+
+        api.TextCueVersion = NativeAbi.TextSubtitleCuesVersion;
+        api.HasTextCueStartExport = false;
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await runtime.StartEmbeddedTextSubtitleLoadAsync(
+                1, context, CancellationToken.None));
+
+        api.HasTextCueReadExport = false;
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await runtime.ReadEmbeddedTextSubtitleCuesAsync(
+                0, context, CancellationToken.None));
+        Assert.Equal(1, api.SessionCreateCount);
+    }
+
+    [Fact]
+    public async Task CueReaderRejectsMaliciousCountsOffsetsUtf8AndTiming()
+    {
+        var api = new FakeNativeApi
+        {
+            TextCueDescriptors =
+            [
+                new NativeTextSubtitleCueInfo
+                {
+                    StartNanoseconds = 1, EndNanoseconds = 2,
+                    TextOffset = 0, TextLength = 1
+                }
+            ],
+            TextCueUtf8 = [(byte)'a'],
+            TextCueTotal = 1
+        };
+        await using var runtime = new NativePlaybackRuntime(api);
+        var id = new PlaybackSessionId(Guid.NewGuid());
+        var context = new RuntimeCommandContext(id, new PlaybackEpoch(1));
+        await runtime.OpenAsync(new MediaLocator(MediaLocatorKind.File, "movie.mkv"),
+            context, CancellationToken.None);
+
+        api.TextCueCountOverride = 17;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runtime.ReadEmbeddedTextSubtitleCuesAsync(
+                0, context, CancellationToken.None));
+
+        api.TextCueCountOverride = null;
+        api.TextCueTotal = 4097;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runtime.ReadEmbeddedTextSubtitleCuesAsync(
+                0, context, CancellationToken.None));
+
+        api.TextCueTotal = 1;
+        api.TextCueDescriptors[0].TextOffset = 5;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runtime.ReadEmbeddedTextSubtitleCuesAsync(
+                0, context, CancellationToken.None));
+
+        api.TextCueDescriptors[0].TextOffset = 0;
+        api.TextCueDescriptors[0].EndNanoseconds = 1;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runtime.ReadEmbeddedTextSubtitleCuesAsync(
+                0, context, CancellationToken.None));
+
+        api.TextCueDescriptors[0].EndNanoseconds = 2;
+        api.TextCueUtf8 = [0xFF];
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runtime.ReadEmbeddedTextSubtitleCuesAsync(
+                0, context, CancellationToken.None));
+
+        api.TextCueUtf8 = [(byte)'a'];
+        api.TextCueState = (NativeTextSubtitleLoadState)999;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runtime.ReadEmbeddedTextSubtitleCuesAsync(
+                0, context, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CueErrorsPropagateEpochAndStateWithoutPublishingText()
+    {
+        var api = new FakeNativeApi();
+        await using var runtime = new NativePlaybackRuntime(api);
+        var id = new PlaybackSessionId(Guid.NewGuid());
+        var context = new RuntimeCommandContext(id, new PlaybackEpoch(3));
+        await runtime.OpenAsync(new MediaLocator(MediaLocatorKind.File, "movie.mkv"),
+            context, CancellationToken.None);
+
+        api.TextCueStartResult = NativeResult.StaleEpoch;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runtime.StartEmbeddedTextSubtitleLoadAsync(
+                1, context, CancellationToken.None));
+
+        api.TextCueStartResult = NativeResult.Ok;
+        api.TextCueReadResult = NativeResult.InvalidState;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runtime.ReadEmbeddedTextSubtitleCuesAsync(
+                0, context, CancellationToken.None));
+
+        api.TextCueReadResult = NativeResult.BufferTooSmall;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runtime.ReadEmbeddedTextSubtitleCuesAsync(
+                0, context, CancellationToken.None));
+
+        api.TextCueReadResult = NativeResult.Ok;
+        await runtime.CloseAsync(
+            new RuntimeCommandContext(id, new PlaybackEpoch(4)),
+            CancellationToken.None);
+        api.TextCueReadResult = NativeResult.StaleEpoch;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runtime.ReadEmbeddedTextSubtitleCuesAsync(
+                0, context, CancellationToken.None));
+    }
+
     private sealed class FakeNativeApi : INativeMediaRuntimeApi
     {
         internal uint AbiVersion { get; set; } = NativeAbi.Version;
@@ -670,6 +913,21 @@ public sealed class NativePlaybackRuntimeTests
         internal uint DiagnosticVersion { get; set; } = NativeAbi.DiagnosticsVersion;
         internal uint NavigationVersion { get; set; } = NativeAbi.NavigationVersion;
         internal uint SubtitleVersion { get; set; } = NativeAbi.SubtitleTracksVersion;
+        internal uint TextCueVersion { get; set; } = NativeAbi.TextSubtitleCuesVersion;
+        internal bool HasTextCueVersionExport { get; set; } = true;
+        internal bool HasTextCueStartExport { get; set; } = true;
+        internal bool HasTextCueReadExport { get; set; } = true;
+        internal NativeResult TextCueStartResult { get; set; } = NativeResult.Ok;
+        internal NativeResult TextCueReadResult { get; set; } = NativeResult.Ok;
+        internal NativeTextSubtitleLoadState TextCueState { get; set; } = NativeTextSubtitleLoadState.Ready;
+        internal NativeTextSubtitleCueInfo[] TextCueDescriptors { get; set; } = [];
+        internal byte[] TextCueUtf8 { get; set; } = [];
+        internal uint TextCueTotal { get; set; }
+        internal uint? TextCueCountOverride { get; set; }
+        internal uint TextCueSelectedStreamIndex { get; private set; }
+        internal int TextCueStartCalls { get; private set; }
+        internal int TextCueReadCalls { get; private set; }
+
         internal bool HasSubtitleVersionExport { get; set; } = true;
         internal bool HasSubtitleQueryExport { get; set; } = true;
         internal NativeSubtitleTrackInfo[] SubtitleTracks { get; set; } = [];
@@ -706,6 +964,51 @@ public sealed class NativePlaybackRuntimeTests
                 throw new EntryPointNotFoundException("Feature query unsupported");
         public uint GetDiagnosticsApiVersion() => DiagnosticVersion;
         public uint GetNavigationApiVersion() => NavigationVersion;
+        public uint GetTextSubtitleCuesApiVersion() =>
+            HasTextCueVersionExport ? TextCueVersion :
+                throw new EntryPointNotFoundException("Optional cue version absent");
+
+        public NativeResult SessionStartTextSubtitleLoad(
+            nint session, NativePlaybackEpoch expectedEpoch, uint streamIndex)
+        {
+            if (!HasTextCueStartExport)
+                throw new EntryPointNotFoundException("Optional cue start absent");
+            Assert.Equal((nint)22, session);
+            Calls.Add("session_start_text_subtitle_load");
+            TextCueStartCalls++;
+            LastEpoch = expectedEpoch;
+            TextCueSelectedStreamIndex = streamIndex;
+            return TextCueStartResult;
+        }
+
+        public NativeResult SessionReadTextSubtitleCues(
+            nint session, NativePlaybackEpoch expectedEpoch, uint startIndex,
+            NativeTextSubtitleCueInfo[] cues, byte[] utf8,
+            out uint count, out uint total, out uint requiredTextBytes,
+            out NativeTextSubtitleLoadState state)
+        {
+            if (!HasTextCueReadExport)
+                throw new EntryPointNotFoundException("Optional cue read absent");
+            Assert.Equal((nint)22, session);
+            Assert.True(cues.Length <= NativeAbi.TextSubtitlePageCapacity);
+            Assert.True(utf8.Length <= NativeAbi.TextSubtitlePageBytes);
+            Calls.Add("session_read_text_subtitle_cues");
+            TextCueReadCalls++;
+            LastEpoch = expectedEpoch;
+            total = TextCueTotal;
+            state = TextCueState;
+            count = TextCueCountOverride ?? checked((uint)TextCueDescriptors.Length);
+            requiredTextBytes = checked((uint)TextCueUtf8.Length);
+            if (TextCueReadResult != NativeResult.Ok)
+                return TextCueReadResult;
+            // Caller buffer owns all bytes after P/Invoke returns.
+            Array.Copy(TextCueDescriptors, cues,
+                Math.Min(TextCueDescriptors.Length, cues.Length));
+            Array.Copy(TextCueUtf8, utf8,
+                Math.Min(TextCueUtf8.Length, utf8.Length));
+            return NativeResult.Ok;
+        }
+
         public uint GetSubtitleTracksApiVersion() =>
             HasSubtitleVersionExport ? SubtitleVersion :
             throw new EntryPointNotFoundException("Subtitle API absent");
