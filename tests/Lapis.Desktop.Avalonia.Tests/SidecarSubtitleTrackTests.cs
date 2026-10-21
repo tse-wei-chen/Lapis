@@ -1,3 +1,4 @@
+using System.Globalization;
 using Lapis.Desktop.Avalonia.Services;
 using Xunit;
 
@@ -99,5 +100,78 @@ public sealed class SidecarSubtitleTrackTests
         Assert.Equal("Second", track.At(TimeSpan.FromSeconds(1.5)));
         Assert.Equal("First", track.At(TimeSpan.FromSeconds(2)));
         Assert.Null(track.At(TimeSpan.FromSeconds(3)));
+    }
+
+    [Fact]
+    public async Task LocalizedSidecarsPreferExactLanguageThenParentThenUntagged()
+    {
+        var folder = Path.Combine(Path.GetTempPath(),
+            "lapis-language-subtitles-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var movie = Path.Combine(folder, "film.mp4");
+            await File.WriteAllTextAsync(Path.Combine(folder, "film.srt"),
+                "1\n00:00:01,000 --> 00:00:02,000\nDefault\n");
+            await File.WriteAllTextAsync(Path.Combine(folder, "film.zh.srt"),
+                "1\n00:00:01,000 --> 00:00:02,000\nChinese\n");
+            await File.WriteAllTextAsync(Path.Combine(folder, "film.zh-TW.srt"),
+                "1\n00:00:01,000 --> 00:00:02,000\n繁體中文\n");
+            await File.WriteAllTextAsync(Path.Combine(folder, "film.ja-JP.srt"),
+                "1\n00:00:01,000 --> 00:00:02,000\n日本語\n");
+
+            static string? AtOneSecond(SidecarSubtitleTrack t) =>
+                t.At(TimeSpan.FromSeconds(1.5));
+
+            Assert.Equal("繁體中文", AtOneSecond(
+                await SidecarSubtitleTrack.LoadForFileAsync(movie,
+                    CultureInfo.GetCultureInfo("zh-TW"))));
+            Assert.Equal("日本語", AtOneSecond(
+                await SidecarSubtitleTrack.LoadForFileAsync(movie,
+                    CultureInfo.GetCultureInfo("ja-JP"))));
+            File.Delete(Path.Combine(folder, "film.zh-TW.srt"));
+            Assert.Equal("Chinese", AtOneSecond(
+                await SidecarSubtitleTrack.LoadForFileAsync(movie,
+                    CultureInfo.GetCultureInfo("zh-TW"))));
+            File.Delete(Path.Combine(folder, "film.zh.srt"));
+            Assert.Equal("Default", AtOneSecond(
+                await SidecarSubtitleTrack.LoadForFileAsync(movie,
+                    CultureInfo.GetCultureInfo("zh-TW"))));
+            Assert.Equal("Default", AtOneSecond(
+                await SidecarSubtitleTrack.LoadForFileAsync(movie,
+                    CultureInfo.GetCultureInfo("fr-FR"))));
+        }
+        finally { Directory.Delete(folder, recursive: true); }
+    }
+
+    [Fact]
+    public async Task InvalidPreferredSubtitleDoesNotSuppressValidFallback()
+    {
+        var folder = Path.Combine(Path.GetTempPath(),
+            "lapis-language-fallback-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var movie = Path.Combine(folder, "title.mkv");
+            await File.WriteAllTextAsync(Path.Combine(folder, "title.ja-JP.srt"),
+                "not an SRT cue");
+            await File.WriteAllTextAsync(Path.Combine(folder, "title.srt"),
+                "1\n00:00:00,000 --> 00:00:10,000\nFallback\n");
+            var track = await SidecarSubtitleTrack.LoadForFileAsync(
+                movie, CultureInfo.GetCultureInfo("ja-JP"));
+            Assert.Equal("Fallback", track.At(TimeSpan.FromSeconds(3)));
+        }
+        finally { Directory.Delete(folder, recursive: true); }
+    }
+
+    [Fact]
+    public async Task CancelledSidecarLoadDoesNotBecomeAnEmptyTrack()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            SidecarSubtitleTrack.LoadForFileAsync(
+                Path.Combine(Path.GetTempPath(), "cancelled.mp4"),
+                CultureInfo.GetCultureInfo("zh-TW"), cancellation.Token));
     }
 }

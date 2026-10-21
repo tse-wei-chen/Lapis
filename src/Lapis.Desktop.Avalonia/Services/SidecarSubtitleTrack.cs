@@ -104,18 +104,52 @@ public sealed class SidecarSubtitleTrack
         TimeSpan.TryParseExact(text.Replace(',', '.'), @"hh\:mm\:ss\.fff",
             CultureInfo.InvariantCulture, out value);
 
+    /// <summary>
+    /// Prefer an exact UI-language sidecar (movie.zh-TW.srt), then its parent
+    /// language (movie.zh.srt), finally the legacy untagged movie.srt.
+    /// The caller may pass a culture explicitly for tests or user preferences.
+    /// Local files only; no directory scan or remote subtitle lookups.
+    /// </summary>
+    public static Task<SidecarSubtitleTrack> LoadForFileAsync(
+        string videoPath, CancellationToken cancellationToken = default) =>
+        LoadForFileAsync(videoPath, CultureInfo.CurrentUICulture, cancellationToken);
+
     public static async Task<SidecarSubtitleTrack> LoadForFileAsync(
-        string videoPath, CancellationToken cancellationToken = default)
+        string videoPath, CultureInfo preferredCulture,
+        CancellationToken cancellationToken = default)
     {
-        var candidate = Path.ChangeExtension(videoPath, ".srt");
+        ArgumentException.ThrowIfNullOrWhiteSpace(videoPath);
+        ArgumentNullException.ThrowIfNull(preferredCulture);
+
+        // Parse every candidate independently. A corrupt or oversized
+        // language-specific file must not hide a usable fallback subtitle.
+        for (var culture = preferredCulture; !string.IsNullOrEmpty(culture.Name);
+             culture = culture.Parent)
+        {
+            var tagged = Path.ChangeExtension(videoPath, $".{culture.Name}.srt");
+            var track = await TryLoadAsync(tagged, cancellationToken);
+            if (track.Count != 0) return track;
+        }
+
+        return await TryLoadAsync(Path.ChangeExtension(videoPath, ".srt"),
+            cancellationToken);
+    }
+
+    private static async Task<SidecarSubtitleTrack> TryLoadAsync(
+        string path, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         try
         {
-            if (!File.Exists(candidate) || new FileInfo(candidate).Length > 2_000_000)
+            if (!File.Exists(path) || new FileInfo(path).Length > 2_000_000)
                 return Empty;
-            var text = await File.ReadAllTextAsync(candidate, cancellationToken);
+
+            var text = await File.ReadAllTextAsync(path, cancellationToken);
             return Parse(text);
         }
         catch (IOException) { return Empty; }
         catch (UnauthorizedAccessException) { return Empty; }
+        // Cancellation is intentionally propagated, not interpreted as
+        // "no subtitles": a superseded Watch session must remain cancelled.
     }
 }

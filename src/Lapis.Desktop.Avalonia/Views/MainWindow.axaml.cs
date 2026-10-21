@@ -29,6 +29,10 @@ public sealed partial class MainWindow : Window
     private readonly Border _legacyLibraryHeader;
     private readonly Grid _legacyLibraryBody;
     private WatchChromeWindow? _watchChrome;
+    // Invalidated when the Watch screen closes or a new request supersedes it.
+    // Sidecar I/O is asynchronous and must not publish into a later session.
+    private long _watchGeneration;
+    private CancellationTokenSource? _subtitleLoadCancellation;
     private WindowState _windowStateBeforeWatch = WindowState.Normal;
     private readonly ScrollViewer _gridSurface;
     private readonly Border _listSurface;
@@ -623,6 +627,8 @@ public sealed partial class MainWindow : Window
 
     private async Task PlayLibraryItemAsync(LibraryCardViewModel card)
     {
+        if (_closeStarted || !_libraryPage.IsVisible) return;
+        var watchGeneration = ++_watchGeneration;
         var item = card.Item;
         try
         {
@@ -636,7 +642,9 @@ public sealed partial class MainWindow : Window
             WindowState = WindowState.FullScreen;
 
             await AwaitVideoSurfaceAsync();
+            if (watchGeneration != _watchGeneration) return;
             await _player.OpenAsync(source);
+            if (watchGeneration != _watchGeneration) return;
             if (!_player.CanTransport)
             {
                 _library.ReportError(_player.StatusText);
@@ -648,16 +656,28 @@ public sealed partial class MainWindow : Window
                 ? DiscPlaylistIndex.ListIdentifiers(item)
                     .Select(id => id + ".mpls").ToArray()
                 : [];
-            _watchChrome = new WatchChromeWindow(this, _player, playlists,
+            var chrome = new WatchChromeWindow(this, _player, playlists,
                 BackToLibraryAsync, ToggleWatchFullscreen);
+            _watchChrome = chrome;
             if (source.Kind == MediaLocatorKind.File)
             {
-                var track = await SidecarSubtitleTrack.LoadForFileAsync(source.Value);
-                _watchChrome?.SetSubtitleTrack(track);
+                var cancellation = new CancellationTokenSource();
+                _subtitleLoadCancellation = cancellation;
+                var track = await SidecarSubtitleTrack.LoadForFileAsync(
+                    source.Value, cancellation.Token);
+                // A slow subtitle read may finish after Back or a newer Watch.
+                if (watchGeneration == _watchGeneration &&
+                    ReferenceEquals(_watchChrome, chrome))
+                    chrome.SetSubtitleTrack(track);
             }
+        }
+        catch (OperationCanceledException) when (watchGeneration != _watchGeneration)
+        {
+            // Normal: Watch closed while the asynchronous sidecar was loading.
         }
         catch (Exception exception)
         {
+            if (watchGeneration != _watchGeneration) return;
             _library.ReportError($"無法播放收藏項目：{exception.Message}");
             try { await _player.CloseAsync(); }
             catch (Exception closeException)
@@ -678,6 +698,7 @@ public sealed partial class MainWindow : Window
 
     private void RestoreLibraryView()
     {
+        InvalidateWatchSubtitleLoad();
         _watchChrome?.Close();
         _watchChrome = null;
         WindowState = _windowStateBeforeWatch;
@@ -710,9 +731,21 @@ public sealed partial class MainWindow : Window
 
     private async Task BackToLibraryAsync()
     {
+        // Cancel background subtitle reads immediately, before native shutdown.
+        InvalidateWatchSubtitleLoad();
         // Native render worker is stopped/detached before hiding the host.
         await _player.CloseAsync();
         RestoreLibraryView();
+    }
+
+    private void InvalidateWatchSubtitleLoad()
+    {
+        ++_watchGeneration;
+        var cancellation = _subtitleLoadCancellation;
+        _subtitleLoadCancellation = null;
+        if (cancellation is null) return;
+        cancellation.Cancel();
+        cancellation.Dispose();
     }
 
     private async void OnClosing(object? sender, WindowClosingEventArgs args)
@@ -726,6 +759,7 @@ public sealed partial class MainWindow : Window
             // Native render worker joins before the persistent GPU HWND dies.
             _gamepadTimer.Stop();
             _gamepadTimer.Tick -= GamepadTick;
+            InvalidateWatchSubtitleLoad();
             _watchChrome?.Close();
             _watchChrome = null;
             await _player.DisposeAsync();
