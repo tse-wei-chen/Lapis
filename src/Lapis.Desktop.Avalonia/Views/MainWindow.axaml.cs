@@ -98,6 +98,14 @@ public sealed partial class MainWindow : Window
         var libraryFile = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Lapis", "Library", "catalog.v1.json");
+        // Black-box Windows E2E launches the shipped .exe with an isolated
+        // catalog. The override is ignored unless explicitly in E2E mode;
+        // normal users always keep their own real AppData catalog.
+        var e2eCatalog = Environment.GetEnvironmentVariable("LAPIS_E2E_CATALOG");
+        if (Environment.GetEnvironmentVariable("LAPIS_E2E_MODE") == "1" &&
+            !string.IsNullOrWhiteSpace(e2eCatalog) &&
+            Path.IsPathFullyQualified(e2eCatalog))
+            libraryFile = e2eCatalog;
         _library = new LibraryViewModel(new JsonMediaLibrary(libraryFile));
         _player = new PlayerViewModel(
             new NativePlayerPlaybackService(() => _videoSurface.OutputHandle));

@@ -71,7 +71,7 @@
       <Setter Property="Background" Value="#456075"/>
     </Style>
   </UserControl.Styles>
-  <Grid x:Name="BigPictureRoot" RowDefinitions="76,*,46"
+  <Grid x:Name="BigPictureRoot" AutomationProperties.AutomationId="Lapis.Library.Root" RowDefinitions="76,*,46"
         Background="#0A111C">
 
     <!-- Quiet console-style navigation that remains accessible from a couch. -->
@@ -99,10 +99,12 @@
         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10"
                     VerticalAlignment="Center">
           <Button Classes="bp-secondary" Content="＋ 影片"
+                  AutomationProperties.AutomationId="Lapis.Library.ImportVideo"
                   Click="Import_Click" AutomationProperties.Name="匯入影片"/>
           <Button Classes="bp-secondary" Content="＋ Blu-ray"
                   Click="ImportDisc_Click" AutomationProperties.Name="匯入完整 Blu-ray 資料夾"/>
           <Button Classes="bp-secondary" Content="☷ 管理"
+                  AutomationProperties.AutomationId="Lapis.Library.Manage"
                   Click="Manage_Click" AutomationProperties.Name="切換管理清單"/>
         </StackPanel>
       </Grid>
@@ -115,7 +117,7 @@
 
         <!-- Hero backdrop is sourced only from user-imported media artwork.
              It is not a fictitious poster or an external metadata scrape. -->
-        <Border x:Name="BigPictureHero" Height="310" ClipToBounds="True"
+        <Border x:Name="BigPictureHero" AutomationProperties.AutomationId="Lapis.Library.Hero" Height="310" ClipToBounds="True"
                 CornerRadius="16" Background="#142336"
                 BorderBrush="#33495F" BorderThickness="1"
                 IsVisible="{Binding HasFeaturedCard}">
@@ -137,6 +139,7 @@
                            FontSize="13" Foreground="#B6C6D5"/>
                 <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,15,0,0">
                   <Button Classes="bp-primary" Content="▶  開始播放"
+                          AutomationProperties.AutomationId="Lapis.Library.PlayFeatured"
                           Click="FeaturedPlay_Click" AutomationProperties.Name="播放選中影片"/>
                   <Button Classes="bp-secondary" Content="檢視收藏"
                           Click="Manage_Click"/>
