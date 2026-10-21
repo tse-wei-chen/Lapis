@@ -289,6 +289,56 @@ public sealed class DesktopPlaybackHostTests
         Assert.Equal("seek:2:2000000000", calls[^1]);
     }
 
+    [Fact]
+    public async Task RequestScopedCancelCannotStopNewerSelectionOrCrossSeekEpoch()
+    {
+        var calls = new List<string>();
+        var runtime = new FakeRuntime(calls);
+        await using var host = new DesktopPlaybackHost(
+            runtime, new FakeSurfaceBinding(calls));
+        await host.OpenAndPlayAsync("film.mkv", (nint)111);
+        var first = host.Snapshot;
+        Assert.True(await host.SupportsEmbeddedTextSubtitleCancellationAsync(first));
+
+        await host.StartEmbeddedTextSubtitleLoadWithIdAsync(3, 501, first);
+        await host.StartEmbeddedTextSubtitleLoadWithIdAsync(3, 502, first);
+        await host.CancelEmbeddedTextSubtitleLoadAsync(501, first);
+        Assert.Equal(502UL, runtime.ActiveSubtitleRequestId);
+        await host.CancelEmbeddedTextSubtitleLoadAsync(502, first);
+        Assert.Equal(0UL, runtime.ActiveSubtitleRequestId);
+        Assert.Equal(new ulong[] { 501, 502 }, runtime.CancelledSubtitleRequests);
+
+        await host.SeekAsync(TimeSpan.FromSeconds(4));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            host.CancelEmbeddedTextSubtitleLoadAsync(502, first));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            host.StartEmbeddedTextSubtitleLoadWithIdAsync(3, 503, first));
+        var second = host.Snapshot;
+        await host.StartEmbeddedTextSubtitleLoadWithIdAsync(3, 503, second);
+        Assert.Equal(503UL, runtime.ActiveSubtitleRequestId);
+        await host.CloseMediaAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            host.CancelEmbeddedTextSubtitleLoadAsync(503, second));
+    }
+
+    [Fact]
+    public async Task HostCanReportLegacyRuntimeWithoutCancellationExtension()
+    {
+        var calls = new List<string>();
+        var runtime = new FakeRuntime(calls)
+        {
+            SupportsEmbeddedTextSubtitleCancellation = false
+        };
+        await using var host = new DesktopPlaybackHost(
+            runtime, new FakeSurfaceBinding(calls));
+        await host.OpenAndPlayAsync("film.mkv", (nint)111);
+        Assert.False(await host.SupportsEmbeddedTextSubtitleCancellationAsync(
+            host.Snapshot));
+        // Legacy Cue ABI v1 still works.
+        await host.StartEmbeddedTextSubtitleLoadAsync(3, host.Snapshot);
+        Assert.Contains("subtitle-start:1", calls);
+    }
+
     private sealed class FakeSurfaceBinding(List<string> calls) : IVideoOutputSurfaceBinding
     {
         public bool ThrowOnDetach { get; set; }
@@ -319,15 +369,45 @@ public sealed class DesktopPlaybackHostTests
 
     private sealed class FakeRuntime(List<string> calls) :
         IPlaybackRuntime, IEmbeddedSubtitleTrackInventoryRuntime,
-        IEmbeddedTextSubtitleCueRuntime
+        IEmbeddedTextSubtitleCueRuntime, IEmbeddedTextSubtitleCancellationRuntime
     {
         public MediaLocator? LastLocator { get; private set; }
 
         public bool SupportsEmbeddedTextSubtitleCues { get; set; } = true;
+        public bool SupportsEmbeddedTextSubtitleCancellation { get; set; } = true;
+        public ulong ActiveSubtitleRequestId { get; private set; }
+        public List<ulong> CancelledSubtitleRequests { get; } = [];
+
         public List<RuntimeCommandContext> SubtitleContexts { get; } = [];
         public TaskCompletionSource SubtitleStartEntered { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource? WaitForSubtitleStart { get; set; }
+
+        public ValueTask StartEmbeddedTextSubtitleLoadWithIdAsync(
+            uint streamIndex, ulong requestId, RuntimeCommandContext context,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            SubtitleContexts.Add(context);
+            Assert.Equal(3U, streamIndex);
+            Assert.NotEqual(0UL, requestId);
+            ActiveSubtitleRequestId = requestId;
+            calls.Add($"subtitle-start-id:{requestId}:{context.Epoch.Value}");
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask CancelEmbeddedTextSubtitleLoadAsync(
+            ulong requestId, RuntimeCommandContext context,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            SubtitleContexts.Add(context);
+            CancelledSubtitleRequests.Add(requestId);
+            if (ActiveSubtitleRequestId == requestId)
+                ActiveSubtitleRequestId = 0;
+            calls.Add($"subtitle-cancel-id:{requestId}:{context.Epoch.Value}");
+            return ValueTask.CompletedTask;
+        }
 
         public ValueTask<IReadOnlyList<EmbeddedSubtitleTrack>> ReadEmbeddedSubtitleTracksAsync(
             RuntimeCommandContext context, CancellationToken cancellationToken)

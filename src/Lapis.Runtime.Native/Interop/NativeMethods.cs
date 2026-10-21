@@ -36,6 +36,22 @@ internal static partial class NativeMethods
     internal static partial NativeResult SessionStartTextSubtitleLoad(
         nint session, NativePlaybackEpoch expectedEpoch, uint streamIndex);
 
+    // Request-scoped cancellation is an optional extension to Cue ABI v1.
+    [LibraryImport(LibraryName, EntryPoint = "lapis_runtime_get_text_subtitle_cancel_api_version")]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    internal static partial uint RuntimeGetTextSubtitleCancelApiVersion();
+
+    [LibraryImport(LibraryName, EntryPoint = "lapis_session_start_text_subtitle_load_with_id")]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    internal static partial NativeResult SessionStartTextSubtitleLoadWithId(
+        nint session, NativePlaybackEpoch expectedEpoch, uint streamIndex,
+        ulong requestId);
+
+    [LibraryImport(LibraryName, EntryPoint = "lapis_session_cancel_text_subtitle_load")]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    internal static partial NativeResult SessionCancelTextSubtitleLoad(
+        nint session, NativePlaybackEpoch expectedEpoch, ulong requestId);
+
     [LibraryImport(LibraryName, EntryPoint = "lapis_session_read_text_subtitle_cues")]
     [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
     internal static unsafe partial NativeResult SessionReadTextSubtitleCues(

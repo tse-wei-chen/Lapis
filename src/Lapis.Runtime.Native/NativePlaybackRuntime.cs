@@ -27,7 +27,7 @@ public sealed class NativeMediaRuntimeException : Exception
 /// In-process adapter from the Application playback-runtime port to the stable
 /// native C ABI. One adapter instance binds to exactly one PlaybackSessionId.
 /// </summary>
-public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfaceBinding, IPlaybackRuntimeObserver, IChapterNavigationRuntime, IEmbeddedSubtitleTrackInventoryRuntime, IEmbeddedTextSubtitleCueRuntime
+public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfaceBinding, IPlaybackRuntimeObserver, IChapterNavigationRuntime, IEmbeddedSubtitleTrackInventoryRuntime, IEmbeddedTextSubtitleCueRuntime, IEmbeddedTextSubtitleCancellationRuntime
 {
     public bool SupportsEmbeddedTextSubtitleCues
     {
@@ -40,6 +40,28 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
                 {
                     return _api.GetTextSubtitleCuesApiVersion() ==
                         NativeAbi.TextSubtitleCuesVersion;
+                }
+                catch (EntryPointNotFoundException)
+                {
+                    return false;
+                }
+            }
+        }
+    }
+
+    public bool SupportsEmbeddedTextSubtitleCancellation
+    {
+        get
+        {
+            lock (_gate)
+            {
+                if (_disposed || _session is null) return false;
+                try
+                {
+                    return _api.GetTextSubtitleCuesApiVersion() ==
+                        NativeAbi.TextSubtitleCuesVersion &&
+                        _api.GetTextSubtitleCancelApiVersion() ==
+                        NativeAbi.TextSubtitleCancelVersion;
                 }
                 catch (EntryPointNotFoundException)
                 {
@@ -391,6 +413,102 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
                 cancellationToken.ThrowIfCancellationRequested();
             }
         }, cancellationToken));
+    }
+
+    /// <summary>
+    /// Request-scoped extension to the old text-cue loader. Replacing the
+    /// request uses the existing native Session / Epoch fence. A distinct,
+    /// nonzero ID must be supplied per user selection, including reloads
+    /// after Seek. Native I/O must not run on the Avalonia dispatcher.
+    /// </summary>
+    public ValueTask StartEmbeddedTextSubtitleLoadWithIdAsync(
+        uint streamIndex, ulong requestId, RuntimeCommandContext context,
+        CancellationToken cancellationToken)
+    {
+        if (requestId == 0) throw new ArgumentOutOfRangeException(nameof(requestId));
+        cancellationToken.ThrowIfCancellationRequested();
+        return new ValueTask(Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_gate)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ThrowIfDisposed();
+                var handle = RequireActiveSubtitleSession(context);
+                EnsureTextSubtitleCancelApiVersion();
+                NativeResult result;
+                try
+                {
+                    result = _api.SessionStartTextSubtitleLoadWithId(
+                        handle, new NativePlaybackEpoch { Value = context.Epoch.Value },
+                        streamIndex, requestId);
+                }
+                catch (EntryPointNotFoundException exception)
+                {
+                    throw new NotSupportedException(
+                        "The installed native runtime cannot start a cancellable subtitle load.",
+                        exception);
+                }
+                ThrowForResult(result, "session_start_text_subtitle_load_with_id");
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+        }, cancellationToken));
+    }
+
+    /// <summary>
+    /// Retire a specific native subtitle request without joining the decoder.
+    /// The native C ABI ignores stale request IDs within an otherwise valid
+    /// epoch; the existing gate orders this against Seek/Open/Close.
+    /// </summary>
+    public ValueTask CancelEmbeddedTextSubtitleLoadAsync(
+        ulong requestId, RuntimeCommandContext context,
+        CancellationToken cancellationToken)
+    {
+        if (requestId == 0) throw new ArgumentOutOfRangeException(nameof(requestId));
+        cancellationToken.ThrowIfCancellationRequested();
+        return new ValueTask(Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_gate)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ThrowIfDisposed();
+                var handle = RequireActiveSubtitleSession(context);
+                EnsureTextSubtitleCancelApiVersion();
+                NativeResult result;
+                try
+                {
+                    result = _api.SessionCancelTextSubtitleLoad(
+                        handle, new NativePlaybackEpoch { Value = context.Epoch.Value },
+                        requestId);
+                }
+                catch (EntryPointNotFoundException exception)
+                {
+                    throw new NotSupportedException(
+                        "The installed native runtime cannot cancel subtitle loading.",
+                        exception);
+                }
+                ThrowForResult(result, "session_cancel_text_subtitle_load");
+            }
+        }, cancellationToken));
+    }
+
+    private void EnsureTextSubtitleCancelApiVersion()
+    {
+        uint version;
+        try
+        {
+            version = _api.GetTextSubtitleCancelApiVersion();
+        }
+        catch (EntryPointNotFoundException exception)
+        {
+            throw new NotSupportedException(
+                "The installed native runtime predates request-scoped subtitle cancellation.",
+                exception);
+        }
+        if (version != NativeAbi.TextSubtitleCancelVersion)
+            throw new NotSupportedException(
+                $"Native text subtitle cancellation API version {version} is unsupported.");
     }
 
     /// <summary>

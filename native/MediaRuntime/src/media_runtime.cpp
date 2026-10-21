@@ -58,6 +58,7 @@ struct RuntimePlaybackPipeline final {
     lapis::media::MediaLocator subtitle_source;
     // Destroyed before execution/media: jthread stops and joins first.
     std::unique_ptr<lapis::media::AsyncTextSubtitleTimeline> subtitle_timeline;
+    uint64_t subtitle_request_id{0}; // Zero marks the legacy v1 loader.
 };
 
 } // namespace
@@ -375,6 +376,10 @@ uint32_t lapis_runtime_get_text_subtitle_cues_api_version(void) {
     return LAPIS_TEXT_SUBTITLE_CUES_API_VERSION;
 }
 
+uint32_t lapis_runtime_get_text_subtitle_cancel_api_version(void) {
+    return LAPIS_TEXT_SUBTITLE_CANCEL_API_VERSION;
+}
+
 lapis_result lapis_session_list_subtitle_tracks(
     lapis_session* session,
     lapis_playback_epoch expected_epoch,
@@ -441,9 +446,9 @@ lapis_result lapis_session_list_subtitle_tracks(
 }
 
 
-lapis_result lapis_session_start_text_subtitle_load(
+static lapis_result start_text_subtitle_load_impl(
     lapis_session* session, lapis_playback_epoch expected_epoch,
-    uint32_t stream_index) {
+    uint32_t stream_index, uint64_t request_id) {
     return guarded_result([&]() -> lapis_result {
         if (session == nullptr ||
             stream_index > static_cast<uint32_t>(std::numeric_limits<int>::max()))
@@ -483,6 +488,54 @@ lapis_result lapis_session_start_text_subtitle_load(
         pipeline->subtitle_timeline =
             std::make_unique<lapis::media::AsyncTextSubtitleTimeline>(
                 pipeline->subtitle_source, static_cast<int>(stream_index));
+        // Published only after construction succeeds. Session commands are
+        // serialized; a late cancel for an old request is a no-op.
+        pipeline->subtitle_request_id = request_id;
+        return LAPIS_OK;
+    });
+}
+
+lapis_result lapis_session_start_text_subtitle_load(
+    lapis_session* session, lapis_playback_epoch expected_epoch,
+    uint32_t stream_index) {
+    return start_text_subtitle_load_impl(session, expected_epoch, stream_index, 0);
+}
+
+lapis_result lapis_session_start_text_subtitle_load_with_id(
+    lapis_session* session, lapis_playback_epoch expected_epoch,
+    uint32_t stream_index, uint64_t request_id) {
+    if (request_id == 0) return LAPIS_E_INVALID_ARGUMENT;
+    return start_text_subtitle_load_impl(
+        session, expected_epoch, stream_index, request_id);
+}
+
+lapis_result lapis_session_cancel_text_subtitle_load(
+    lapis_session* session, lapis_playback_epoch expected_epoch,
+    uint64_t request_id) {
+    return guarded_result([&]() -> lapis_result {
+        if (session == nullptr || request_id == 0) return LAPIS_E_INVALID_ARGUMENT;
+
+        // Serialize against Open, Seek, Close and a new subtitle selection.
+        std::scoped_lock command_lock(session->command_mutex);
+        std::shared_ptr<RuntimePlaybackPipeline> pipeline;
+        {
+            std::scoped_lock lock(session->mutex);
+            if (!matches_epoch(*session, expected_epoch))
+                return LAPIS_E_STALE_EPOCH;
+            if (session->transport != LAPIS_TRANSPORT_READY &&
+                session->transport != LAPIS_TRANSPORT_PLAYING &&
+                session->transport != LAPIS_TRANSPORT_PAUSED &&
+                session->transport != LAPIS_TRANSPORT_ENDED)
+                return LAPIS_E_INVALID_STATE;
+            pipeline = session->pipeline;
+        }
+        if (pipeline == nullptr) return LAPIS_E_INVALID_STATE;
+
+        // A stale cancellation must never stop a newer choice (including
+        // reselecting the same track ID). No separate lock or freed pointer.
+        if (pipeline->subtitle_timeline != nullptr &&
+            pipeline->subtitle_request_id == request_id)
+            pipeline->subtitle_timeline->cancel(); // request_stop, no join
         return LAPIS_OK;
     });
 }
