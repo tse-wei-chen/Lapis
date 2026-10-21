@@ -105,8 +105,10 @@
                   <Button Classes="bp-primary" Content="▶  開始播放"
                           AutomationProperties.AutomationId="Lapis.Library.PlayFeatured"
                           Click="FeaturedPlay_Click" AutomationProperties.Name="播放選中影片"/>
-                  <Button Classes="bp-secondary" Content="管理收藏"
-                          Click="Manage_Click"/>
+                  <Button Classes="bp-secondary" Content="更多資訊"
+                          Click="FeaturedDetails_Click"
+                          AutomationProperties.AutomationId="Lapis.Library.FeaturedDetails"
+                          AutomationProperties.Name="檢視精選電影詳細資訊"/>
                 </StackPanel>
               </StackPanel>
               <Border Grid.Column="1" Width="392" Height="222"
@@ -286,10 +288,65 @@
                    FontSize="12" TextTrimming="CharacterEllipsis"
                    VerticalAlignment="Center"/>
         <TextBlock Grid.Column="1"
-                   Text="手把：左搖桿／方向鍵移動 · A 播放 · B 返回 · LB/RB 切分類 · Menu 管理   ｜   鍵盤：方向鍵／Enter／Esc"
+                   Text="手把：方向鍵選片 · A 詳情／確認 · B 返回 · LB/RB 切分類 · Menu 管理   ｜   鍵盤：方向鍵／Enter／Esc"
                    Foreground="#AEC0CF" FontSize="12"
                    VerticalAlignment="Center"/>
       </Grid>
     </Border>
+    <!-- Cinematic detail sheet: inspect a film before committing to playback. -->
+    <Grid x:Name="BigPictureDetailsOverlay" Grid.RowSpan="2" ZIndex="80"
+          IsVisible="False" Background="#E90A111C"
+          AutomationProperties.AutomationId="Lapis.Library.DetailOverlay">
+      <Border Background="#132235" BorderBrush="#3D566D" BorderThickness="1"
+              CornerRadius="18" Padding="44" Margin="35" MaxWidth="1050"
+              VerticalAlignment="Center" HorizontalAlignment="Center">
+        <Grid ColumnDefinitions="*,328" ColumnSpacing="28" MinHeight="380">
+          <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="16">
+            <TextBlock Text="你的電影收藏" FontSize="12" FontWeight="SemiBold"
+                       Foreground="#9DDDEE" LetterSpacing="2"/>
+            <TextBlock Text="{Binding FeaturedCard.Title}" FontSize="36"
+                       FontWeight="SemiBold" TextWrapping="Wrap"
+                       MaxLines="3" Foreground="#F7FAFD"/>
+            <StackPanel Orientation="Horizontal" Spacing="15">
+              <TextBlock Text="{Binding FeaturedCard.KindLabel}" FontSize="14"
+                         Foreground="#C4EAF6"/>
+              <TextBlock Text="{Binding FeaturedCard.AvailabilityLabel}"
+                         Foreground="#AFC2D1" FontSize="14"/>
+            </StackPanel>
+            <TextBlock Text="收藏資訊" FontSize="15" FontWeight="Medium"
+                       Margin="0,12,0,0" Foreground="#F0F5FA"/>
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <TextBlock Text="加入日期" FontSize="13" Foreground="#99AEC0"/>
+              <TextBlock Text="{Binding FeaturedCard.ImportedAtText}"
+                         FontSize="13" Foreground="#D9E8F3"/>
+            </StackPanel>
+            <TextBlock Text="資訊來自本機電影庫，沒有擅自下載外部電影資料。"
+                       TextWrapping="Wrap" FontSize="12"
+                       Foreground="#8FA5B8" MaxWidth="490"/>
+            <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,18,0,0">
+              <Button x:Name="BigPictureDetailsPlay" Classes="bp-primary"
+                      Content="▶  播放電影" Click="DetailsPlay_Click"
+                      IsEnabled="{Binding FeaturedCard.IsAvailable}"
+                      AutomationProperties.AutomationId="Lapis.Library.DetailPlay"
+                      AutomationProperties.Name="播放目前選取的電影"/>
+              <Button Classes="bp-secondary" Content="返回收藏庫"
+                      Click="DetailsClose_Click"
+                      AutomationProperties.AutomationId="Lapis.Library.DetailClose"
+                      AutomationProperties.Name="關閉電影詳細資訊"/>
+            </StackPanel>
+          </StackPanel>
+          <Border Grid.Column="1" Width="328" Height="328" CornerRadius="12"
+                  Background="#243448" ClipToBounds="True"
+                  VerticalAlignment="Center">
+            <Grid>
+              <Image Source="{Binding FeaturedCard.Poster}" Stretch="Uniform"/>
+              <TextBlock Text="L" IsVisible="{Binding FeaturedCard.ShowPlaceholder}"
+                         FontSize="85" Foreground="#637D96"
+                         HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Grid>
+          </Border>
+        </Grid>
+      </Border>
+    </Grid>
   </Grid>
 </UserControl>

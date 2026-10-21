@@ -352,6 +352,7 @@ public sealed partial class MainWindow : Window
 
     private void ShowLibraryManagement(bool show)
     {
+        if (show) _bigPicture.CloseDetails();
         _bigPicture.IsVisible = !show;
         _legacyLibraryHeader.IsVisible = true; // Keep the same physical header mounted.
         _legacyLibraryBody.IsVisible = show;
@@ -371,6 +372,7 @@ public sealed partial class MainWindow : Window
 
     private void GoBigPicture_Click(object? sender, RoutedEventArgs args)
     {
+        _bigPicture.CloseDetails();
         ShowLibraryManagement(false);
         _bigPicture.ResetScroll();
     }
@@ -389,6 +391,7 @@ public sealed partial class MainWindow : Window
 
     private void ShellNavigate(Action navigate)
     {
+        _bigPicture.CloseDetails();
         navigate();
         ShowLibraryManagement(false);
         _bigPicture.ResetScroll();

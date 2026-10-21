@@ -35,14 +35,14 @@
   <Grid x:Name="WatchChromeRoot" AutomationProperties.AutomationId="Lapis.Watch.Root" RowDefinitions="Auto,*,Auto"
         Background="Transparent" PointerMoved="WatchPointerMoved">
     <Border x:Name="WatchHeader" Grid.Row="0"
-            Padding="20,14" Background="#C60A1018">
+            Padding="20,14" Background="#D40A1018">
       <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
         <Button Classes="watch-action" Content="← 收藏庫" AutomationProperties.AutomationId="Lapis.Watch.Back" Click="Back_Click"
                 AutomationProperties.Name="返回收藏庫"/>
         <TextBlock Grid.Column="1" Text="{Binding MediaTitle}"
                    TextTrimming="CharacterEllipsis" FontWeight="SemiBold"
                    FontSize="17" Foreground="#EEF7FF" VerticalAlignment="Center"/>
-        <Button Grid.Column="2" Classes="watch-action" Content="☷ 光碟資訊"
+        <Button Grid.Column="2" Classes="watch-action" Content="播放清單"
                 x:Name="WatchDiscToggle" Click="Disc_Click"
                 AutomationProperties.Name="顯示或關閉光碟導覽"/>
       </Grid>
@@ -102,7 +102,7 @@
     </Border>
 
     <Border x:Name="WatchControls" AutomationProperties.AutomationId="Lapis.Watch.Controls" Grid.Row="2" Padding="22,17"
-            Background="#DC0A121C">
+            Background="#E50A121C">
       <StackPanel Spacing="11">
         <Slider x:Name="WatchTimeline" AutomationProperties.AutomationId="Lapis.Watch.Timeline" Minimum="0"
                 Maximum="{Binding SeekDurationSeconds}"
@@ -111,9 +111,19 @@
                 AutomationProperties.Name="影片時間軸"/>
         <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto"
               ColumnSpacing="9">
-          <Button Grid.Column="0" Classes="watch-action" Content="◀ 10s"
+          <Button Grid.Column="0" Classes="watch-action" Width="69"
                   Command="{Binding BackCommand}" IsEnabled="{Binding CanSeek}"
-                  AutomationProperties.Name="後退十秒"/>
+                  ToolTip.Tip="後退 10 秒 (← / J)"
+                  AutomationProperties.Name="後退十秒">
+            <Grid Width="36" Height="25">
+              <Path Data="M15,4 L9,9 L15,13 M10,9 C12,5 20,5 22,11 C25,17 20,22 15,22 C11,22 8,20 6,17"
+                    Stroke="#F0F7FA" StrokeThickness="2"
+                    StrokeLineCap="Round" StrokeJoin="Round" Fill="Transparent"/>
+              <TextBlock Text="10" FontSize="9" FontWeight="Bold"
+                         VerticalAlignment="Center" HorizontalAlignment="Center"
+                         Margin="10,2,0,0"/>
+            </Grid>
+          </Button>
           <!-- Vector Play/Pause switches with the native transport snapshot. -->
           <Button Grid.Column="1" Classes="watch-action watch-primary"
                   AutomationProperties.AutomationId="Lapis.Watch.PlayPause"
@@ -131,9 +141,19 @@
                     Fill="#10212E" IsVisible="{Binding IsNotPlaying}"/>
             </Grid>
           </Button>
-          <Button Grid.Column="2" Classes="watch-action" Content="10s ▶"
+          <Button Grid.Column="2" Classes="watch-action" Width="69"
                   Command="{Binding ForwardCommand}" IsEnabled="{Binding CanSeek}"
-                  AutomationProperties.Name="前進十秒"/>
+                  ToolTip.Tip="前進 10 秒 (→ / L)"
+                  AutomationProperties.Name="前進十秒">
+            <Grid Width="36" Height="25">
+              <Path Data="M21,4 L27,9 L21,13 M26,9 C24,5 16,5 14,11 C11,17 16,22 21,22 C25,22 28,20 30,17"
+                    Stroke="#F0F7FA" StrokeThickness="2"
+                    StrokeLineCap="Round" StrokeJoin="Round" Fill="Transparent"/>
+              <TextBlock Text="10" FontSize="9" FontWeight="Bold"
+                         VerticalAlignment="Center" HorizontalAlignment="Center"
+                         Margin="0,2,10,0"/>
+            </Grid>
+          </Button>
           <TextBlock Grid.Column="3" Text="{Binding PositionText}"
                      VerticalAlignment="Center" Margin="10,0"
                      Foreground="#F2F5FA" FontSize="13"/>
@@ -142,12 +162,23 @@
                     VerticalAlignment="Center"
                     AutomationProperties.Name="選擇字幕語言或關閉字幕"
                     ToolTip.Tip="切換本機 SRT 字幕；自動依介面語言選擇"/>
-          <Button Grid.Column="5" Classes="watch-action" Content="☷"
+          <Button Grid.Column="5" Classes="watch-action" Width="48"
                   Click="Disc_Click" x:Name="WatchDiscBottom"
-                  AutomationProperties.Name="播放清單資訊"/>
-          <Button Grid.Column="6" Classes="watch-action" Content="⛶"
-                  Click="Fullscreen_Click"
-                  AutomationProperties.Name="切換全螢幕"/>
+                  ToolTip.Tip="Blu-ray 播放清單"
+                  AutomationProperties.Name="播放清單資訊">
+            <Path Data="M4,6 L20,6 M4,12 L20,12 M4,18 L15,18"
+                  Width="22" Height="22" Stretch="Uniform"
+                  Stroke="#F0F7FA" StrokeThickness="2"
+                  StrokeLineCap="Round" Fill="Transparent"/>
+          </Button>
+          <Button Grid.Column="6" Classes="watch-action" Width="48"
+                  Click="Fullscreen_Click" ToolTip.Tip="切換全螢幕 (F)"
+                  AutomationProperties.Name="切換全螢幕">
+            <Path Data="M9,3 L3,3 L3,9 M15,3 L21,3 L21,9 M3,15 L3,21 L9,21 M21,15 L21,21 L15,21"
+                  Width="22" Height="22" Stretch="Uniform"
+                  Stroke="#F0F7FA" StrokeThickness="2"
+                  StrokeLineCap="Round" StrokeJoin="Round" Fill="Transparent"/>
+          </Button>
         </Grid>
       </StackPanel>
     </Border>
