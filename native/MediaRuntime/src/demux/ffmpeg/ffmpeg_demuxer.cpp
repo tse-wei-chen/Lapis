@@ -38,6 +38,20 @@ bool checked_add(
 
 FfmpegDemuxer::FfmpegDemuxer() = default;
 
+void FfmpegDemuxer::request_interrupt() noexcept {
+    read_interrupt_requested_.store(true, std::memory_order_release);
+}
+
+void FfmpegDemuxer::reset_interrupt() noexcept {
+    read_interrupt_requested_.store(false, std::memory_order_release);
+}
+
+int FfmpegDemuxer::interrupt_callback(void* opaque) noexcept {
+    if (opaque == nullptr) return 0;
+    const auto* self = static_cast<const FfmpegDemuxer*>(opaque);
+    return self->read_interrupt_requested_.load(std::memory_order_acquire) ? 1 : 0;
+}
+
 FfmpegDemuxer::~FfmpegDemuxer() {
     av_packet_free(&pending_packet_);
     if (format_ != nullptr) {
@@ -51,7 +65,7 @@ bool FfmpegDemuxer::open(IMediaByteStream& stream, std::string_view demux_hint) 
         return false;
     }
 
-    auto io = std::make_unique<FfmpegIoContext>(stream);
+    auto io = std::make_unique<FfmpegIoContext>(stream, read_interrupt_requested_);
     if (!io->valid()) {
         return false;
     }
@@ -63,6 +77,8 @@ bool FfmpegDemuxer::open(IMediaByteStream& stream, std::string_view demux_hint) 
 
     context->pb = io->get();
     context->flags |= AVFMT_FLAG_CUSTOM_IO;
+    context->interrupt_callback.callback = &FfmpegDemuxer::interrupt_callback;
+    context->interrupt_callback.opaque = this;
 
     const std::string hint(demux_hint);
     const char* url_hint = hint.empty() ? nullptr : hint.c_str();
@@ -233,6 +249,9 @@ std::optional<FfmpegSubtitleStreamInfo> FfmpegDemuxer::text_subtitle_stream(
 }
 
 int FfmpegDemuxer::read_packet(AVPacket& packet) {
+    if (read_interrupt_requested_.load(std::memory_order_acquire)) {
+        return AVERROR_EXIT;
+    }
     if (format_ == nullptr) {
         return AVERROR(EINVAL);
     }
@@ -248,6 +267,8 @@ bool FfmpegDemuxer::seek(MediaTime target, int stream_index) {
     if (format_ == nullptr || target.nanoseconds < 0) {
         return false;
     }
+    // Only called after the previous packet router has been joined.
+    reset_interrupt();
 
     std::int64_t absolute_target_ns{};
     if (!checked_add(
@@ -279,12 +300,23 @@ bool FfmpegDemuxer::seek(MediaTime target, int stream_index) {
         stream_index = -1;
     }
 
-    const auto status = av_seek_frame(
+    int status = av_seek_frame(
         format_, stream_index, timestamp, AVSEEK_FLAG_BACKWARD);
     const auto* input_format = format_->iformat;
     const bool is_y4m = input_format != nullptr &&
         input_format->name != nullptr &&
         std::strcmp(input_format->name, "yuv4mpegpipe") == 0;
+
+    // Unindexed transport streams (including clear BDMV) may reject a
+    // stream-specific seek while accepting a demuxer-global timestamp seek.
+    if (status < 0 && !is_y4m) {
+        const auto global_timestamp = av_rescale_q(
+            absolute_target_ns, AVRational{1, 1'000'000'000}, AV_TIME_BASE_Q);
+        status = avformat_seek_file(
+            format_, -1, std::numeric_limits<std::int64_t>::min(),
+            global_timestamp, std::numeric_limits<std::int64_t>::max(),
+            AVSEEK_FLAG_BACKWARD);
+    }
 
     // Ordinary indexed containers preserve FFmpeg's native seek behavior.
     if (!is_y4m || target.nanoseconds == 0 || stream_index < 0) {

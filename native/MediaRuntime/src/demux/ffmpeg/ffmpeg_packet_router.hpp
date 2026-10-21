@@ -21,6 +21,10 @@ class IFfmpegPacketSource {
 public:
     virtual ~IFfmpegPacketSource() = default;
     virtual int read_packet(AVPacket& packet) = 0;
+    // Request cancellation from a thread other than the demux worker.
+    // Reset is called only after the previous generation has joined.
+    virtual void request_interrupt() noexcept {}
+    virtual void reset_interrupt() noexcept {}
 };
 
 class FfmpegPacket final {

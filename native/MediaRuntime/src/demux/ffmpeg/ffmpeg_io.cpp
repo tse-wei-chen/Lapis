@@ -33,8 +33,9 @@ int stream_error_to_av(StreamError error) noexcept {
 
 } // namespace
 
-FfmpegIoContext::FfmpegIoContext(IMediaByteStream& stream)
-    : stream_(stream) {
+FfmpegIoContext::FfmpegIoContext(
+    IMediaByteStream& stream, const std::atomic<bool>& interrupt_requested)
+    : stream_(stream), interrupt_requested_(interrupt_requested) {
     auto* buffer = static_cast<std::uint8_t*>(av_malloc(IoBufferSize));
     if (buffer == nullptr) {
         return;
@@ -74,10 +75,16 @@ int FfmpegIoContext::read_packet(void* opaque, std::uint8_t* buffer, int buffer_
     }
 
     auto& self = *static_cast<FfmpegIoContext*>(opaque);
+    if (self.interrupt_requested_.load(std::memory_order_acquire)) {
+        return AVERROR_EXIT;
+    }
     auto bytes = std::span<std::byte>(
         reinterpret_cast<std::byte*>(buffer),
         static_cast<std::size_t>(buffer_size));
     const auto result = self.stream_.read(bytes);
+    if (self.interrupt_requested_.load(std::memory_order_acquire)) {
+        return AVERROR_EXIT;
+    }
 
     if (!result.ok()) {
         return stream_error_to_av(result.error);
@@ -96,6 +103,9 @@ std::int64_t FfmpegIoContext::seek(void* opaque, std::int64_t offset, int whence
     }
 
     auto& self = *static_cast<FfmpegIoContext*>(opaque);
+    if (self.interrupt_requested_.load(std::memory_order_acquire)) {
+        return AVERROR_EXIT;
+    }
 
     if ((whence & AVSEEK_SIZE) != 0) {
         const auto stream_size = self.stream_.size();

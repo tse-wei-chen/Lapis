@@ -8,10 +8,12 @@ extern "C" {
 #include <array>
 #include <cerrno>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <future>
 #include <iostream>
+#include <mutex>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -55,6 +57,44 @@ public:
 private:
     std::vector<PacketEvent> events_;
     std::size_t cursor_{};
+};
+
+// Models an AVIO read which can only return after the router explicitly
+// requests an interrupt. A stop token alone cannot wake this source.
+class InterruptiblePacketSource final : public lapis::media::ffmpeg::IFfmpegPacketSource {
+public:
+    int read_packet(AVPacket&) override {
+        std::unique_lock lock(mutex_);
+        ++entered_count_;
+        changed_.notify_all();
+        changed_.wait(lock, [this] { return interrupted_; });
+        return AVERROR_EXIT;
+    }
+
+    void request_interrupt() noexcept override {
+        {
+            std::scoped_lock lock(mutex_);
+            interrupted_ = true;
+        }
+        changed_.notify_all();
+    }
+
+    void reset_interrupt() noexcept override {
+        std::scoped_lock lock(mutex_);
+        interrupted_ = false;
+    }
+
+    [[nodiscard]] bool wait_for_read(int count) {
+        std::unique_lock lock(mutex_);
+        return changed_.wait_for(lock, std::chrono::seconds(2),
+            [this, count] { return entered_count_ >= count; });
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable changed_;
+    bool interrupted_{};
+    int entered_count_{};
 };
 
 bool consume_stream(
@@ -162,6 +202,20 @@ int main() {
     blocked_router.stop();
     CHECK(std::chrono::steady_clock::now() - stop_started < 1s);
     CHECK(blocked_router.state() == FfmpegPacketRouterState::Stopped);
+
+    // Regression: seek/close must not wait forever in av_read_frame(), and an
+    // interrupted generation is Stopped rather than a spurious decode fault.
+    // Starting the next epoch must clear the old interrupt before reading.
+    InterruptiblePacketSource interruptible_source;
+    FfmpegPacketRouter interruptible_router(interruptible_source, {1}, 1);
+    for (int generation = 1; generation <= 2; ++generation) {
+        interruptible_router.start();
+        CHECK(interruptible_source.wait_for_read(generation));
+        const auto started = std::chrono::steady_clock::now();
+        interruptible_router.stop();
+        CHECK(std::chrono::steady_clock::now() - started < 1s);
+        CHECK(interruptible_router.state() == FfmpegPacketRouterState::Stopped);
+    }
 
     return 0;
 }

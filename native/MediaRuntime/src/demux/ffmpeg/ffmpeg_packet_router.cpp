@@ -96,6 +96,7 @@ void FfmpegPacketRouter::start() {
         FfmpegPacketRouterState::Running,
         std::memory_order_release);
     generation_ = generation;
+    source_.reset_interrupt();
 
     try {
         worker_ = std::jthread(
@@ -123,6 +124,7 @@ void FfmpegPacketRouter::stop() noexcept {
         }
 
         worker_.request_stop();
+        source_.request_interrupt();
         worker_.join();
     } catch (...) {
         if (generation != nullptr) {
@@ -199,6 +201,10 @@ void FfmpegPacketRouter::run(
         while (!stop_token.stop_requested()) {
             FfmpegPacket packet;
             const auto read_result = source_.read_packet(packet.get());
+            // An interrupted av_read_frame() is normal when retiring an Epoch.
+            if (stop_token.stop_requested()) {
+                break;
+            }
             if (read_result == AVERROR_EOF) {
                 final_state = FfmpegPacketRouterState::Drained;
                 break;

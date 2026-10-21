@@ -2,6 +2,7 @@
 
 #include "source/media_source.hpp"
 
+#include <atomic>
 #include <cstdint>
 
 struct AVIOContext;
@@ -10,7 +11,8 @@ namespace lapis::media::ffmpeg {
 
 class FfmpegIoContext final {
 public:
-    explicit FfmpegIoContext(IMediaByteStream& stream);
+    FfmpegIoContext(IMediaByteStream& stream,
+                    const std::atomic<bool>& interrupt_requested);
     ~FfmpegIoContext();
 
     FfmpegIoContext(const FfmpegIoContext&) = delete;
@@ -24,6 +26,7 @@ private:
     static std::int64_t seek(void* opaque, std::int64_t offset, int whence);
 
     IMediaByteStream& stream_;
+    const std::atomic<bool>& interrupt_requested_;
     AVIOContext* context_{};
 };
 
