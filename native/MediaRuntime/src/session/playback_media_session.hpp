@@ -43,7 +43,7 @@ struct MediaDecodeSelection final {
     bool video{};
     bool audio{};
     // Explicit opt-in. Never attach an unconsumed subtitle queue by default.
-    std::optional<int> subtitle_stream_index;
+    std::optional<int> subtitle_stream_index{};
 };
 
 class PlaybackMediaSession final {
