@@ -135,6 +135,77 @@ public sealed class SidecarSubtitleTrack
             cancellationToken);
     }
 
+    /// <summary>
+    /// One local SRT sidecar. The displayed name is the filename so that even
+    /// nonstandard language tags remain intelligible to the user.
+    /// </summary>
+    public sealed record LocalSubtitleFile(string FilePath, string DisplayName);
+
+    /// <summary>
+    /// Discover a small, bounded list of sidecars next to the movie without
+    /// blocking the Avalonia UI thread. Only exact movie.srt or
+    /// movie.{language-tag}.srt names are exposed.
+    /// </summary>
+    public static Task<IReadOnlyList<LocalSubtitleFile>> DiscoverForFileAsync(
+        string videoPath, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(videoPath);
+        return Task.Run<IReadOnlyList<LocalSubtitleFile>>(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var directory = Path.GetDirectoryName(videoPath);
+            if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
+                return Array.Empty<LocalSubtitleFile>();
+
+            var basename = Path.GetFileNameWithoutExtension(videoPath);
+            var items = new List<LocalSubtitleFile>(32);
+            try
+            {
+                foreach (var path in Directory.EnumerateFiles(
+                    directory, basename + "*.srt", SearchOption.TopDirectoryOnly))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var filename = Path.GetFileName(path);
+                    var untagged = basename + ".srt";
+                    if (!filename.Equals(untagged, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var prefix = basename + ".";
+                        if (!filename.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
+                            !filename.EndsWith(".srt", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        var tag = filename.Substring(prefix.Length,
+                            filename.Length - prefix.Length - 4);
+                        if (tag.Length is < 2 or > 35 ||
+                            !tag.All(c => char.IsAsciiLetterOrDigit(c) || c == '-'))
+                            continue;
+                    }
+
+                    // No stat/read during discovery; loading remains guarded by
+                    // the 2 MiB limit and parser validity checks.
+                    items.Add(new LocalSubtitleFile(path, filename));
+                    if (items.Count == 32) break;
+                }
+            }
+            catch (IOException) { return Array.Empty<LocalSubtitleFile>(); }
+            catch (UnauthorizedAccessException) { return Array.Empty<LocalSubtitleFile>(); }
+
+            return items.OrderBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }, cancellationToken);
+    }
+
+    /// <summary>Load exactly the selected local file, without culture fallback.</summary>
+    public static Task<SidecarSubtitleTrack> LoadExactFileAsync(
+        string subtitlePath, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(subtitlePath);
+        if (!string.Equals(Path.GetExtension(subtitlePath), ".srt",
+                StringComparison.OrdinalIgnoreCase))
+            return Task.FromResult(Empty);
+        return TryLoadAsync(subtitlePath, cancellationToken);
+    }
+
     private static async Task<SidecarSubtitleTrack> TryLoadAsync(
         string path, CancellationToken cancellationToken)
     {

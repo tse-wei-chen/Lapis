@@ -101,7 +101,7 @@
                 Value="{Binding SeekPositionSeconds, Mode=TwoWay}"
                 IsEnabled="{Binding CanScrub}"
                 AutomationProperties.Name="影片時間軸"/>
-        <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto"
+        <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto"
               ColumnSpacing="9">
           <Button Grid.Column="0" Classes="watch-action" Content="◀ 10s"
                   Command="{Binding BackCommand}" IsEnabled="{Binding CanSeek}"
@@ -117,10 +117,15 @@
           <TextBlock Grid.Column="3" Text="{Binding PositionText}"
                      VerticalAlignment="Center" Margin="10,0"
                      Foreground="#F2F5FA" FontSize="13"/>
-          <Button Grid.Column="4" Classes="watch-action" Content="☷"
+          <ComboBox Grid.Column="4" x:Name="WatchSubtitlePicker"
+                    IsVisible="False" MinWidth="126" MaxWidth="210"
+                    VerticalAlignment="Center"
+                    AutomationProperties.Name="選擇字幕語言或關閉字幕"
+                    ToolTip.Tip="切換本機 SRT 字幕；自動依介面語言選擇"/>
+          <Button Grid.Column="5" Classes="watch-action" Content="☷"
                   Click="Disc_Click" x:Name="WatchDiscBottom"
                   AutomationProperties.Name="播放清單資訊"/>
-          <Button Grid.Column="5" Classes="watch-action" Content="⛶"
+          <Button Grid.Column="6" Classes="watch-action" Content="⛶"
                   Click="Fullscreen_Click"
                   AutomationProperties.Name="切換全螢幕"/>
         </Grid>

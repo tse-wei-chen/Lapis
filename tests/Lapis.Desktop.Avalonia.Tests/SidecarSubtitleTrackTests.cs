@@ -174,4 +174,82 @@ public sealed class SidecarSubtitleTrackTests
                 Path.Combine(Path.GetTempPath(), "cancelled.mp4"),
                 CultureInfo.GetCultureInfo("zh-TW"), cancellation.Token));
     }
+
+    [Fact]
+    public async Task DiscoversOnlyThisMovieSidecarsWithStableLanguageChoices()
+    {
+        var root = Path.Combine(Path.GetTempPath(),
+            "lapis-subtitle-picker-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var video = Path.Combine(root, "film.mp4");
+            foreach (var name in new[]
+            {
+                "film.srt", "film.ja-JP.srt", "film.zh-TW.srt",
+                "other.zh-TW.srt", "film.zh_TW.srt", "film.en.ass",
+                "filming.en.srt", "film.zh-TW.backup.srt"
+            })
+                await File.WriteAllTextAsync(Path.Combine(root, name),
+                    "1\n00:00:00,000 --> 00:00:02,000\nSubtitle\n");
+
+            var options = await SidecarSubtitleTrack.DiscoverForFileAsync(video);
+            Assert.Equal(new[] { "film.ja-JP.srt", "film.srt", "film.zh-TW.srt" },
+                options.Select(option => option.DisplayName).ToArray());
+            Assert.All(options, option => Assert.Equal(root,
+                Path.GetDirectoryName(option.FilePath)));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task ExplicitSelectionUsesChosenLanguageWithoutAutoFallback()
+    {
+        var root = Path.Combine(Path.GetTempPath(),
+            "lapis-subtitle-explicit-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var video = Path.Combine(root, "movie.mkv");
+            var defaultFile = Path.Combine(root, "movie.srt");
+            var jaFile = Path.Combine(root, "movie.ja-JP.srt");
+            await File.WriteAllTextAsync(defaultFile,
+                "1\n00:00:00,000 --> 00:00:02,000\nDefault\n");
+            await File.WriteAllTextAsync(jaFile,
+                "1\n00:00:00,000 --> 00:00:02,000\nJapanese\n");
+            var options = await SidecarSubtitleTrack.DiscoverForFileAsync(video);
+            var selected = Assert.Single(options,
+                file => file.DisplayName == "movie.ja-JP.srt");
+            var loaded = await SidecarSubtitleTrack.LoadExactFileAsync(selected.FilePath);
+            Assert.Equal("Japanese", loaded.At(TimeSpan.FromSeconds(1)));
+            File.Delete(jaFile);
+            Assert.Equal(0, (await SidecarSubtitleTrack.LoadExactFileAsync(jaFile)).Count);
+            Assert.Equal("Default", (await SidecarSubtitleTrack.LoadForFileAsync(
+                video, CultureInfo.GetCultureInfo("ja-JP"))).At(TimeSpan.FromSeconds(1)));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task DiscoversAtMost32ChoicesAndHonorsCancellation()
+    {
+        var root = Path.Combine(Path.GetTempPath(),
+            "lapis-subtitle-cap-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var video = Path.Combine(root, "series.mkv");
+            for (var i = 0; i < 50; ++i)
+                await File.WriteAllTextAsync(
+                    Path.Combine(root, $"series.language{i:00}.srt"), "");
+            var options = await SidecarSubtitleTrack.DiscoverForFileAsync(video);
+            Assert.Equal(32, options.Count);
+
+            using var cancelled = new CancellationTokenSource();
+            cancelled.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => SidecarSubtitleTrack.DiscoverForFileAsync(video, cancelled.Token));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
 }
