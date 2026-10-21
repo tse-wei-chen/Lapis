@@ -49,4 +49,55 @@ public sealed class SidecarSubtitleTrackTests
         }
         finally { Directory.Delete(root, recursive: true); }
     }
+
+    [Fact]
+    public void NestedOverlapsKeepEarlierCueVisibleAfterLaterCueExpires()
+    {
+        // Sorted by start does NOT mean sorted by end.
+        // Previously a query at 5s could return null instead of "Long".
+        var track = SidecarSubtitleTrack.Parse(
+            "1\n00:00:00,000 --> 00:00:10,000\nLong\n\n" +
+            "2\n00:00:01,000 --> 00:00:02,000\nShort\n\n" +
+            "3\n00:00:03,000 --> 00:00:04,000\nLater\n");
+
+        Assert.Equal(3, track.Count);
+        Assert.Null(track.At(TimeSpan.FromMilliseconds(-1)));
+        Assert.Equal("Long", track.At(TimeSpan.Zero));
+        Assert.Equal("Short", track.At(TimeSpan.FromSeconds(1.5)));
+        Assert.Equal("Long", track.At(TimeSpan.FromSeconds(2))); // exclusive End
+        Assert.Equal("Later", track.At(TimeSpan.FromSeconds(3.5)));
+        Assert.Equal("Long", track.At(TimeSpan.FromSeconds(4)));
+        Assert.Equal("Long", track.At(TimeSpan.FromSeconds(9.999)));
+        Assert.Null(track.At(TimeSpan.FromSeconds(10)));
+    }
+
+    [Fact]
+    public void FindsMostRecentStillActiveCueAcrossOutOfOrderCuesAndSeeks()
+    {
+        var track = SidecarSubtitleTrack.Parse(
+            "1\n00:00:03,000 --> 00:00:04,000\nNewest\n\n" +
+            "2\n00:00:00,000 --> 00:00:10,000\nBackground\n\n" +
+            "3\n00:00:02,000 --> 00:00:08,000\nMiddle\n");
+
+        // Seek back/forth over overlapping and nested intervals.
+        Assert.Equal("Middle", track.At(TimeSpan.FromSeconds(5)));
+        Assert.Equal("Newest", track.At(TimeSpan.FromSeconds(3.5)));
+        Assert.Equal("Middle", track.At(TimeSpan.FromSeconds(4)));
+        Assert.Equal("Background", track.At(TimeSpan.FromSeconds(8)));
+        Assert.Equal("Middle", track.At(TimeSpan.FromSeconds(2)));
+        Assert.Equal("Background", track.At(TimeSpan.FromSeconds(1)));
+        Assert.Null(track.At(TimeSpan.FromSeconds(11)));
+    }
+
+    [Fact]
+    public void EqualStartTimesPreferLastCueAndFallBackWhenItEnds()
+    {
+        var track = SidecarSubtitleTrack.Parse(
+            "1\n00:00:01,000 --> 00:00:03,000\nFirst\n\n" +
+            "2\n00:00:01,000 --> 00:00:02,000\nSecond\n");
+
+        Assert.Equal("Second", track.At(TimeSpan.FromSeconds(1.5)));
+        Assert.Equal("First", track.At(TimeSpan.FromSeconds(2)));
+        Assert.Null(track.At(TimeSpan.FromSeconds(3)));
+    }
 }

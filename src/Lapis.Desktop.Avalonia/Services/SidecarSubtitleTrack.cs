@@ -14,25 +14,64 @@ public sealed class SidecarSubtitleTrack
         @"^(?<s>\d{2}:\d{2}:\d{2}[,.]\d{3})\s+-->\s+(?<e>\d{2}:\d{2}:\d{2}[,.]\d{3})",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private readonly Cue[] _cues;
+    // Segment-tree maximum end time: overlapping SRT cues are not ordered by End.
+    // This lets us find the latest-starting active cue without scanning all
+    // earlier subtitles on every render tick or after a backward seek.
+    private readonly TimeSpan[] _maximumEnds;
+    private readonly int _leafCount;
 
-    private SidecarSubtitleTrack(Cue[] cues) => _cues = cues;
+    private SidecarSubtitleTrack(Cue[] cues)
+    {
+        _cues = cues;
+        var leaves = 1;
+        while (leaves < cues.Length) leaves <<= 1;
+        _leafCount = leaves;
+        _maximumEnds = new TimeSpan[leaves * 2];
+
+        for (var i = 0; i < cues.Length; i++)
+            _maximumEnds[leaves + i] = cues[i].End;
+        for (var i = leaves - 1; i > 0; i--)
+        {
+            var left = _maximumEnds[i * 2];
+            var right = _maximumEnds[i * 2 + 1];
+            _maximumEnds[i] = left >= right ? left : right;
+        }
+    }
+
     public static SidecarSubtitleTrack Empty { get; } = new([]);
     public int Count => _cues.Length;
 
     public string? At(TimeSpan time)
     {
-        // Cue count is bounded; a binary search is more stable while seeking.
+        // Find the exclusive upper bound of all cues that have started.
+        // Searching by End is incorrect: nested or overlapping cues can have
+        // non-monotonic end times even after sorting by Start.
         var low = 0;
-        var high = _cues.Length - 1;
-        while (low <= high)
+        var high = _cues.Length;
+        while (low < high)
         {
             var mid = low + ((high - low) / 2);
-            var cue = _cues[mid];
-            if (time < cue.Start) high = mid - 1;
-            else if (time >= cue.End) low = mid + 1;
-            else return cue.Text;
+            if (_cues[mid].Start <= time) low = mid + 1;
+            else high = mid;
         }
-        return null;
+
+        // When cues overlap, prefer the most recently started active cue.
+        // End is exclusive, matching normal SRT boundary behavior.
+        var index = FindLatestActive(1, 0, _leafCount, low, time);
+        return index < 0 ? null : _cues[index].Text;
+    }
+
+    private int FindLatestActive(int node, int begin, int end, int startedBefore, TimeSpan time)
+    {
+        if (begin >= startedBefore || _maximumEnds[node] <= time)
+            return -1;
+        if (end - begin == 1) return begin;
+
+        var middle = begin + ((end - begin) / 2);
+        var right = FindLatestActive(node * 2 + 1, middle, end, startedBefore, time);
+        return right >= 0
+            ? right
+            : FindLatestActive(node * 2, begin, middle, startedBefore, time);
     }
 
     public static SidecarSubtitleTrack Parse(string raw)
