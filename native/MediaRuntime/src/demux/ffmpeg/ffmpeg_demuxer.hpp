@@ -36,6 +36,13 @@ struct FfmpegAudioStreamInfo final {
     const AVCodecParameters* codec_parameters{};
 };
 
+struct FfmpegSubtitleStreamInfo final {
+    int index{-1};
+    AVRational time_base{0, 1};
+    MediaTime timestamp_origin{};
+    const AVCodecParameters* codec_parameters{};
+};
+
 class FfmpegDemuxer final : public IFfmpegPacketSource {
 public:
     FfmpegDemuxer();
@@ -50,6 +57,8 @@ public:
     [[nodiscard]] std::optional<FfmpegAudioStreamInfo> best_audio_stream() const noexcept;
     // Enumerate without retaining any FFmpeg-owned objects in the result.
     [[nodiscard]] std::vector<SubtitleStreamInfo> subtitle_streams() const;
+    [[nodiscard]] std::optional<FfmpegSubtitleStreamInfo> text_subtitle_stream(
+        int stream_index) const noexcept;
     // A standalone probe for native fixtures; does not read/decode packets.
     [[nodiscard]] static std::vector<SubtitleStreamInfo> inspect_subtitle_streams(
         const AVFormatContext& context);
