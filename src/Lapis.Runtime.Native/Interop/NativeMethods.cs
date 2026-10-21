@@ -26,6 +26,19 @@ internal static partial class NativeMethods
         out ulong nextSequence,
         out ulong dropped);
 
+    [LibraryImport(LibraryName, EntryPoint = "lapis_runtime_get_subtitle_tracks_api_version")]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    internal static partial uint RuntimeGetSubtitleTracksApiVersion();
+
+    [LibraryImport(LibraryName, EntryPoint = "lapis_session_list_subtitle_tracks")]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    internal static unsafe partial NativeResult SessionListSubtitleTracks(
+        nint session,
+        NativePlaybackEpoch expectedEpoch,
+        NativeSubtitleTrackInfo* tracks,
+        uint capacity,
+        out uint count);
+
     [LibraryImport(LibraryName, EntryPoint = "lapis_runtime_get_navigation_api_version")]
     [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
     internal static partial uint RuntimeGetNavigationApiVersion();

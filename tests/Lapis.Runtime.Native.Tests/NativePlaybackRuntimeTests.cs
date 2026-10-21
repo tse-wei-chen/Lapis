@@ -509,6 +509,159 @@ public sealed class NativePlaybackRuntimeTests
         Assert.Equal(calls, api.Calls.Count(x => x == "session_get_snapshot"));
     }
 
+    [Fact]
+    public void NativeSubtitleDescriptorIsExactlyTheNative72ByteAbi()
+    {
+        Assert.Equal(72, Marshal.SizeOf<NativeSubtitleTrackInfo>());
+        Assert.Equal(0L, Marshal.OffsetOf<NativeSubtitleTrackInfo>(
+            nameof(NativeSubtitleTrackInfo.StreamIndex)).ToInt64());
+        Assert.Equal(4L, Marshal.OffsetOf<NativeSubtitleTrackInfo>(
+            nameof(NativeSubtitleTrackInfo.Kind)).ToInt64());
+        Assert.Equal(8L, Marshal.OffsetOf<NativeSubtitleTrackInfo>(
+            "LanguageUtf8").ToInt64());
+        Assert.Equal(32L, Marshal.OffsetOf<NativeSubtitleTrackInfo>(
+            "CodecNameUtf8").ToInt64());
+    }
+
+    [Fact]
+    public async Task EmbeddedSubtitleInventoryIsOwnedAndSourceQualifiedMetadata()
+    {
+        var api = new FakeNativeApi
+        {
+            SubtitleTracks =
+            [
+                MakeSubtitle(2, NativeSubtitleTrackKind.Text, "jpn", "subrip"),
+                MakeSubtitle(5, NativeSubtitleTrackKind.Bitmap, "zho",
+                    "hdmv_pgs_subtitle"),
+                MakeSubtitle(7, NativeSubtitleTrackKind.Unknown, "", "unknown")
+            ]
+        };
+        await using var runtime = new NativePlaybackRuntime(api);
+        IEmbeddedSubtitleTrackInventoryRuntime reader = runtime;
+        var id = new PlaybackSessionId(Guid.NewGuid());
+        var context = new RuntimeCommandContext(id, new PlaybackEpoch(1));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await reader.ReadEmbeddedSubtitleTracksAsync(context, CancellationToken.None));
+        Assert.Equal(0, api.SessionCreateCount);
+
+        await runtime.OpenAsync(new MediaLocator(MediaLocatorKind.File, "movie.mkv"),
+            context, CancellationToken.None);
+
+        var tracks = await reader.ReadEmbeddedSubtitleTracksAsync(
+            context, CancellationToken.None);
+        Assert.Equal(3, tracks.Count);
+        Assert.Equal(new EmbeddedSubtitleTrack(2, EmbeddedSubtitleTrackFormat.Text,
+            "jpn", "subrip"), tracks[0]);
+        Assert.Equal(new EmbeddedSubtitleTrack(5, EmbeddedSubtitleTrackFormat.Bitmap,
+            "zho", "hdmv_pgs_subtitle"), tracks[1]);
+        Assert.Equal(EmbeddedSubtitleTrackFormat.Unknown, tracks[2].Format);
+        Assert.Equal(1, api.SessionCreateCount);
+        Assert.Equal(2, api.SubtitleReadCount); // probe + caller-owned buffer
+        Assert.DoesNotContain("session_seek", api.Calls);
+        Assert.Equal(1UL, api.LastEpoch.Value);
+    }
+
+    [Fact]
+    public async Task OlderOrIncompatibleNativeSubtitleApisFailGracefully()
+    {
+        var api = new FakeNativeApi();
+        await using var runtime = new NativePlaybackRuntime(api);
+        var id = new PlaybackSessionId(Guid.NewGuid());
+        var context = new RuntimeCommandContext(id, new PlaybackEpoch(1));
+        await runtime.OpenAsync(new MediaLocator(MediaLocatorKind.File, "movie.mkv"),
+            context, CancellationToken.None);
+
+        api.HasSubtitleVersionExport = false;
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await runtime.ReadEmbeddedSubtitleTracksAsync(context, CancellationToken.None));
+        Assert.Equal(0, api.SubtitleReadCount);
+
+        api.HasSubtitleVersionExport = true;
+        api.SubtitleVersion = 99;
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await runtime.ReadEmbeddedSubtitleTracksAsync(context, CancellationToken.None));
+        Assert.Equal(0, api.SubtitleReadCount);
+
+        api.SubtitleVersion = NativeAbi.SubtitleTracksVersion;
+        api.HasSubtitleQueryExport = false;
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await runtime.ReadEmbeddedSubtitleTracksAsync(context, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task EmbeddedSubtitleReadHandlesEmptyListAndEpochErrors()
+    {
+        var api = new FakeNativeApi();
+        await using var runtime = new NativePlaybackRuntime(api);
+        var id = new PlaybackSessionId(Guid.NewGuid());
+        var context = new RuntimeCommandContext(id, new PlaybackEpoch(1));
+        await runtime.OpenAsync(new MediaLocator(MediaLocatorKind.File, "movie.mkv"),
+            context, CancellationToken.None);
+
+        var tracks = await runtime.ReadEmbeddedSubtitleTracksAsync(
+            context, CancellationToken.None);
+        Assert.Empty(tracks);
+        Assert.Equal(1, api.SubtitleReadCount); // no unnecessary second call
+
+        api.SubtitleQueryResult = NativeResult.StaleEpoch;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runtime.ReadEmbeddedSubtitleTracksAsync(context, CancellationToken.None));
+        api.SubtitleQueryResult = NativeResult.InvalidState;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runtime.ReadEmbeddedSubtitleTracksAsync(context, CancellationToken.None));
+
+        api.SubtitleQueryResult = NativeResult.Ok;
+        api.SubtitleCountOverride = 65;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runtime.ReadEmbeddedSubtitleTracksAsync(context, CancellationToken.None));
+
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        var calls = api.SubtitleReadCount;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await runtime.ReadEmbeddedSubtitleTracksAsync(context, canceled.Token));
+        Assert.Equal(calls, api.SubtitleReadCount);
+    }
+
+    [Fact]
+    public async Task NativeSubtitleInventoryRejectsMalformedDescriptorAndBufferCount()
+    {
+        var bad = MakeSubtitle(3, NativeSubtitleTrackKind.Text, "eng", "ass");
+        unsafe
+        {
+            // The native protocol requires NUL termination of every field.
+            for (var i = 0; i < 24; ++i) bad.LanguageUtf8[i] = (byte)'x';
+        }
+        var api = new FakeNativeApi { SubtitleTracks = [bad] };
+        await using var runtime = new NativePlaybackRuntime(api);
+        var id = new PlaybackSessionId(Guid.NewGuid());
+        var context = new RuntimeCommandContext(id, new PlaybackEpoch(1));
+        await runtime.OpenAsync(new MediaLocator(MediaLocatorKind.File, "movie.mkv"),
+            context, CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runtime.ReadEmbeddedSubtitleTracksAsync(context, CancellationToken.None));
+
+        api.SubtitleTracks = [MakeSubtitle(1, NativeSubtitleTrackKind.Text, "eng", "ass")];
+        api.SubtitleCountOverride = null;
+        api.SubtitleReadCountOverride = 2; // More than the probed buffer size.
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runtime.ReadEmbeddedSubtitleTracksAsync(context, CancellationToken.None));
+    }
+
+    private static unsafe NativeSubtitleTrackInfo MakeSubtitle(
+        uint index, NativeSubtitleTrackKind kind, string language, string codec)
+    {
+        var track = new NativeSubtitleTrackInfo { StreamIndex = index, Kind = kind };
+        var languageBytes = System.Text.Encoding.UTF8.GetBytes(language);
+        var codecBytes = System.Text.Encoding.UTF8.GetBytes(codec);
+        for (var i = 0; i < languageBytes.Length && i < 23; ++i)
+            track.LanguageUtf8[i] = languageBytes[i];
+        for (var i = 0; i < codecBytes.Length && i < 39; ++i)
+            track.CodecNameUtf8[i] = codecBytes[i];
+        return track;
+    }
+
     private sealed class FakeNativeApi : INativeMediaRuntimeApi
     {
         internal uint AbiVersion { get; set; } = NativeAbi.Version;
@@ -516,6 +669,15 @@ public sealed class NativePlaybackRuntimeTests
         internal bool HasFeatureQuery { get; set; } = true;
         internal uint DiagnosticVersion { get; set; } = NativeAbi.DiagnosticsVersion;
         internal uint NavigationVersion { get; set; } = NativeAbi.NavigationVersion;
+        internal uint SubtitleVersion { get; set; } = NativeAbi.SubtitleTracksVersion;
+        internal bool HasSubtitleVersionExport { get; set; } = true;
+        internal bool HasSubtitleQueryExport { get; set; } = true;
+        internal NativeSubtitleTrackInfo[] SubtitleTracks { get; set; } = [];
+        internal NativeResult SubtitleQueryResult { get; set; } = NativeResult.Ok;
+        internal uint? SubtitleCountOverride { get; set; }
+        internal uint? SubtitleReadCountOverride { get; set; }
+        internal int SubtitleReadCount { get; private set; }
+
         internal NativeResult ChapterResult { get; set; } = NativeResult.Ok;
         internal NativeMediaTime NavigationStart { get; set; }
         internal uint LastChapterId { get; private set; }
@@ -544,6 +706,32 @@ public sealed class NativePlaybackRuntimeTests
                 throw new EntryPointNotFoundException("Feature query unsupported");
         public uint GetDiagnosticsApiVersion() => DiagnosticVersion;
         public uint GetNavigationApiVersion() => NavigationVersion;
+        public uint GetSubtitleTracksApiVersion() =>
+            HasSubtitleVersionExport ? SubtitleVersion :
+            throw new EntryPointNotFoundException("Subtitle API absent");
+
+        public NativeResult SessionListSubtitleTracks(
+            nint session, NativePlaybackEpoch expectedEpoch,
+            NativeSubtitleTrackInfo[]? buffer, out uint count)
+        {
+            if (!HasSubtitleQueryExport)
+                throw new EntryPointNotFoundException("Subtitle query absent");
+            Assert.Equal((nint)22, session);
+            Calls.Add("session_list_subtitle_tracks");
+            SubtitleReadCount++;
+            LastEpoch = expectedEpoch;
+            count = (buffer is null ? SubtitleCountOverride : SubtitleReadCountOverride)
+                ?? checked((uint)SubtitleTracks.Length);
+            if (SubtitleQueryResult != NativeResult.Ok)
+                return SubtitleQueryResult;
+            if (buffer != null)
+            {
+                Array.Copy(SubtitleTracks, buffer,
+                    Math.Min(SubtitleTracks.Length, buffer.Length));
+            }
+            return NativeResult.Ok;
+        }
+
         public NativeResult SessionResolveChapter(
             nint session, uint chapterId, NativePlaybackEpoch expectedEpoch,
             out NativeMediaTime start)
