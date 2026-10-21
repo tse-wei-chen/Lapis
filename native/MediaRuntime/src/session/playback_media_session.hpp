@@ -3,6 +3,7 @@
 #include "audio/audio_frame.hpp"
 #include "core/media_time.hpp"
 #include "core/subtitle_stream_info.hpp"
+#include "core/text_subtitle_cue.hpp"
 #include "source/media_source.hpp"
 #include "video/video_frame.hpp"
 
@@ -41,6 +42,8 @@ struct MediaOpenInfo final {
 struct MediaDecodeSelection final {
     bool video{};
     bool audio{};
+    // Explicit opt-in. Never attach an unconsumed subtitle queue by default.
+    std::optional<int> subtitle_stream_index;
 };
 
 class PlaybackMediaSession final {
@@ -62,6 +65,11 @@ public:
     // Snapshot is computed once during Open. Safe to copy while decode workers
     // continue reading packets because no FFmpeg-owned memory is exposed.
     [[nodiscard]] std::vector<SubtitleStreamInfo> subtitle_streams() const;
+
+    // Called only by a dedicated subtitle consumer. Returns no cue on
+    // cancellation, router drain or unknown/unselected stream.
+    [[nodiscard]] std::optional<TextSubtitleCue> decode_next_text_subtitle_cue(
+        std::stop_token stop_token = {});
 
     [[nodiscard]] bool has_video() const noexcept;
     [[nodiscard]] bool has_audio() const noexcept;

@@ -2,6 +2,7 @@
 
 #include "core/graph_builder.hpp"
 #include "decode/ffmpeg/ffmpeg_audio_decoder.hpp"
+#include "decode/ffmpeg/ffmpeg_text_subtitle_decoder.hpp"
 #include "decode/ffmpeg/ffmpeg_video_decoder.hpp"
 #include "demux/ffmpeg/ffmpeg_demuxer.hpp"
 #include "demux/ffmpeg/ffmpeg_packet_router.hpp"
@@ -39,6 +40,8 @@ public:
         if (audio_decoder != nullptr) {
             audio_decoder->flush();
         }
+        // Subtitle text must never outlive the decode generation/seek.
+        subtitle_decoder.reset();
     }
 
     void reset() noexcept {
@@ -59,6 +62,7 @@ public:
     std::unique_ptr<ffmpeg::FfmpegPacketRouter> packet_router;
     std::unique_ptr<ffmpeg::FfmpegVideoDecoder> video_decoder;
     std::unique_ptr<ffmpeg::FfmpegAudioDecoder> audio_decoder;
+    std::unique_ptr<ffmpeg::FfmpegTextSubtitleDecoder> subtitle_decoder;
     std::unique_ptr<GraphPlan> plan;
     int video_stream_index{-1};
     int audio_stream_index{-1};
@@ -185,12 +189,13 @@ MediaOpenInfo PlaybackMediaSession::open(const MediaLocator& locator) {
 
 bool PlaybackMediaSession::start_decode_generation(MediaDecodeSelection selection) {
     if (impl_->demuxer == nullptr || impl_->packet_router != nullptr ||
-        (!selection.video && !selection.audio)) {
+        (!selection.video && !selection.audio &&
+         !selection.subtitle_stream_index.has_value())) {
         return false;
     }
 
     std::vector<int> streams;
-    streams.reserve(2);
+    streams.reserve(3);
 
     if (selection.video) {
         if (impl_->video_decoder == nullptr || impl_->video_stream_index < 0) {
@@ -206,11 +211,22 @@ bool PlaybackMediaSession::start_decode_generation(MediaDecodeSelection selectio
         streams.push_back(impl_->audio_stream_index);
     }
 
+    std::unique_ptr<ffmpeg::FfmpegTextSubtitleDecoder> subtitle;
+    if (selection.subtitle_stream_index.has_value()) {
+        const auto stream = impl_->demuxer->text_subtitle_stream(
+            *selection.subtitle_stream_index);
+        if (!stream.has_value()) return false;
+        subtitle = std::make_unique<ffmpeg::FfmpegTextSubtitleDecoder>();
+        if (!subtitle->open(*stream)) return false;
+        streams.push_back(*selection.subtitle_stream_index);
+    }
+
     auto router = std::make_unique<ffmpeg::FfmpegPacketRouter>(
         *impl_->demuxer,
         std::move(streams));
     router->start();
     impl_->packet_router = std::move(router);
+    impl_->subtitle_decoder = std::move(subtitle);
     return true;
 }
 
@@ -220,6 +236,13 @@ void PlaybackMediaSession::stop_decode_generation() noexcept {
 
 std::vector<SubtitleStreamInfo> PlaybackMediaSession::subtitle_streams() const {
     return impl_->subtitles;
+}
+
+std::optional<TextSubtitleCue> PlaybackMediaSession::decode_next_text_subtitle_cue(
+    std::stop_token stop_token) {
+    if (impl_->subtitle_decoder == nullptr || impl_->packet_router == nullptr)
+        return std::nullopt;
+    return impl_->subtitle_decoder->decode_next(*impl_->packet_router, stop_token);
 }
 
 bool PlaybackMediaSession::has_video() const noexcept {

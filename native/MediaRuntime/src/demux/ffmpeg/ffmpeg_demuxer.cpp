@@ -212,6 +212,26 @@ std::vector<SubtitleStreamInfo> FfmpegDemuxer::subtitle_streams() const {
         : std::vector<SubtitleStreamInfo>{};
 }
 
+std::optional<FfmpegSubtitleStreamInfo> FfmpegDemuxer::text_subtitle_stream(
+    int stream_index) const noexcept {
+    if (format_ == nullptr || stream_index < 0 ||
+        static_cast<unsigned>(stream_index) >= format_->nb_streams)
+        return std::nullopt;
+
+    const auto* stream = format_->streams[stream_index];
+    if (stream == nullptr || stream->codecpar == nullptr ||
+        stream->codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE)
+        return std::nullopt;
+
+    // Allow only codecs that the first text decoder can actually decode.
+    if (stream->codecpar->codec_id != AV_CODEC_ID_SUBRIP &&
+        stream->codecpar->codec_id != AV_CODEC_ID_MOV_TEXT)
+        return std::nullopt;
+    return FfmpegSubtitleStreamInfo{
+        stream_index, stream->time_base, timestamp_origin_, stream->codecpar
+    };
+}
+
 int FfmpegDemuxer::read_packet(AVPacket& packet) {
     if (format_ == nullptr) {
         return AVERROR(EINVAL);

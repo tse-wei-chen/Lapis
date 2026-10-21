@@ -31,6 +31,7 @@ add_library(Lapis.MediaRuntime.Core STATIC
     src/demux/ffmpeg/ffmpeg_packet_router.cpp
     src/decode/ffmpeg/ffmpeg_video_decoder.cpp
     src/decode/ffmpeg/ffmpeg_audio_decoder.cpp
+    src/decode/ffmpeg/ffmpeg_text_subtitle_decoder.cpp
     src/process/ffmpeg/ffmpeg_audio_frame_converter.cpp
     src/process/ffmpeg/ffmpeg_video_frame_converter.cpp
     src/execution/video_decode_worker.cpp
@@ -167,6 +168,20 @@ if(BUILD_TESTING)
     lapis_enable_strict_warnings(Lapis.MediaRuntime.SubtitleInventoryTests)
     add_test(NAME embedded_subtitle_track_inventory
         COMMAND Lapis.MediaRuntime.SubtitleInventoryTests)
+
+    # Real embedded Matroska sample with MPEG-4 video + SubRip subtitle track;
+    # verify decode, stream selection and no stale cues after Seek.
+    add_executable(Lapis.MediaRuntime.EmbeddedTextSubtitleTests
+        tests/ffmpeg_text_subtitle_decode.cpp)
+    target_compile_features(Lapis.MediaRuntime.EmbeddedTextSubtitleTests
+        PRIVATE cxx_std_20)
+    target_compile_definitions(Lapis.MediaRuntime.EmbeddedTextSubtitleTests
+        PRIVATE LAPIS_TEST_SUBTITLE_MEDIA_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/test_embedded_subtitles.mkv")
+    target_link_libraries(Lapis.MediaRuntime.EmbeddedTextSubtitleTests
+        PRIVATE Lapis.MediaRuntime.Core)
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.EmbeddedTextSubtitleTests)
+    add_test(NAME embedded_text_subtitle_decode_seek
+        COMMAND Lapis.MediaRuntime.EmbeddedTextSubtitleTests)
 
     add_executable(Lapis.MediaRuntime.SourceFeatureTests tests/source_feature_flags.c)
     target_compile_features(Lapis.MediaRuntime.SourceFeatureTests PRIVATE c_std_17)
