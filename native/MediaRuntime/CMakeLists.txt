@@ -32,6 +32,7 @@ add_library(Lapis.MediaRuntime.Core STATIC
     src/decode/ffmpeg/ffmpeg_video_decoder.cpp
     src/decode/ffmpeg/ffmpeg_audio_decoder.cpp
     src/decode/ffmpeg/ffmpeg_text_subtitle_decoder.cpp
+    src/subtitle/bitmap_subtitle_compositor.cpp
     src/session/async_text_subtitle_timeline.cpp
     src/process/ffmpeg/ffmpeg_audio_frame_converter.cpp
     src/process/ffmpeg/ffmpeg_video_frame_converter.cpp
@@ -213,6 +214,18 @@ if(BUILD_TESTING)
     lapis_enable_strict_warnings(Lapis.MediaRuntime.AsyncTextSubtitleAbiTests)
     add_test(NAME async_embedded_text_subtitle_c_abi
         COMMAND Lapis.MediaRuntime.AsyncTextSubtitleAbiTests)
+
+    # Portable RGBA subtitle composition contracts; no FFmpeg, UI or GPU dependencies.
+    add_executable(Lapis.MediaRuntime.BitmapSubtitleCompositorTests
+        tests/bitmap_subtitle_compositor.cpp
+        src/subtitle/bitmap_subtitle_compositor.cpp)
+    target_compile_features(Lapis.MediaRuntime.BitmapSubtitleCompositorTests
+        PRIVATE cxx_std_20)
+    target_include_directories(Lapis.MediaRuntime.BitmapSubtitleCompositorTests
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.BitmapSubtitleCompositorTests)
+    add_test(NAME bitmap_subtitle_compositor_contract
+        COMMAND Lapis.MediaRuntime.BitmapSubtitleCompositorTests)
 
     add_executable(Lapis.MediaRuntime.SourceFeatureTests tests/source_feature_flags.c)
     target_compile_features(Lapis.MediaRuntime.SourceFeatureTests PRIVATE c_std_17)
