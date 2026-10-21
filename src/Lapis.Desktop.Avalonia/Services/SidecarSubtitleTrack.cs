@@ -1,4 +1,5 @@
 using System.Globalization;
+using Lapis.Contracts.Media;
 using System.Text.RegularExpressions;
 
 namespace Lapis.Desktop.Avalonia.Services;
@@ -7,7 +8,7 @@ namespace Lapis.Desktop.Avalonia.Services;
 /// Optional local, unprotected sidecar SRT cues. This does not claim embedded
 /// PGS/BDMV/ASS support. SRT text is displayed over the video without a box.
 /// </summary>
-public sealed class SidecarSubtitleTrack
+public sealed class SidecarSubtitleTrack : ITextSubtitleTrack
 {
     public sealed record Cue(TimeSpan Start, TimeSpan End, string Text);
     private static readonly Regex Timing = new(
