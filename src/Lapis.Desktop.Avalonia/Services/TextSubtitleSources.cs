@@ -13,7 +13,10 @@ public sealed class TextSubtitleSourceCatalog
     private readonly Dictionary<string, ITextSubtitleSource> _byId;
 
     public static TextSubtitleSourceCatalog Default { get; } =
-        new([new SidecarSrtTextSubtitleSource()]);
+        // SRT remains the Auto source for backward compatibility. WebVTT
+        // appears alongside it as an explicit selectable text track.
+        new([new SidecarSrtTextSubtitleSource(),
+             new SidecarWebVttTextSubtitleSource()]);
 
     public TextSubtitleSourceCatalog(IEnumerable<ITextSubtitleSource> sources)
     {

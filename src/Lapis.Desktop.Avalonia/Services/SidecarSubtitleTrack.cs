@@ -98,8 +98,13 @@ public sealed class SidecarSubtitleTrack : ITextSubtitleTrack
             if (text.Length is > 0 and <= 500)
                 cues.Add(new Cue(start, end, text));
         }
-        return new SidecarSubtitleTrack(cues.OrderBy(c => c.Start).ToArray());
+        return FromCues(cues);
     }
+
+    // The overlap-safe time index is shared by SRT and WebVTT rather than
+    // maintaining two separate subtitle lookup algorithms.
+    internal static SidecarSubtitleTrack FromCues(IEnumerable<Cue> cues) =>
+        new(cues.OrderBy(c => c.Start).Take(5000).ToArray());
 
     private static bool TryTime(string text, out TimeSpan value) =>
         TimeSpan.TryParseExact(text.Replace(',', '.'), @"hh\:mm\:ss\.fff",
