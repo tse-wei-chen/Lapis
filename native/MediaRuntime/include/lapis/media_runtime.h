@@ -24,6 +24,10 @@ extern "C" {
 /* Read-only embedded subtitle stream inventory; no subtitle decoding. */
 #define LAPIS_SUBTITLE_TRACKS_API_VERSION 1u
 #define LAPIS_SUBTITLE_TRACK_MAX 64u
+/* Optional, independent SubRip/mov_text cue timeline extension. */
+#define LAPIS_TEXT_SUBTITLE_CUES_API_VERSION 1u
+#define LAPIS_TEXT_SUBTITLE_MAX_PAGE 16u
+#define LAPIS_TEXT_SUBTITLE_MAX_PAGE_BYTES 65536u
 #define LAPIS_DIAGNOSTIC_RING_CAPACITY 128u
 
 /* Optional source-provider feature mask. This is build capability, not
@@ -131,6 +135,24 @@ typedef struct lapis_subtitle_track_info {
     char codec_name_utf8[40];
 } lapis_subtitle_track_info;
 
+/* Each cue's text is an offset/byte-length into the caller's separate
+ * UTF-8 buffer. No pointers or NUL-terminated string ownership cross ABI.
+ * Fixed 24-byte wire layout; presentation time uses nanoseconds. */
+typedef struct lapis_text_subtitle_cue_info {
+    int64_t start_nanoseconds;
+    int64_t end_nanoseconds;
+    uint32_t text_offset;
+    uint32_t text_length;
+} lapis_text_subtitle_cue_info;
+
+typedef enum lapis_text_subtitle_load_state {
+    LAPIS_TEXT_SUBTITLE_LOADING = 0,
+    LAPIS_TEXT_SUBTITLE_READY = 1,
+    LAPIS_TEXT_SUBTITLE_FAILED = 2,
+    LAPIS_TEXT_SUBTITLE_LIMIT_EXCEEDED = 3,
+    LAPIS_TEXT_SUBTITLE_CANCELLED = 4
+} lapis_text_subtitle_load_state;
+
 typedef struct lapis_playback_snapshot {
     lapis_playback_session_id session_id;
     lapis_playback_epoch epoch;
@@ -222,6 +244,39 @@ LAPIS_API lapis_result lapis_session_list_subtitle_tracks(
     lapis_subtitle_track_info* tracks,
     uint32_t capacity,
     uint32_t* out_count);
+/* All three exports are optional: negotiate the version with
+ * GetProcAddress/dlsym when supporting older native runtimes.
+ *
+ * start() launches a separate local-file, subtitle-only demux/decode worker.
+ * It never borrows the active A/V decoder's packet queue. Only codecs
+ * SubRip and mov_text are accepted; bitmap/PGS must not be passed.
+ * Seek/Open/Close invalidate the worker under the same Epoch command fence.
+ *
+ * read() is NONBLOCKING and pages a bounded, completed timeline. A zero-
+ * capacity probe returns state / total without allocating buffers. If there
+ * is insufficient UTF-8 buffer space, BUFFER_TOO_SMALL returns required
+ * bytes and writes NO cue records/text. All returned counts are bounded.
+ * UTF-8 bytes are not NUL-terminated: use text_offset/text_length.
+ * No partial cues are published while loading or after a failed decode.
+ */
+LAPIS_API uint32_t lapis_runtime_get_text_subtitle_cues_api_version(void);
+LAPIS_API lapis_result lapis_session_start_text_subtitle_load(
+    lapis_session* session,
+    lapis_playback_epoch expected_epoch,
+    uint32_t stream_index);
+LAPIS_API lapis_result lapis_session_read_text_subtitle_cues(
+    lapis_session* session,
+    lapis_playback_epoch expected_epoch,
+    uint32_t start_index,
+    lapis_text_subtitle_cue_info* cues,
+    uint32_t cue_capacity,
+    char* text_utf8,
+    uint32_t text_capacity,
+    uint32_t* out_count,
+    uint32_t* out_total,
+    uint32_t* out_required_text_bytes,
+    lapis_text_subtitle_load_state* out_state);
+
 LAPIS_API lapis_result lapis_session_resolve_chapter(
     lapis_session* session,
     uint32_t chapter_id,

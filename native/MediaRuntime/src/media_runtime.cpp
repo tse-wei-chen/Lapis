@@ -6,6 +6,7 @@
 #include "process/ffmpeg/ffmpeg_audio_frame_converter.hpp"
 #include "process/ffmpeg/ffmpeg_video_frame_converter.hpp"
 #include "session/playback_media_session.hpp"
+#include "session/async_text_subtitle_timeline.hpp"
 #include "source/media_source.hpp"
 #include "video/video_presenter.hpp"
 #include "video/video_output_surface.hpp"
@@ -18,6 +19,8 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <limits>
 #include <string_view>
 #include <memory>
 #include <mutex>
@@ -51,6 +54,10 @@ public:
 struct RuntimePlaybackPipeline final {
     std::shared_ptr<lapis::media::PlaybackMediaSession> media;
     std::unique_ptr<lapis::media::PlaybackExecution> execution;
+    // Immutable media identity for the independent local-file subtitle reader.
+    lapis::media::MediaLocator subtitle_source;
+    // Destroyed before execution/media: jthread stops and joins first.
+    std::unique_ptr<lapis::media::AsyncTextSubtitleTimeline> subtitle_timeline;
 };
 
 } // namespace
@@ -258,8 +265,10 @@ std::unique_ptr<lapis::media::PlaybackExecution> create_execution(
 
 std::shared_ptr<RuntimePlaybackPipeline> create_pipeline(
     std::shared_ptr<lapis::media::PlaybackMediaSession> media,
-    std::shared_ptr<lapis::media::DiagnosticEventJournal> journal) {
+    std::shared_ptr<lapis::media::DiagnosticEventJournal> journal,
+    lapis::media::MediaLocator subtitle_source) {
     auto pipeline = std::make_shared<RuntimePlaybackPipeline>();
+    pipeline->subtitle_source = std::move(subtitle_source);
     pipeline->media = std::move(media);
     pipeline->execution = create_execution(*pipeline->media, std::move(journal));
     return pipeline;
@@ -362,6 +371,10 @@ uint32_t lapis_runtime_get_subtitle_tracks_api_version(void) {
     return LAPIS_SUBTITLE_TRACKS_API_VERSION;
 }
 
+uint32_t lapis_runtime_get_text_subtitle_cues_api_version(void) {
+    return LAPIS_TEXT_SUBTITLE_CUES_API_VERSION;
+}
+
 lapis_result lapis_session_list_subtitle_tracks(
     lapis_session* session,
     lapis_playback_epoch expected_epoch,
@@ -427,6 +440,142 @@ lapis_result lapis_session_list_subtitle_tracks(
     });
 }
 
+
+lapis_result lapis_session_start_text_subtitle_load(
+    lapis_session* session, lapis_playback_epoch expected_epoch,
+    uint32_t stream_index) {
+    return guarded_result([&]() -> lapis_result {
+        if (session == nullptr ||
+            stream_index > static_cast<uint32_t>(std::numeric_limits<int>::max()))
+            return LAPIS_E_INVALID_ARGUMENT;
+
+        std::scoped_lock command_lock(session->command_mutex);
+        std::shared_ptr<RuntimePlaybackPipeline> pipeline;
+        {
+            std::scoped_lock lock(session->mutex);
+            if (!matches_epoch(*session, expected_epoch))
+                return LAPIS_E_STALE_EPOCH;
+            if (session->transport != LAPIS_TRANSPORT_READY &&
+                session->transport != LAPIS_TRANSPORT_PLAYING &&
+                session->transport != LAPIS_TRANSPORT_PAUSED &&
+                session->transport != LAPIS_TRANSPORT_ENDED)
+                return LAPIS_E_INVALID_STATE;
+            pipeline = session->pipeline;
+        }
+        if (pipeline == nullptr || pipeline->media == nullptr)
+            return LAPIS_E_INVALID_STATE;
+        if (pipeline->subtitle_source.kind != lapis::media::MediaLocatorKind::File)
+            return LAPIS_E_UNSUPPORTED;
+
+        const auto subtitles = pipeline->media->subtitle_streams();
+        const auto track = std::find_if(subtitles.begin(), subtitles.end(),
+            [stream_index](const lapis::media::SubtitleStreamInfo& item) {
+                return item.stream_index == stream_index;
+            });
+        if (track == subtitles.end()) return LAPIS_E_INVALID_ARGUMENT;
+        if (track->kind != lapis::media::SubtitleTrackKind::Text ||
+            (track->codec_name != "subrip" && track->codec_name != "mov_text"))
+            return LAPIS_E_UNSUPPORTED;
+
+        // No packet queue is added to the live A/V decoder. A new request
+        // retires the previous worker first, even within the same Epoch.
+        pipeline->subtitle_timeline.reset();
+        pipeline->subtitle_timeline =
+            std::make_unique<lapis::media::AsyncTextSubtitleTimeline>(
+                pipeline->subtitle_source, static_cast<int>(stream_index));
+        return LAPIS_OK;
+    });
+}
+
+lapis_result lapis_session_read_text_subtitle_cues(
+    lapis_session* session,
+    lapis_playback_epoch expected_epoch,
+    uint32_t start_index,
+    lapis_text_subtitle_cue_info* cues,
+    uint32_t cue_capacity,
+    char* text_utf8,
+    uint32_t text_capacity,
+    uint32_t* out_count,
+    uint32_t* out_total,
+    uint32_t* out_required_text_bytes,
+    lapis_text_subtitle_load_state* out_state) {
+    return guarded_result([&]() -> lapis_result {
+        if (out_count) *out_count = 0;
+        if (out_total) *out_total = 0;
+        if (out_required_text_bytes) *out_required_text_bytes = 0;
+        if (out_state) *out_state = LAPIS_TEXT_SUBTITLE_LOADING;
+        if (session == nullptr || out_count == nullptr ||
+            out_total == nullptr || out_required_text_bytes == nullptr ||
+            out_state == nullptr ||
+            cue_capacity > LAPIS_TEXT_SUBTITLE_MAX_PAGE ||
+            text_capacity > LAPIS_TEXT_SUBTITLE_MAX_PAGE_BYTES ||
+            (cue_capacity != 0 && cues == nullptr) ||
+            (text_capacity != 0 && text_utf8 == nullptr))
+            return LAPIS_E_INVALID_ARGUMENT;
+
+        // Use the same command lock as Open/Seek/Close. A returned page can
+        // never belong to an epoch that changed during this call.
+        std::scoped_lock command_lock(session->command_mutex);
+        std::shared_ptr<RuntimePlaybackPipeline> pipeline;
+        {
+            std::scoped_lock lock(session->mutex);
+            if (!matches_epoch(*session, expected_epoch))
+                return LAPIS_E_STALE_EPOCH;
+            if (session->transport != LAPIS_TRANSPORT_READY &&
+                session->transport != LAPIS_TRANSPORT_PLAYING &&
+                session->transport != LAPIS_TRANSPORT_PAUSED &&
+                session->transport != LAPIS_TRANSPORT_ENDED)
+                return LAPIS_E_INVALID_STATE;
+            pipeline = session->pipeline;
+        }
+        if (pipeline == nullptr || pipeline->subtitle_timeline == nullptr)
+            return LAPIS_E_INVALID_STATE;
+
+        const auto page = pipeline->subtitle_timeline->read_page(
+            start_index, cue_capacity);
+        using lapis::media::TextSubtitleTimelineState;
+        switch (page.state) {
+            case TextSubtitleTimelineState::Loading:
+                *out_state = LAPIS_TEXT_SUBTITLE_LOADING; break;
+            case TextSubtitleTimelineState::Ready:
+                *out_state = LAPIS_TEXT_SUBTITLE_READY; break;
+            case TextSubtitleTimelineState::Failed:
+                *out_state = LAPIS_TEXT_SUBTITLE_FAILED; break;
+            case TextSubtitleTimelineState::LimitExceeded:
+                *out_state = LAPIS_TEXT_SUBTITLE_LIMIT_EXCEEDED; break;
+            case TextSubtitleTimelineState::Cancelled:
+                *out_state = LAPIS_TEXT_SUBTITLE_CANCELLED; break;
+        }
+        *out_total = static_cast<uint32_t>(page.total);
+        if (page.state != TextSubtitleTimelineState::Ready ||
+            page.cues.empty())
+            return LAPIS_OK;
+
+        std::size_t required = 0;
+        for (const auto& cue : page.cues) required += cue.text.size();
+        if (required > LAPIS_TEXT_SUBTITLE_MAX_PAGE_BYTES)
+            return LAPIS_E_INTERNAL;
+        *out_required_text_bytes = static_cast<uint32_t>(required);
+        if (text_capacity < required)
+            return LAPIS_E_BUFFER_TOO_SMALL;
+
+        uint32_t offset = 0;
+        for (std::size_t i = 0; i < page.cues.size(); ++i) {
+            const auto& cue = page.cues[i];
+            lapis_text_subtitle_cue_info item{};
+            item.start_nanoseconds = cue.start.nanoseconds;
+            item.end_nanoseconds = cue.end.nanoseconds;
+            item.text_offset = offset;
+            item.text_length = static_cast<uint32_t>(cue.text.size());
+            if (!cue.text.empty())
+                std::memcpy(text_utf8 + offset, cue.text.data(), cue.text.size());
+            cues[i] = item;
+            offset += item.text_length;
+        }
+        *out_count = static_cast<uint32_t>(page.cues.size());
+        return LAPIS_OK;
+    });
+}
 
 lapis_result lapis_session_resolve_chapter(
     lapis_session* session,
@@ -597,7 +746,7 @@ lapis_result lapis_session_open(
             };
             media_open_result = media->open(core_locator);
             if (media_open_result.ok()) {
-                pipeline = create_pipeline(media, session->diagnostics);
+                pipeline = create_pipeline(media, session->diagnostics, core_locator);
                 // The desired host window belongs to the logical session,
                 // not to a particular media-open or decode generation.
                 const auto surface_status = pipeline->execution->set_video_output_surface(
@@ -773,6 +922,10 @@ lapis_result lapis_session_seek(
             session->transport = LAPIS_TRANSPORT_SEEKING;
             pipeline = session->pipeline;
         }
+
+        // A Seek increments the public Epoch. Retire the independent cue
+        // worker before the media graph moves to the new generation.
+        pipeline->subtitle_timeline.reset();
 
         lapis::media::PlaybackExecutionResult seek_result{};
         try {
