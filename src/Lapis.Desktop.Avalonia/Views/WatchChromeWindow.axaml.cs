@@ -30,6 +30,16 @@ public sealed partial class WatchChromeWindow : Window
     private readonly TextBlock _subtitleText;
     private readonly TextBlock _subtitleShadow;
     private readonly Slider _timeline;
+    private readonly ComboBox _subtitlePicker;
+    private string? _subtitleVideoPath;
+    private CancellationToken _subtitleLifetimeToken;
+    private CancellationTokenSource? _subtitleChoiceCancellation;
+    private int _subtitleChoiceGeneration;
+    private bool _settingSubtitleChoices;
+    private sealed record SubtitleChoice(string Label, string? Path, bool Off = false)
+    {
+        public override string ToString() => Label;
+    }
     private readonly Button _discHeader;
     private readonly Button _discBottom;
     private readonly ItemsControl _playlistIndex;
@@ -56,6 +66,8 @@ public sealed partial class WatchChromeWindow : Window
         _subtitleText = this.FindControl<TextBlock>("WatchSubtitleText")!;
         _subtitleShadow = this.FindControl<TextBlock>("WatchSubtitleShadow")!;
         _timeline = this.FindControl<Slider>("WatchTimeline")!;
+        _subtitlePicker = this.FindControl<ComboBox>("WatchSubtitlePicker")!;
+        _subtitlePicker.SelectionChanged += SubtitlePickerChanged;
         _discHeader = this.FindControl<Button>("WatchDiscToggle")!;
         _discBottom = this.FindControl<Button>("WatchDiscBottom")!;
         _playlistIndex = this.FindControl<ItemsControl>("WatchDiscPlaylistList")!;
@@ -91,8 +103,92 @@ public sealed partial class WatchChromeWindow : Window
 
     public void SetSubtitleTrack(SidecarSubtitleTrack track)
     {
+        if (_disposed) return;
         _subtitleTrack = track;
         UpdateSubtitle();
+    }
+
+    /// <summary>
+    /// Publish subtitle choices only for this Watch session. The initial
+    /// "Auto" entry uses the track already loaded by MainWindow, so there is
+    /// no second disk read on first display.
+    /// </summary>
+    public async Task ConfigureSubtitleChoicesAsync(
+        string videoPath, CancellationToken cancellationToken)
+    {
+        var files = await SidecarSubtitleTrack.DiscoverForFileAsync(
+            videoPath, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_disposed) return;
+
+        _subtitleVideoPath = videoPath;
+        _subtitleLifetimeToken = cancellationToken;
+        var choices = new List<SubtitleChoice>
+        {
+            new("字幕：自動", null),
+            new("字幕：關閉", null, Off: true)
+        };
+        choices.AddRange(files.Select(file =>
+            new SubtitleChoice(file.DisplayName, file.FilePath)));
+
+        _settingSubtitleChoices = true;
+        try
+        {
+            _subtitlePicker.ItemsSource = choices;
+            _subtitlePicker.SelectedIndex = 0;
+            _subtitlePicker.IsVisible = files.Count != 0;
+        }
+        finally { _settingSubtitleChoices = false; }
+    }
+
+    private async void SubtitlePickerChanged(object? sender, SelectionChangedEventArgs args)
+    {
+        if (_disposed || _settingSubtitleChoices ||
+            _subtitlePicker.SelectedItem is not SubtitleChoice choice ||
+            _subtitleVideoPath is null)
+            return;
+
+        // Every selection starts a new generation. A slow previous read must
+        // not publish after the user picked another language or turned it off.
+        var generation = ++_subtitleChoiceGeneration;
+        _subtitleChoiceCancellation?.Cancel();
+        _subtitleChoiceCancellation?.Dispose();
+        _subtitleChoiceCancellation = null;
+        NotifyPointerActivity();
+        SetSubtitleTrack(SidecarSubtitleTrack.Empty);
+        if (choice.Off) return;
+
+        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            _subtitleLifetimeToken);
+        _subtitleChoiceCancellation = cancellation;
+        try
+        {
+            var track = choice.Path is null
+                ? await SidecarSubtitleTrack.LoadForFileAsync(
+                    _subtitleVideoPath, cancellation.Token)
+                : await SidecarSubtitleTrack.LoadExactFileAsync(
+                    choice.Path, cancellation.Token);
+            if (!_disposed && generation == _subtitleChoiceGeneration &&
+                !cancellation.IsCancellationRequested)
+                SetSubtitleTrack(track);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            // Obsolete selection or the Watch session has closed.
+        }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Trace.TraceWarning(
+                "Lapis subtitle selection failed: {0}", exception);
+        }
+        finally
+        {
+            if (ReferenceEquals(_subtitleChoiceCancellation, cancellation))
+            {
+                _subtitleChoiceCancellation = null;
+                cancellation.Dispose();
+            }
+        }
     }
 
     public void NotifyPointerActivity()
@@ -124,7 +220,7 @@ public sealed partial class WatchChromeWindow : Window
             }
         }
 
-        if (_player.TransportText != "Playing" || _sidebarOpen)
+        if (_player.TransportText != "Playing" || _sidebarOpen || _subtitlePicker.IsDropDownOpen)
             SetChromeVisible(true);
         else if ((DateTime.UtcNow - _lastActivity).TotalMilliseconds >= 3000)
             SetChromeVisible(false);
@@ -173,6 +269,11 @@ public sealed partial class WatchChromeWindow : Window
 
     private async void OnOverlayKeyDown(object? sender, KeyEventArgs args)
     {
+        // Let the subtitle selector own its keys, particularly Escape and
+        // Left/Right. Do not seek or leave Watch while choosing a subtitle.
+        if (_subtitlePicker.IsDropDownOpen ||
+            args.Source is ComboBox or ComboBoxItem)
+            return;
         switch (args.Key)
         {
             case Key.Escape:
@@ -249,6 +350,11 @@ public sealed partial class WatchChromeWindow : Window
     {
         if (_disposed) return;
         _disposed = true;
+        ++_subtitleChoiceGeneration;
+        _subtitleChoiceCancellation?.Cancel();
+        _subtitleChoiceCancellation?.Dispose();
+        _subtitleChoiceCancellation = null;
+        _subtitlePicker.SelectionChanged -= SubtitlePickerChanged;
         _clock.Stop();
         _clock.Tick -= ClockTick;
         _player.PropertyChanged -= PlayerChanged;

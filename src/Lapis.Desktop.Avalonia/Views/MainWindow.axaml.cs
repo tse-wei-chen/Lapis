@@ -668,7 +668,11 @@ public sealed partial class MainWindow : Window
                 // A slow subtitle read may finish after Back or a newer Watch.
                 if (watchGeneration == _watchGeneration &&
                     ReferenceEquals(_watchChrome, chrome))
+                {
                     chrome.SetSubtitleTrack(track);
+                    await chrome.ConfigureSubtitleChoicesAsync(source.Value,
+                        cancellation.Token);
+                }
             }
         }
         catch (OperationCanceledException) when (watchGeneration != _watchGeneration)
