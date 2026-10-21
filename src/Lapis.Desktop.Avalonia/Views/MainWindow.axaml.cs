@@ -657,8 +657,20 @@ public sealed partial class MainWindow : Window
                 ? DiscPlaylistIndex.ListIdentifiers(item)
                     .Select(id => id + ".mpls").ToArray()
                 : [];
+            // Build a per-Watch registry: local SRT remains Auto, WebVTT
+            // stays selectable, and only the active file playback session
+            // may expose supported embedded text streams. No PGS text entry.
+            var watchSources = source.Kind == MediaLocatorKind.File &&
+                               _player.EmbeddedSubtitlePlayback is { } embedded
+                ? new TextSubtitleSourceCatalog(
+                [
+                    new SidecarSrtTextSubtitleSource(),
+                    new SidecarWebVttTextSubtitleSource(),
+                    new EmbeddedTextSubtitleSource(embedded, source.Value)
+                ])
+                : _subtitleSources;
             var chrome = new WatchChromeWindow(this, _player, playlists,
-                BackToLibraryAsync, ToggleWatchFullscreen, _subtitleSources);
+                BackToLibraryAsync, ToggleWatchFullscreen, watchSources);
             _watchChrome = chrome;
             if (source.Kind == MediaLocatorKind.File)
             {

@@ -36,6 +36,7 @@ public sealed partial class WatchChromeWindow : Window
     private CancellationToken _subtitleLifetimeToken;
     private CancellationTokenSource? _subtitleChoiceCancellation;
     private int _subtitleChoiceGeneration;
+    private ulong? _embeddedSelectionEpoch;
     private bool _settingSubtitleChoices;
     private sealed record SubtitleChoice(string Label, TextSubtitleDescriptor? Track, bool Off = false)
     {
@@ -152,7 +153,17 @@ public sealed partial class WatchChromeWindow : Window
             _subtitlePicker.SelectedItem is not SubtitleChoice choice ||
             _subtitleVideoPath is null)
             return;
+        await LoadSubtitleChoiceAsync(choice);
+    }
 
+    private async Task LoadSubtitleChoiceAsync(SubtitleChoice choice)
+    {
+        if (_disposed || _subtitleVideoPath is null) return;
+
+        // The selected descriptor survives Seek; its decoded cues do not.
+        // The view clock schedules a fresh load when playback Epoch changes.
+        _embeddedSelectionEpoch = choice.Track?.Kind == TextSubtitleSourceKind.EmbeddedText
+            ? _player.PlaybackSnapshot.Epoch.Value : null;
         // Every selection starts a new generation. A slow previous read must
         // not publish after the user picked another language or turned it off.
         var generation = ++_subtitleChoiceGeneration;
@@ -210,6 +221,22 @@ public sealed partial class WatchChromeWindow : Window
     {
         if (_disposed || !_owner.IsVisible) return;
         SyncBounds();
+
+        // A native Seek advances the epoch and retires the subtitle worker.
+        // Old completed tracks self-hide immediately; reload the selected
+        // embedded stream at most once per new playback generation.
+        var playback = _player.PlaybackSnapshot;
+        if (_subtitlePicker.SelectedItem is SubtitleChoice
+            { Track.Kind: TextSubtitleSourceKind.EmbeddedText } selected &&
+            _embeddedSelectionEpoch != playback.Epoch.Value &&
+            playback.Transport is (Lapis.Contracts.Playback.TransportState.Ready or
+                Lapis.Contracts.Playback.TransportState.Playing or
+                Lapis.Contracts.Playback.TransportState.Paused or
+                Lapis.Contracts.Playback.TransportState.Ended))
+        {
+            SetSubtitleTrack(SidecarSubtitleTrack.Empty);
+            _ = LoadSubtitleChoiceAsync(selected);
+        }
 
         // Video is a *different HWND* and swallows Avalonia pointer events.
         // Detect mouse motion through Win32 to reveal chrome above the GPU.

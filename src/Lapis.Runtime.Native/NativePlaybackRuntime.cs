@@ -29,6 +29,26 @@ public sealed class NativeMediaRuntimeException : Exception
 /// </summary>
 public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfaceBinding, IPlaybackRuntimeObserver, IChapterNavigationRuntime, IEmbeddedSubtitleTrackInventoryRuntime, IEmbeddedTextSubtitleCueRuntime
 {
+    public bool SupportsEmbeddedTextSubtitleCues
+    {
+        get
+        {
+            lock (_gate)
+            {
+                if (_disposed || _session is null) return false;
+                try
+                {
+                    return _api.GetTextSubtitleCuesApiVersion() ==
+                        NativeAbi.TextSubtitleCuesVersion;
+                }
+                catch (EntryPointNotFoundException)
+                {
+                    return false;
+                }
+            }
+        }
+    }
+
     private readonly object _gate = new();
     private readonly INativeMediaRuntimeApi _api;
     private readonly RuntimeLease _runtime;

@@ -11,6 +11,12 @@ namespace Lapis.Application.Runtime;
 public interface IEmbeddedTextSubtitleCueRuntime
 {
     /// <summary>
+    /// True only if the installed native runtime implements the optional
+    /// cue decoder extension, not merely subtitle stream enumeration.
+    /// </summary>
+    bool SupportsEmbeddedTextSubtitleCues { get; }
+
+    /// <summary>
     /// Start or replace a text-only subtitle load. May retire a previous
     /// worker; callers must not block the UI thread while joining it.
     /// </summary>

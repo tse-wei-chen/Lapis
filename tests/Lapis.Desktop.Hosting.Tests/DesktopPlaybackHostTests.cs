@@ -207,6 +207,88 @@ public sealed class DesktopPlaybackHostTests
             host.TogglePlayPauseAsync());
     }
 
+    [Fact]
+    public async Task EmbeddedSubtitleCallsAreBoundToCurrentSessionAndEpoch()
+    {
+        var calls = new List<string>();
+        var runtime = new FakeRuntime(calls);
+        await using var host = new DesktopPlaybackHost(
+            runtime, new FakeSurfaceBinding(calls));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            host.ReadEmbeddedSubtitleTracksAsync(host.Snapshot));
+
+        await host.OpenAndPlayAsync("subtitle-film.mkv", (nint)111);
+        var first = host.Snapshot;
+        Assert.True(await host.SupportsEmbeddedTextSubtitleCuesAsync(first));
+        var inventory = await host.ReadEmbeddedSubtitleTracksAsync(first);
+        var track = Assert.Single(inventory);
+        Assert.Equal(3U, track.StreamIndex);
+        await host.StartEmbeddedTextSubtitleLoadAsync(track.StreamIndex, first);
+        var page = await host.ReadEmbeddedTextSubtitleCuesAsync(0, first);
+        Assert.Equal("Host cue", Assert.Single(page.Cues).Text);
+        Assert.All(runtime.SubtitleContexts, c =>
+        {
+            Assert.Equal(first.SessionId, c.SessionId);
+            Assert.Equal(first.Epoch, c.Epoch);
+        });
+
+        await host.SeekAsync(TimeSpan.FromSeconds(12));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            host.ReadEmbeddedTextSubtitleCuesAsync(0, first));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            host.StartEmbeddedTextSubtitleLoadAsync(track.StreamIndex, first));
+        var second = host.Snapshot;
+        await host.StartEmbeddedTextSubtitleLoadAsync(track.StreamIndex, second);
+        Assert.Equal(second.Epoch, runtime.SubtitleContexts[^1].Epoch);
+
+        await host.CloseMediaAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            host.ReadEmbeddedSubtitleTracksAsync(second));
+    }
+
+    [Fact]
+    public async Task HostHidesUnsupportedEmbeddedCueExtension()
+    {
+        var calls = new List<string>();
+        var runtime = new FakeRuntime(calls)
+        {
+            SupportsEmbeddedTextSubtitleCues = false
+        };
+        await using var host = new DesktopPlaybackHost(
+            runtime, new FakeSurfaceBinding(calls));
+        await host.OpenAndPlayAsync("film.mkv", (nint)111);
+        Assert.False(await host.SupportsEmbeddedTextSubtitleCuesAsync(host.Snapshot));
+    }
+
+    [Fact]
+    public async Task SeekCannotOvertakeAnActiveSubtitleLoad()
+    {
+        var calls = new List<string>();
+        var runtime = new FakeRuntime(calls)
+        {
+            WaitForSubtitleStart = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously)
+        };
+        await using var host = new DesktopPlaybackHost(
+            runtime, new FakeSurfaceBinding(calls));
+        await host.OpenAndPlayAsync("subtitle-film.mkv", (nint)111);
+        var before = host.Snapshot;
+
+        var load = host.StartEmbeddedTextSubtitleLoadAsync(3, before);
+        await runtime.SubtitleStartEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var seek = host.SeekAsync(TimeSpan.FromSeconds(2));
+
+        Assert.False(seek.IsCompleted);
+        runtime.WaitForSubtitleStart.SetResult();
+        await load;
+        await seek;
+        Assert.Equal(TransportState.Playing, host.Snapshot.Transport);
+        Assert.Equal(2UL, host.Snapshot.Epoch.Value);
+        Assert.Equal("subtitle-start:1", calls[^2]);
+        Assert.Equal("seek:2:2000000000", calls[^1]);
+    }
+
     private sealed class FakeSurfaceBinding(List<string> calls) : IVideoOutputSurfaceBinding
     {
         public bool ThrowOnDetach { get; set; }
@@ -235,9 +317,51 @@ public sealed class DesktopPlaybackHostTests
         }
     }
 
-    private sealed class FakeRuntime(List<string> calls) : IPlaybackRuntime
+    private sealed class FakeRuntime(List<string> calls) :
+        IPlaybackRuntime, IEmbeddedSubtitleTrackInventoryRuntime,
+        IEmbeddedTextSubtitleCueRuntime
     {
         public MediaLocator? LastLocator { get; private set; }
+
+        public bool SupportsEmbeddedTextSubtitleCues { get; set; } = true;
+        public List<RuntimeCommandContext> SubtitleContexts { get; } = [];
+        public TaskCompletionSource SubtitleStartEntered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource? WaitForSubtitleStart { get; set; }
+
+        public ValueTask<IReadOnlyList<EmbeddedSubtitleTrack>> ReadEmbeddedSubtitleTracksAsync(
+            RuntimeCommandContext context, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            SubtitleContexts.Add(context);
+            return ValueTask.FromResult<IReadOnlyList<EmbeddedSubtitleTrack>>(
+                [new EmbeddedSubtitleTrack(3, EmbeddedSubtitleTrackFormat.Text,
+                    "eng", "subrip")]);
+        }
+
+        public async ValueTask StartEmbeddedTextSubtitleLoadAsync(
+            uint streamIndex, RuntimeCommandContext context,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Assert.Equal(3U, streamIndex);
+            SubtitleContexts.Add(context);
+            calls.Add($"subtitle-start:{context.Epoch.Value}");
+            SubtitleStartEntered.TrySetResult();
+            if (WaitForSubtitleStart is { } wait)
+                await wait.Task.WaitAsync(cancellationToken);
+        }
+
+        public ValueTask<EmbeddedTextSubtitleCuePage> ReadEmbeddedTextSubtitleCuesAsync(
+            uint startIndex, RuntimeCommandContext context,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            SubtitleContexts.Add(context);
+            return ValueTask.FromResult(new EmbeddedTextSubtitleCuePage(
+                EmbeddedTextSubtitleLoadState.Ready, 1,
+                [new EmbeddedTextSubtitleCue(0, 2_000_000_000, "Host cue")]));
+        }
 
         public ValueTask<RuntimeOpenResult> OpenAsync(
             MediaLocator locator,

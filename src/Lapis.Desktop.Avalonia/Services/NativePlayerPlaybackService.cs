@@ -11,7 +11,7 @@ namespace Lapis.Desktop.Avalonia.Services;
 /// The existing UI-neutral DesktopPlaybackHost owns every playback command.
 /// </summary>
 public sealed class NativePlayerPlaybackService(Func<nint> getVideoHwnd)
-    : IPlayerPlaybackService
+    : IPlayerPlaybackService, IEmbeddedSubtitlePlaybackService
 {
     private readonly PlaybackSnapshot _initial =
         PlaybackSnapshot.CreateInitial(PlaybackSessionId.New());
@@ -70,6 +70,26 @@ public sealed class NativePlayerPlaybackService(Func<nint> getVideoHwnd)
     public IAsyncEnumerable<PlaybackSnapshot> ObserveSnapshotsAsync(
         CancellationToken cancellationToken) =>
         RequireHost().ObserveSnapshotsAsync(cancellationToken);
+
+    public Task<bool> SupportsEmbeddedTextSubtitleCuesAsync(
+        PlaybackSnapshot expected, CancellationToken cancellationToken) =>
+        RequireHost().SupportsEmbeddedTextSubtitleCuesAsync(expected, cancellationToken);
+
+    public Task<IReadOnlyList<EmbeddedSubtitleTrack>> ReadEmbeddedSubtitleTracksAsync(
+        PlaybackSnapshot expected, CancellationToken cancellationToken) =>
+        RequireHost().ReadEmbeddedSubtitleTracksAsync(expected, cancellationToken);
+
+    public Task StartEmbeddedTextSubtitleLoadAsync(
+        uint streamIndex, PlaybackSnapshot expected,
+        CancellationToken cancellationToken) =>
+        RequireHost().StartEmbeddedTextSubtitleLoadAsync(
+            streamIndex, expected, cancellationToken);
+
+    public Task<EmbeddedTextSubtitleCuePage> ReadEmbeddedTextSubtitleCuesAsync(
+        uint startIndex, PlaybackSnapshot expected,
+        CancellationToken cancellationToken) =>
+        RequireHost().ReadEmbeddedTextSubtitleCuesAsync(
+            startIndex, expected, cancellationToken);
 
     private DesktopPlaybackHost RequireHost() =>
         _host ?? throw new InvalidOperationException("No media has been opened.");
