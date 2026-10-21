@@ -21,6 +21,9 @@ extern "C" {
 #define LAPIS_DIAGNOSTICS_API_VERSION 1u
 /* Separate, optional read-only navigation extension; ABI v2 stays unchanged. */
 #define LAPIS_NAVIGATION_API_VERSION 1u
+/* Read-only embedded subtitle stream inventory; no subtitle decoding. */
+#define LAPIS_SUBTITLE_TRACKS_API_VERSION 1u
+#define LAPIS_SUBTITLE_TRACK_MAX 64u
 #define LAPIS_DIAGNOSTIC_RING_CAPACITY 128u
 
 /* Optional source-provider feature mask. This is build capability, not
@@ -65,6 +68,7 @@ typedef enum lapis_result {
     LAPIS_E_ABI_MISMATCH = 5,
     LAPIS_E_UNSUPPORTED = 6,
     LAPIS_E_OUTPUT_UNAVAILABLE = 7,
+    LAPIS_E_BUFFER_TOO_SMALL = 8,
     LAPIS_E_INTERNAL = 100
 } lapis_result;
 
@@ -109,6 +113,23 @@ typedef struct lapis_diagnostic_event {
     uint32_t removed_reason;
     uint64_t detail;
 } lapis_diagnostic_event;
+
+/* Stable, fixed-width, pointer-free descriptor. Encoded as UTF-8, NUL
+ * terminated and truncated at a codepoint boundary when necessary.
+ * Stream indexes are FFmpeg container stream indexes, NOT an ordinal within
+ * this returned list. Bitmap tracks (PGS/DVD) are metadata only. */
+typedef enum lapis_subtitle_track_kind {
+    LAPIS_SUBTITLE_TRACK_UNKNOWN = 0,
+    LAPIS_SUBTITLE_TRACK_TEXT = 1,
+    LAPIS_SUBTITLE_TRACK_BITMAP = 2
+} lapis_subtitle_track_kind;
+
+typedef struct lapis_subtitle_track_info {
+    uint32_t stream_index;
+    uint32_t kind;
+    char language_utf8[24];
+    char codec_name_utf8[40];
+} lapis_subtitle_track_info;
 
 typedef struct lapis_playback_snapshot {
     lapis_playback_session_id session_id;
@@ -184,6 +205,23 @@ LAPIS_API lapis_result lapis_session_read_diagnostic_events(
  * The output is zeroed on every error. No BD-J or menu action occurs.
  */
 LAPIS_API uint32_t lapis_runtime_get_navigation_api_version(void);
+
+/* Optional metadata extension: look up version export at runtime before
+ * calling either entrypoint when supporting older Lapis DLLs.
+ *
+ * Probe: tracks=NULL, capacity=0; out_count returns total tracks (<=64).
+ * If capacity < total, returns BUFFER_TOO_SMALL and leaves tracks untouched.
+ * On invalid/stale/closed requests, *out_count is set to zero.
+ * Uses the same command/epoch fence as Open/Seek/Close, but NEVER decodes.
+ * Enumerated tracks are not automatically renderable/selected.
+ */
+LAPIS_API uint32_t lapis_runtime_get_subtitle_tracks_api_version(void);
+LAPIS_API lapis_result lapis_session_list_subtitle_tracks(
+    lapis_session* session,
+    lapis_playback_epoch expected_epoch,
+    lapis_subtitle_track_info* tracks,
+    uint32_t capacity,
+    uint32_t* out_count);
 LAPIS_API lapis_result lapis_session_resolve_chapter(
     lapis_session* session,
     uint32_t chapter_id,

@@ -4,11 +4,15 @@
 
 extern "C" {
 #include <libavcodec/packet.h>
+#include <libavcodec/codec_desc.h>
+#include <libavutil/dict.h>
 #include <libavutil/avutil.h>
 #include <libavutil/mathematics.h>
 }
 
+#include <algorithm>
 #include <cstdint>
+#include <utility>
 #include <cstring>
 #include <limits>
 #include <string>
@@ -160,6 +164,52 @@ std::optional<FfmpegAudioStreamInfo> FfmpegDemuxer::best_audio_stream() const no
         timestamp_origin_,
         stream->codecpar
     };
+}
+
+std::vector<SubtitleStreamInfo> FfmpegDemuxer::inspect_subtitle_streams(
+    const AVFormatContext& context) {
+    // FFmpeg exposes a subtitle stream even when its actual subtitle decoder
+    // is unavailable. Listing is NOT a claim that we can render the track.
+    constexpr unsigned int max_tracks = 64;
+    std::vector<SubtitleStreamInfo> tracks;
+    tracks.reserve(std::min(context.nb_streams, max_tracks));
+    if (context.streams == nullptr) return tracks;
+
+    for (unsigned int i = 0; i < context.nb_streams && tracks.size() < max_tracks; ++i) {
+        const auto* stream = context.streams[i];
+        if (stream == nullptr || stream->codecpar == nullptr ||
+            stream->codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE) continue;
+
+        const auto codec = stream->codecpar->codec_id;
+        const auto* descriptor = avcodec_descriptor_get(codec);
+        SubtitleTrackKind kind = SubtitleTrackKind::Unknown;
+        if (descriptor != nullptr && (descriptor->props & AV_CODEC_PROP_TEXT_SUB) != 0)
+            kind = SubtitleTrackKind::Text;
+        else if (descriptor != nullptr && (descriptor->props & AV_CODEC_PROP_BITMAP_SUB) != 0)
+            kind = SubtitleTrackKind::Bitmap;
+
+        const auto* language = av_dict_get(stream->metadata, "language", nullptr, 0);
+        // ISO 639 / BCP47 tags fit the public ABI. Bound allocations even
+        // when container metadata is untrusted or malformed.
+        std::string language_tag;
+        if (language != nullptr && language->value != nullptr) {
+            for (std::size_t j = 0; j < 23 && language->value[j] != '\0'; ++j)
+                language_tag.push_back(language->value[j]);
+        }
+        tracks.push_back(SubtitleStreamInfo{
+            static_cast<std::uint32_t>(i),
+            kind,
+            std::move(language_tag),
+            std::string(avcodec_get_name(codec))
+        });
+    }
+    return tracks;
+}
+
+std::vector<SubtitleStreamInfo> FfmpegDemuxer::subtitle_streams() const {
+    return format_ != nullptr
+        ? inspect_subtitle_streams(*format_)
+        : std::vector<SubtitleStreamInfo>{};
 }
 
 int FfmpegDemuxer::read_packet(AVPacket& packet) {

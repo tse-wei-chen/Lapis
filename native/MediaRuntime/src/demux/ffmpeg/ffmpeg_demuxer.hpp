@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/media_time.hpp"
+#include "core/subtitle_stream_info.hpp"
 #include "demux/ffmpeg/ffmpeg_packet_router.hpp"
 #include "source/media_source.hpp"
 
@@ -11,6 +12,7 @@ extern "C" {
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 namespace lapis::media::ffmpeg {
 
@@ -46,6 +48,11 @@ public:
     [[nodiscard]] std::optional<MediaTime> duration() const noexcept;
     [[nodiscard]] std::optional<FfmpegVideoStreamInfo> best_video_stream() const noexcept;
     [[nodiscard]] std::optional<FfmpegAudioStreamInfo> best_audio_stream() const noexcept;
+    // Enumerate without retaining any FFmpeg-owned objects in the result.
+    [[nodiscard]] std::vector<SubtitleStreamInfo> subtitle_streams() const;
+    // A standalone probe for native fixtures; does not read/decode packets.
+    [[nodiscard]] static std::vector<SubtitleStreamInfo> inspect_subtitle_streams(
+        const AVFormatContext& context);
     int read_packet(AVPacket& packet) override;
     [[nodiscard]] bool seek(MediaTime target, int stream_index);
 
