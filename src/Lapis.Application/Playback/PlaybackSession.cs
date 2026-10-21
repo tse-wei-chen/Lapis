@@ -16,6 +16,9 @@ public sealed class PlaybackSession : IAsyncDisposable
 {
     private const int CommandCapacity = 64;
     private const int SnapshotCapacity = 32;
+    // Do not request the exclusive end timestamp: indexed demuxers may have
+    // no packet there and turn an ordinary timeline drag into a fatal seek.
+    private const long EndSeekSafetyMarginNanoseconds = 250_000_000;
 
     private readonly IPlaybackRuntime _runtime;
     private readonly Channel<CommandEnvelope> _commands;
@@ -244,6 +247,11 @@ public sealed class PlaybackSession : IAsyncDisposable
             {
                 envelope.Completion.TrySetException(exception);
             }
+            catch (ArgumentOutOfRangeException exception)
+            {
+                // Invalid user input must not fault an otherwise healthy player.
+                envelope.Completion.TrySetException(exception);
+            }
             catch (NotSupportedException exception)
             {
                 // Unsupported optional source capabilities are user-command
@@ -252,17 +260,20 @@ public sealed class PlaybackSession : IAsyncDisposable
             }
             catch (Exception exception)
             {
-                Publish(_snapshot with
+                if (_snapshot.Transport != TransportState.Faulted)
                 {
-                    Transport = TransportState.Faulted,
-                    LastError = new PlayerError(
-                        "Playback",
-                        "RuntimeFailure",
-                        ErrorSeverity.Error,
-                        ErrorRecoverability.Retryable,
-                        exception.Message,
-                        exception.GetType().FullName)
-                });
+                    Publish(_snapshot with
+                    {
+                        Transport = TransportState.Faulted,
+                        LastError = new PlayerError(
+                            "Playback",
+                            "RuntimeFailure",
+                            ErrorSeverity.Error,
+                            ErrorRecoverability.Retryable,
+                            exception.Message,
+                            exception.GetType().FullName)
+                    });
+                }
 
                 envelope.Completion.TrySetException(exception);
             }
@@ -434,16 +445,48 @@ public sealed class PlaybackSession : IAsyncDisposable
         CancellationToken cancellationToken)
     {
         EnsureTransport(TransportState.Ready, TransportState.Playing, TransportState.Paused);
+        if (command.Position.Nanoseconds < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(command),
+                "The seek position cannot be negative.");
+        }
+
+        var position = command.Position;
+        if (_snapshot.Duration is { Nanoseconds: > 0 } duration &&
+            position.Nanoseconds >= duration.Nanoseconds)
+        {
+            // Seeking to exactly Duration frequently selects EOF instead of a
+            // decodable frame, particularly for MPEG-TS and short GOP endings.
+            position = new MediaTime(Math.Max(0,
+                duration.Nanoseconds - EndSeekSafetyMarginNanoseconds));
+        }
 
         var returnState = _snapshot.Transport;
         _epoch = _epoch.Next();
         Publish(_snapshot with { Epoch = _epoch, Transport = TransportState.Seeking, LastError = null });
 
-        await _runtime.SeekAsync(command.Position, Context(), cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _runtime.SeekAsync(position, Context(), cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Native Seek already retired the old Epoch before reporting an
+            // error. Never leave managed observers stranded in Seeking.
+            Publish(_snapshot with
+            {
+                Transport = TransportState.Faulted,
+                LastError = new PlayerError(
+                    "Playback", "SeekFailed", ErrorSeverity.Error,
+                    ErrorRecoverability.Retryable, exception.Message,
+                    exception.GetType().FullName)
+            });
+            throw;
+        }
 
         Publish(_snapshot with
         {
-            Position = command.Position,
+            Position = position,
             Transport = returnState,
             LastError = null
         });

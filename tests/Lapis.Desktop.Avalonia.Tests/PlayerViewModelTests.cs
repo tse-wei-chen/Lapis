@@ -73,6 +73,43 @@ public sealed class PlayerViewModelTests
         Assert.True(viewModel.CanSeek);
     }
 
+    [Theory]
+    [InlineData(true, 22)]
+    [InlineData(false, 2)]
+    public async Task RelativeSeekCommandsWorkInsideTheBusyCommandGate(
+        bool forward, int expectedSeconds)
+    {
+        var fake = new FakePlayer();
+        await using var viewModel = new PlayerViewModel(fake);
+        await viewModel.OpenAsync(new MediaLocator(MediaLocatorKind.File, "movie.mkv"));
+
+        if (forward) viewModel.ForwardCommand.Execute(null);
+        else viewModel.BackCommand.Execute(null);
+
+        var applied = await fake.SeekObserved.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), applied);
+        Assert.Equal(1, fake.SeekCount);
+    }
+
+    [Fact]
+    public async Task RepeatedForwardInputDoesNotQueueSeeksWhileOneIsInFlight()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fake = new FakePlayer { PendingSeekRelease = release.Task };
+        await using var viewModel = new PlayerViewModel(fake);
+        await viewModel.OpenAsync(new MediaLocator(MediaLocatorKind.File, "movie.mkv"));
+
+        viewModel.ForwardCommand.Execute(null);
+        await fake.SeekObserved.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        for (var count = 0; count < 10; ++count)
+            viewModel.ForwardCommand.Execute(null);
+
+        release.TrySetResult();
+        // Close is sequenced after any mistakenly enqueued seeks.
+        await viewModel.CloseAsync();
+        Assert.Equal(1, fake.SeekCount);
+    }
+
     [Fact]
     public async Task NewEpochInvalidatesOldScrubAndCancellationDoesNotSeek()
     {
@@ -117,6 +154,9 @@ public sealed class PlayerViewModelTests
         public bool FailOpen { get; set; }
         public int SeekCount { get; private set; }
         public TimeSpan? LastSeek { get; private set; }
+        public TaskCompletionSource<TimeSpan> SeekObserved { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task? PendingSeekRelease { get; init; }
         public void AdvanceEpoch() =>
             Snapshot = Snapshot with { Epoch = new PlaybackEpoch(Snapshot.Epoch.Value + 1) };
         public TransportState OpenTransport { get; set; } = TransportState.Playing;
@@ -144,12 +184,13 @@ public sealed class PlayerViewModelTests
         {
             SeekCount++;
             LastSeek = position;
+            SeekObserved.TrySetResult(position);
             Snapshot = Snapshot with
             {
                 Epoch = new PlaybackEpoch(Snapshot.Epoch.Value + 1),
                 Position = Lapis.Contracts.Time.MediaTime.FromTimeSpan(position)
             };
-            return Task.CompletedTask;
+            return PendingSeekRelease ?? Task.CompletedTask;
         }
         public Task CloseAsync(CancellationToken cancellationToken) =>
             Task.CompletedTask;

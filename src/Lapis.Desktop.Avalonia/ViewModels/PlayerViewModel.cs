@@ -41,8 +41,8 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
             () => RunAsync(ToggleCoreAsync));
         StopCommand = new AsyncCommand(
             () => RunAsync(() => _player.CloseAsync(_lifetime.Token)));
-        BackCommand = new AsyncCommand(() => RunAsync(() => SeekRelativeAsync(-10)));
-        ForwardCommand = new AsyncCommand(() => RunAsync(() => SeekRelativeAsync(10)));
+        BackCommand = new AsyncCommand(() => RunRelativeSeekAsync(-10));
+        ForwardCommand = new AsyncCommand(() => RunRelativeSeekAsync(10));
     }
 
     // Observational only. The service/host still fences every optional
@@ -79,9 +79,10 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
     public bool CanTransport => !_busy && _currentMedia is not null &&
         _transport is TransportState.Ready or TransportState.Playing
             or TransportState.Paused or TransportState.Ended;
-    public bool CanSeek => !_busy && _currentMedia is not null &&
+    private bool HasSeekableTransport => _currentMedia is not null &&
         _transport is TransportState.Ready or TransportState.Playing
             or TransportState.Paused;
+    public bool CanSeek => !_busy && HasSeekableTransport;
     public bool CanScrub => CanSeek &&
         _player.Snapshot.Duration is { Nanoseconds: > 0 };
 
@@ -174,9 +175,20 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
             await _player.ToggleAsync(_lifetime.Token);
     }
 
+    private Task RunRelativeSeekAsync(int deltaSeconds)
+    {
+        // Repeated key/gamepad events must not queue a train of expensive
+        // stop-demux-rebuild operations while a seek is already executing.
+        if (!CanSeek) return Task.CompletedTask;
+        return RunAsync(() => SeekRelativeAsync(deltaSeconds));
+    }
+
     private Task SeekRelativeAsync(int deltaSeconds)
     {
-        if (!CanSeek)
+        // RunAsync sets _busy before executing this command. CanSeek is a UI
+        // enabled-state (and is therefore false inside the command gate).
+        // Only inspect the actual playback state once serialization is held.
+        if (!HasSeekableTransport)
             return Task.CompletedTask;
         var position = _player.Snapshot.Position.ToTimeSpan() +
                        TimeSpan.FromSeconds(deltaSeconds);
