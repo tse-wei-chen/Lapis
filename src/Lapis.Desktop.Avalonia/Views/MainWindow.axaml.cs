@@ -29,6 +29,7 @@ public sealed partial class MainWindow : Window
     private readonly Border _legacyLibraryHeader;
     private readonly Grid _legacyLibraryBody;
     private WatchChromeWindow? _watchChrome;
+    private readonly TextSubtitleSourceCatalog _subtitleSources = TextSubtitleSourceCatalog.Default;
     // Invalidated when the Watch screen closes or a new request supersedes it.
     // Sidecar I/O is asynchronous and must not publish into a later session.
     private long _watchGeneration;
@@ -657,14 +658,15 @@ public sealed partial class MainWindow : Window
                     .Select(id => id + ".mpls").ToArray()
                 : [];
             var chrome = new WatchChromeWindow(this, _player, playlists,
-                BackToLibraryAsync, ToggleWatchFullscreen);
+                BackToLibraryAsync, ToggleWatchFullscreen, _subtitleSources);
             _watchChrome = chrome;
             if (source.Kind == MediaLocatorKind.File)
             {
                 var cancellation = new CancellationTokenSource();
                 _subtitleLoadCancellation = cancellation;
-                var track = await SidecarSubtitleTrack.LoadForFileAsync(
-                    source.Value, cancellation.Token);
+                var track = await _subtitleSources.LoadPreferredAsync(
+                    source.Value, System.Globalization.CultureInfo.CurrentUICulture,
+                    cancellation.Token);
                 // A slow subtitle read may finish after Back or a newer Watch.
                 if (watchGeneration == _watchGeneration &&
                     ReferenceEquals(_watchChrome, chrome))

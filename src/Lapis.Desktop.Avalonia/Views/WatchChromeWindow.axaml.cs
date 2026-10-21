@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using Lapis.Contracts.Media;
 using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
@@ -36,14 +37,15 @@ public sealed partial class WatchChromeWindow : Window
     private CancellationTokenSource? _subtitleChoiceCancellation;
     private int _subtitleChoiceGeneration;
     private bool _settingSubtitleChoices;
-    private sealed record SubtitleChoice(string Label, string? Path, bool Off = false)
+    private sealed record SubtitleChoice(string Label, TextSubtitleDescriptor? Track, bool Off = false)
     {
         public override string ToString() => Label;
     }
     private readonly Button _discHeader;
     private readonly Button _discBottom;
     private readonly ItemsControl _playlistIndex;
-    private SidecarSubtitleTrack _subtitleTrack = SidecarSubtitleTrack.Empty;
+    private readonly TextSubtitleSourceCatalog _subtitleSources;
+    private ITextSubtitleTrack _subtitleTrack = SidecarSubtitleTrack.Empty;
     private bool _sidebarOpen;
     private bool _chromeVisible = true;
     private bool _disposed;
@@ -58,6 +60,7 @@ public sealed partial class WatchChromeWindow : Window
         _player = null!;
         _back = null!;
         _fullscreenToggle = null!;
+        _subtitleSources = TextSubtitleSourceCatalog.Default;
         AvaloniaXamlLoader.Load(this);
         _header = this.FindControl<Border>("WatchHeader")!;
         _controls = this.FindControl<Border>("WatchControls")!;
@@ -75,13 +78,15 @@ public sealed partial class WatchChromeWindow : Window
     }
 
     public WatchChromeWindow(Window owner, PlayerViewModel player,
-        IReadOnlyList<string> playlists, Func<Task> back, Action fullscreenToggle)
+        IReadOnlyList<string> playlists, Func<Task> back, Action fullscreenToggle,
+        TextSubtitleSourceCatalog? subtitleSources = null)
         : this()
     {
         _owner = owner;
         _player = player;
         _back = back;
         _fullscreenToggle = fullscreenToggle;
+        _subtitleSources = subtitleSources ?? TextSubtitleSourceCatalog.Default;
         DataContext = player;
         _playlistIndex.ItemsSource = playlists;
         _discHeader.IsVisible = playlists.Count != 0;
@@ -101,7 +106,7 @@ public sealed partial class WatchChromeWindow : Window
         Show(owner);
     }
 
-    public void SetSubtitleTrack(SidecarSubtitleTrack track)
+    public void SetSubtitleTrack(ITextSubtitleTrack track)
     {
         if (_disposed) return;
         _subtitleTrack = track;
@@ -116,7 +121,7 @@ public sealed partial class WatchChromeWindow : Window
     public async Task ConfigureSubtitleChoicesAsync(
         string videoPath, CancellationToken cancellationToken)
     {
-        var files = await SidecarSubtitleTrack.DiscoverForFileAsync(
+        var tracks = await _subtitleSources.DiscoverAsync(
             videoPath, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         if (_disposed) return;
@@ -128,15 +133,15 @@ public sealed partial class WatchChromeWindow : Window
             new("字幕：自動", null),
             new("字幕：關閉", null, Off: true)
         };
-        choices.AddRange(files.Select(file =>
-            new SubtitleChoice(file.DisplayName, file.FilePath)));
+        choices.AddRange(tracks.Select(track =>
+            new SubtitleChoice(track.DisplayName, track)));
 
         _settingSubtitleChoices = true;
         try
         {
             _subtitlePicker.ItemsSource = choices;
             _subtitlePicker.SelectedIndex = 0;
-            _subtitlePicker.IsVisible = files.Count != 0;
+            _subtitlePicker.IsVisible = tracks.Count != 0;
         }
         finally { _settingSubtitleChoices = false; }
     }
@@ -163,11 +168,12 @@ public sealed partial class WatchChromeWindow : Window
         _subtitleChoiceCancellation = cancellation;
         try
         {
-            var track = choice.Path is null
-                ? await SidecarSubtitleTrack.LoadForFileAsync(
-                    _subtitleVideoPath, cancellation.Token)
-                : await SidecarSubtitleTrack.LoadExactFileAsync(
-                    choice.Path, cancellation.Token);
+            var track = choice.Track is null
+                ? await _subtitleSources.LoadPreferredAsync(
+                    _subtitleVideoPath, System.Globalization.CultureInfo.CurrentUICulture,
+                    cancellation.Token)
+                : await _subtitleSources.LoadAsync(
+                    _subtitleVideoPath, choice.Track, cancellation.Token);
             if (!_disposed && generation == _subtitleChoiceGeneration &&
                 !cancellation.IsCancellationRequested)
                 SetSubtitleTrack(track);
