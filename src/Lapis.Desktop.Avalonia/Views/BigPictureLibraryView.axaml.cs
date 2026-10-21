@@ -24,6 +24,7 @@ public sealed partial class BigPictureLibraryView : UserControl
 
     public event Action<LibraryCardViewModel>? PlayRequested;
     public event Action<LibraryCardViewModel>? ResumeRequested;
+    public event Action<LibraryCardViewModel>? ForgetHistoryRequested;
     public event Action? ImportRequested;
     public event Action? ImportDiscRequested;
     public event Action? ManageRequested;
@@ -93,6 +94,13 @@ public sealed partial class BigPictureLibraryView : UserControl
         ResumeRequested?.Invoke(card);
     }
 
+    private void DetailsForget_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Library?.FeaturedCard is not { HasWatchHistory: true } card) return;
+        CloseDetails();
+        ForgetHistoryRequested?.Invoke(card);
+    }
+
     public void RestoreMovieFocus()
     {
         if (!IsVisible) return;
@@ -112,6 +120,8 @@ public sealed partial class BigPictureLibraryView : UserControl
         Navigate(() => Library?.ShowDiscs());
     private void Videos_Click(object? sender, RoutedEventArgs e) =>
         Navigate(() => Library?.ShowVideos());
+    private void History_Click(object? sender, RoutedEventArgs e) =>
+        Navigate(() => Library?.ShowHistory());
 
     private void Navigate(Action navigate)
     {
@@ -182,7 +192,8 @@ public sealed partial class BigPictureLibraryView : UserControl
     private static readonly LibraryCategory[] Categories =
     [
         LibraryCategory.All, LibraryCategory.RecentlyAdded,
-        LibraryCategory.BluRay, LibraryCategory.Videos
+        LibraryCategory.BluRay, LibraryCategory.Videos,
+        LibraryCategory.History
     ];
 
     /// <summary>
@@ -266,6 +277,7 @@ public sealed partial class BigPictureLibraryView : UserControl
                 case LibraryCategory.RecentlyAdded: view.ShowRecentlyAdded(); break;
                 case LibraryCategory.BluRay: view.ShowDiscs(); break;
                 case LibraryCategory.Videos: view.ShowVideos(); break;
+                case LibraryCategory.History: view.ShowHistory(); break;
             }
         });
         RestoreMovieFocus();

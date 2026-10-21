@@ -4,27 +4,38 @@ using System.Text.Json.Serialization;
 namespace Lapis.Library;
 
 /// <summary>
-/// Playback bookmarks are deliberately independent of the media catalog and
-/// native execution lifecycle. Only seekable local-file titles are recorded.
+/// A lightweight, per-catalog watch snapshot. Completion means the playback
+/// reached the final 30 seconds or at least 95% of a seekable local movie.
 /// </summary>
 public sealed record WatchProgress(
     Guid ItemId, double PositionSeconds, double DurationSeconds, DateTimeOffset UpdatedAtUtc)
 {
     [JsonIgnore]
-    public bool IsResumable => ItemId != Guid.Empty &&
-        double.IsFinite(PositionSeconds) && double.IsFinite(DurationSeconds) &&
-        DurationSeconds >= 60 && PositionSeconds >= 20 &&
-        DurationSeconds - PositionSeconds >= 30 &&
-        PositionSeconds <= DurationSeconds * 0.95;
+    public bool IsHistoryEligible => ItemId != Guid.Empty &&
+        UpdatedAtUtc != default && double.IsFinite(PositionSeconds) &&
+        double.IsFinite(DurationSeconds) && DurationSeconds >= 60 &&
+        PositionSeconds >= 20 && PositionSeconds <= DurationSeconds;
+
+    [JsonIgnore]
+    public bool IsCompleted => IsHistoryEligible &&
+        (PositionSeconds >= DurationSeconds * 0.95 ||
+         (PositionSeconds >= DurationSeconds * 0.85 &&
+          DurationSeconds - PositionSeconds <= 30));
+
+    [JsonIgnore]
+    public bool IsResumable => IsHistoryEligible && !IsCompleted;
 }
 
 /// <summary>
-/// A single-process, atomic sidecar journal. Failed/unsupported records never
-/// become playable bookmarks. A completed title removes its old bookmark.
+/// Local single-process journal. A v1 sidecar with bookmarks only is read
+/// without data loss, then upgraded to v2 on the next successful write.
+/// Completed movies stay in History while disappearing from resumable Items.
+/// The catalog and Native actor never depend on this format.
 /// </summary>
 public sealed class JsonWatchProgressStore(string path)
 {
-    private const int Version = 1;
+    private const int Version = 2;
+    private const int MaxHistoryItems = 200;
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true
@@ -36,7 +47,15 @@ public sealed class JsonWatchProgressStore(string path)
         CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken);
-        try { return (await ReadAsync(cancellationToken)).ToArray(); }
+        try { return (await ReadAsync(cancellationToken)).Bookmarks.ToArray(); }
+        finally { _gate.Release(); }
+    }
+
+    public async Task<IReadOnlyList<WatchProgress>> LoadHistoryAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try { return (await ReadAsync(cancellationToken)).History.ToArray(); }
         finally { _gate.Release(); }
     }
 
@@ -44,42 +63,84 @@ public sealed class JsonWatchProgressStore(string path)
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(progress);
-        if (progress.ItemId == Guid.Empty) return;
+        // A glance or failed playback must not destroy a previous bookmark.
+        if (!progress.IsHistoryEligible) return;
         await _gate.WaitAsync(cancellationToken);
         try
         {
-            var items = await ReadAsync(cancellationToken);
-            items.RemoveAll(item => item.ItemId == progress.ItemId);
+            var state = await ReadAsync(cancellationToken);
+            state.Bookmarks.RemoveAll(item => item.ItemId == progress.ItemId);
             if (progress.IsResumable)
-                items.Add(progress);
-            await WriteAsync(items, cancellationToken);
+                state.Bookmarks.Add(progress);
+
+            state.History.RemoveAll(item => item.ItemId == progress.ItemId);
+            state.History.Add(progress);
+            TrimHistory(state.History);
+            await WriteAsync(state, cancellationToken);
         }
         finally { _gate.Release(); }
     }
 
-    private async Task<List<WatchProgress>> ReadAsync(CancellationToken ct)
+    /// <summary>
+    /// Privacy action: forget this title completely (history and bookmark).
+    /// Repeating the action is safe, and never touches the media file.
+    /// </summary>
+    public async Task ForgetAsync(Guid itemId, CancellationToken cancellationToken = default)
     {
-        if (!File.Exists(_path)) return [];
+        if (itemId == Guid.Empty) return;
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var state = await ReadAsync(cancellationToken);
+            var bookmarks = state.Bookmarks.RemoveAll(item => item.ItemId == itemId);
+            var history = state.History.RemoveAll(item => item.ItemId == itemId);
+            if (bookmarks != 0 || history != 0)
+                await WriteAsync(state, cancellationToken);
+        }
+        finally { _gate.Release(); }
+    }
+
+    private async Task<State> ReadAsync(CancellationToken ct)
+    {
+        if (!File.Exists(_path)) return new State([], []);
         try
         {
             await using var stream = new FileStream(_path, FileMode.Open, FileAccess.Read,
                 FileShare.Read, 4096, useAsync: true);
             var payload = await JsonSerializer.DeserializeAsync<Envelope>(stream, Options, ct);
-            if (payload is null || payload.Version != Version || payload.Items is null)
-                throw new InvalidDataException("觀影紀錄版本不相容；原始資料不會被覆寫。");
-            return payload.Items
-                .Where(item => item is not null && item.IsResumable)
-                .GroupBy(item => item.ItemId)
-                .Select(group => group.MaxBy(item => item.UpdatedAtUtc)!)
-                .ToList();
+            if (payload is null || payload.Version is not (1 or 2) ||
+                payload.Items is null || (payload.Version == 2 && payload.History is null))
+                throw new InvalidDataException("觀影紀錄資料版本不相容；沒有覆寫原始資料。");
+
+            var bookmarks = Normalize(payload.Items.Where(item => item?.IsResumable == true));
+            var history = Normalize((payload.Version == 1
+                    ? payload.Items
+                    : payload.History!)
+                .Where(item => item?.IsHistoryEligible == true));
+            TrimHistory(history);
+            return new State(bookmarks, history);
         }
-        catch (JsonException ex)
+        catch (JsonException exception)
         {
-            throw new InvalidDataException("觀影紀錄格式損壞；原始資料不會被覆寫。", ex);
+            throw new InvalidDataException("觀影紀錄格式損壞；沒有覆寫原始資料。", exception);
         }
     }
 
-    private async Task WriteAsync(List<WatchProgress> items, CancellationToken ct)
+    private static List<WatchProgress> Normalize(IEnumerable<WatchProgress> items) =>
+        items.GroupBy(item => item.ItemId)
+            .Select(group => group.MaxBy(item => item.UpdatedAtUtc)!)
+            .OrderByDescending(item => item.UpdatedAtUtc)
+            .ThenBy(item => item.ItemId)
+            .ToList();
+
+    private static void TrimHistory(List<WatchProgress> history)
+    {
+        var compact = Normalize(history).Take(MaxHistoryItems).ToArray();
+        history.Clear();
+        history.AddRange(compact);
+    }
+
+    private async Task WriteAsync(State state, CancellationToken ct)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
         var temporary = _path + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -88,7 +149,8 @@ public sealed class JsonWatchProgressStore(string path)
             await using (var stream = new FileStream(temporary, FileMode.CreateNew,
                 FileAccess.Write, FileShare.None, 4096, useAsync: true))
             {
-                await JsonSerializer.SerializeAsync(stream, new Envelope(Version, items), Options, ct);
+                await JsonSerializer.SerializeAsync(stream,
+                    new Envelope(Version, state.Bookmarks, state.History), Options, ct);
                 await stream.FlushAsync(ct);
                 stream.Flush(flushToDisk: true);
             }
@@ -101,5 +163,7 @@ public sealed class JsonWatchProgressStore(string path)
         }
     }
 
-    private sealed record Envelope(int Version, List<WatchProgress> Items);
+    private sealed record State(List<WatchProgress> Bookmarks, List<WatchProgress> History);
+    private sealed record Envelope(int Version, List<WatchProgress> Items,
+        List<WatchProgress>? History = null);
 }

@@ -7,7 +7,7 @@ using Lapis.Library;
 namespace Lapis.Desktop.Avalonia.ViewModels;
 
 public enum LibraryDisplayMode { Grid, List }
-public enum LibraryCategory { All, BluRay, Videos, RecentlyAdded }
+public enum LibraryCategory { All, BluRay, Videos, RecentlyAdded, History }
 public enum LibrarySortMode { RecentlyAdded, TitleAscending, TitleDescending }
 
 public sealed record LibrarySortChoice(LibrarySortMode Mode, string Label);
@@ -22,6 +22,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
     private readonly IMediaLibrary _library = library;
     private readonly Dictionary<Guid, LibraryCardViewModel> _cards = [];
     private readonly Dictionary<Guid, WatchProgress> _watchProgress = [];
+    private readonly Dictionary<Guid, WatchProgress> _watchHistory = [];
     private IReadOnlyList<MediaLibraryItem> _items = [];
     private bool _disposed;
     private string _searchText = "";
@@ -36,6 +37,8 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
     public ObservableCollection<LibraryCardViewModel> VisibleItems { get; } = [];
     public ObservableCollection<LibraryCardViewModel> RecentItems { get; } = [];
     public ObservableCollection<LibraryCardViewModel> ContinueWatchingItems { get; } = [];
+    public ObservableCollection<LibraryCardViewModel> RecentlyWatchedItems { get; } = [];
+    public bool HasRecentlyWatched => RecentlyWatchedItems.Count != 0;
     public bool HasContinueWatching => ContinueWatchingItems.Count != 0;
 
     /// <summary>Local bookmarks are independent of the media catalog.</summary>
@@ -56,13 +59,49 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         UpdateWatchShelf();
     }
 
+    public void LoadWatchHistory(IEnumerable<WatchProgress> snapshots)
+    {
+        ArgumentNullException.ThrowIfNull(snapshots);
+        _watchHistory.Clear();
+        foreach (var item in snapshots.Where(item => item.IsHistoryEligible))
+            _watchHistory[item.ItemId] = item;
+        ApplyFilter();
+    }
+
+    public void UpdateWatchHistory(WatchProgress snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (!snapshot.IsHistoryEligible) return;
+        _watchHistory[snapshot.ItemId] = snapshot;
+        if (_category == LibraryCategory.History) ApplyFilter();
+        else UpdateWatchShelf();
+    }
+
+    public void ForgetWatchHistory(Guid itemId)
+    {
+        _watchHistory.Remove(itemId);
+        _watchProgress.Remove(itemId);
+        ApplyFilter();
+    }
+
     private void UpdateWatchShelf()
     {
         foreach (var card in _cards.Values)
         {
             _watchProgress.TryGetValue(card.Item.Id, out var progress);
             card.SetWatchProgress(progress);
+            _watchHistory.TryGetValue(card.Item.Id, out var history);
+            card.SetWatchHistory(history);
         }
+        var recentlyWatched = _cards.Values
+            .Where(card => card.HasWatchHistory && card.IsAvailable &&
+                _category == LibraryCategory.All &&
+                string.IsNullOrWhiteSpace(_searchText))
+            .OrderByDescending(card => card.HistoryUpdatedAtUtc)
+            .Take(8)
+            .ToArray();
+        ReconcileItems(RecentlyWatchedItems, recentlyWatched);
+        Notify(nameof(HasRecentlyWatched));
         var watching = _cards.Values
             .Where(card => card.CanResume &&
                 _category == LibraryCategory.All &&
@@ -152,6 +191,9 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
     public bool IsBluRayCategory => _category == LibraryCategory.BluRay;
     public bool IsVideoCategory => _category == LibraryCategory.Videos;
     public bool IsRecentlyAddedCategory => _category == LibraryCategory.RecentlyAdded;
+    public bool IsHistoryCategory => _category == LibraryCategory.History;
+    public bool ShowRecentShelf => HasItems && _category == LibraryCategory.All &&
+        string.IsNullOrWhiteSpace(_searchText);
     public bool IsRecentlyAddedSort => SelectedSort.Mode == LibrarySortMode.RecentlyAdded;
 
     public string CountText => $"{_items.Count} 部收藏 · {_items.Count(item => item.IsDisc)} 張光碟";
@@ -164,6 +206,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         LibraryCategory.BluRay => "Blu-ray 光碟",
         LibraryCategory.Videos => "本機影片",
         LibraryCategory.RecentlyAdded => "最近加入",
+        LibraryCategory.History => "觀看紀錄",
         _ => "所有收藏"
     };
 
@@ -267,6 +310,8 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         SelectedSort = SortChoices[0];
     }
 
+    public void ShowHistory() => SetCategory(LibraryCategory.History);
+
     public void ShowGrid() => DisplayMode = LibraryDisplayMode.Grid;
     public void ShowList() => DisplayMode = LibraryDisplayMode.List;
     public void ReportError(string message) => StatusText = message;
@@ -279,6 +324,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         Notify(nameof(IsBluRayCategory));
         Notify(nameof(IsVideoCategory));
         Notify(nameof(IsRecentlyAddedCategory));
+        Notify(nameof(IsHistoryCategory));
         Notify(nameof(Category));
         ApplyFilter();
     }
@@ -290,22 +336,28 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         IEnumerable<MediaLibraryItem> filtered = _items.Where(item =>
             (_category is LibraryCategory.All or LibraryCategory.RecentlyAdded ||
              (_category == LibraryCategory.BluRay && item.IsDisc) ||
-             (_category == LibraryCategory.Videos && !item.IsDisc)) &&
+             (_category == LibraryCategory.Videos && !item.IsDisc) ||
+             (_category == LibraryCategory.History &&
+              _watchHistory.ContainsKey(item.Id) && !item.IsDisc)) &&
             (needle.Length == 0 ||
              item.Title.Contains(needle, StringComparison.OrdinalIgnoreCase) ||
              item.SourcePath.Contains(needle, StringComparison.OrdinalIgnoreCase)));
 
-        filtered = SelectedSort.Mode switch
-        {
-            LibrarySortMode.TitleAscending => filtered
-                .OrderBy(item => item.Title, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(item => item.Id),
-            LibrarySortMode.TitleDescending => filtered
-                .OrderByDescending(item => item.Title, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(item => item.Id),
-            _ => filtered.OrderByDescending(item => item.ImportedAtUtc)
-                .ThenBy(item => item.Id)
-        };
+        if (_category == LibraryCategory.History)
+            filtered = filtered.OrderByDescending(item => _watchHistory[item.Id].UpdatedAtUtc)
+                .ThenBy(item => item.Id);
+        else
+            filtered = SelectedSort.Mode switch
+            {
+                LibrarySortMode.TitleAscending => filtered
+                    .OrderBy(item => item.Title, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(item => item.Id),
+                LibrarySortMode.TitleDescending => filtered
+                    .OrderByDescending(item => item.Title, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(item => item.Id),
+                _ => filtered.OrderByDescending(item => item.ImportedAtUtc)
+                    .ThenBy(item => item.Id)
+            };
 
         // Preserve visual container identities for unchanged cards instead
         // of clearing every row on each search/sort/category action. A Reset
@@ -338,6 +390,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         Notify(nameof(IsEmpty));
         Notify(nameof(HasNoResults));
         Notify(nameof(IsRecentlyAddedSort));
+        Notify(nameof(ShowRecentShelf));
         UpdateWatchShelf();
     }
 
@@ -365,7 +418,9 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         RecentItems.Clear();
         _featuredCard = null;
         ContinueWatchingItems.Clear();
+        RecentlyWatchedItems.Clear();
         _watchProgress.Clear();
+        _watchHistory.Clear();
     }
 
     private void Notify([CallerMemberName] string property = "") =>

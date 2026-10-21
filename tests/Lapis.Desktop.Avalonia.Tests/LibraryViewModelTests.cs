@@ -182,6 +182,55 @@ public sealed class LibraryViewModelTests
     }
 
     [Fact]
+    public async Task WatchHistoryFiltersAndSortsCompletedTitlesWithoutMakingThemResumable()
+    {
+        var folder = Path.Combine(Path.GetTempPath(),
+            "lapis-history-view-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        var first = Path.Combine(folder, "first.mp4");
+        var second = Path.Combine(folder, "second.mp4");
+        await File.WriteAllTextAsync(first, "fixture");
+        await File.WriteAllTextAsync(second, "fixture");
+        try
+        {
+            using var view = new LibraryViewModel(new FakeLibrary());
+            await view.LoadAsync();
+            await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, first));
+            await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, second));
+            var cards = view.VisibleItems.ToDictionary(item => item.Title);
+            var now = DateTimeOffset.UtcNow;
+            var watching = new WatchProgress(cards["first"].Item.Id, 80, 240, now.AddDays(-1));
+            var finished = new WatchProgress(cards["second"].Item.Id, 239, 240, now);
+            view.LoadWatchProgress([watching]);
+            view.LoadWatchHistory([watching, finished]);
+
+            Assert.True(view.HasContinueWatching);
+            Assert.True(view.HasRecentlyWatched);
+            Assert.Equal("✓ 已看完", cards["second"].HistoryLabel);
+            Assert.False(cards["second"].CanResume);
+
+            view.ShowHistory();
+            Assert.True(view.IsHistoryCategory);
+            Assert.Equal("觀看紀錄", view.CurrentFilterLabel);
+            Assert.Equal(new[] { "second", "first" },
+                view.VisibleItems.Select(item => item.Title));
+            Assert.False(view.HasContinueWatching);
+            Assert.False(view.HasRecentlyWatched);
+
+            view.ForgetWatchHistory(finished.ItemId);
+            Assert.Equal("first", Assert.Single(view.VisibleItems).Title);
+            Assert.False(cards["second"].HasWatchHistory);
+            view.ShowAll();
+            Assert.True(view.HasRecentlyWatched);
+            Assert.Single(view.RecentlyWatchedItems);
+        }
+        finally
+        {
+            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task SidebarNavigationMaintainsExactlyOneActiveTarget()
     {
         using var view = new LibraryViewModel(new FakeLibrary());

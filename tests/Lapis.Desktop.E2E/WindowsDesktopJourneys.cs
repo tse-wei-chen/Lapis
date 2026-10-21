@@ -83,6 +83,28 @@ public sealed class WindowsDesktopJourneys
     }
 
     [Fact]
+    public async Task CompletedMovieRemainsInWatchHistoryAndCanBeForgotten()
+    {
+        using var session = await DesktopSession.CreateAsync();
+        await session.SeedFinishedWatchAsync();
+        session.Start();
+        var main = session.MainWindow();
+
+        session.Click(session.WaitFor(main, "Lapis.Library.HistoryTab"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.FeaturedDetails"));
+        session.Click(session.WaitFor(main, "Lapis.Library.FeaturedDetails"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.DetailForget"));
+        Assert.Null(main.FindFirstDescendant(cf =>
+            cf.ByAutomationId("Lapis.Library.DetailResume")));
+        session.Snapshot("07-watch-history-completed");
+        session.Click(session.WaitFor(main, "Lapis.Library.DetailForget"));
+
+        // No media file was removed; the home page is still playable.
+        session.Click(session.WaitFor(main, "Lapis.Library.Home"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.PlayFeatured"));
+    }
+
+    [Fact]
     public async Task Movie_Watch_Subtitles_And_Back_RoundTripThroughRealExe()
     {
         using var session = await DesktopSession.CreateAsync();
@@ -152,6 +174,13 @@ internal sealed class DesktopSession : IDisposable
         await new JsonMediaLibrary(session._catalogPath)
             .ImportAsync(new MediaLocator(MediaLocatorKind.File, file));
         return session;
+    }
+
+    public async Task SeedFinishedWatchAsync()
+    {
+        var item = Assert.Single(await new JsonMediaLibrary(_catalogPath).ListAsync());
+        await new JsonWatchProgressStore(_catalogPath + ".watch.v1.json").SaveAsync(
+            new WatchProgress(item.Id, 239, 240, DateTimeOffset.UtcNow));
     }
 
     public async Task SeedWatchBookmarkAsync()
