@@ -109,9 +109,29 @@ public sealed partial class WatchChromeWindow : Window
 
     public void SetSubtitleTrack(ITextSubtitleTrack track)
     {
-        if (_disposed) return;
+        ArgumentNullException.ThrowIfNull(track);
+        if (_disposed)
+        {
+            if (track is IAsyncDisposable rejected) _ = RetireSubtitleAsync(rejected);
+            return;
+        }
+        var previous = _subtitleTrack;
         _subtitleTrack = track;
         UpdateSubtitle();
+        // Off, another text source, or Seek must retire the old native worker.
+        // Never await I/O on Avalonia's presentation dispatcher.
+        if (!ReferenceEquals(previous, track) && previous is IAsyncDisposable retired)
+            _ = RetireSubtitleAsync(retired);
+    }
+
+    private static async Task RetireSubtitleAsync(IAsyncDisposable track)
+    {
+        try { await track.DisposeAsync(); }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Trace.TraceWarning(
+                "Lapis embedded subtitle track retirement failed: {0}", exception);
+        }
     }
 
     /// <summary>
@@ -188,6 +208,8 @@ public sealed partial class WatchChromeWindow : Window
             if (!_disposed && generation == _subtitleChoiceGeneration &&
                 !cancellation.IsCancellationRequested)
                 SetSubtitleTrack(track);
+            else if (track is IAsyncDisposable discarded)
+                await RetireSubtitleAsync(discarded);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -383,6 +405,9 @@ public sealed partial class WatchChromeWindow : Window
     {
         if (_disposed) return;
         _disposed = true;
+        if (_subtitleTrack is IAsyncDisposable retire)
+            _ = RetireSubtitleAsync(retire);
+        _subtitleTrack = SidecarSubtitleTrack.Empty;
         ++_subtitleChoiceGeneration;
         _subtitleChoiceCancellation?.Cancel();
         _subtitleChoiceCancellation?.Dispose();

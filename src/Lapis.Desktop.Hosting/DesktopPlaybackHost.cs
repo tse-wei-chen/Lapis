@@ -17,6 +17,7 @@ public sealed class DesktopPlaybackHost : IAsyncDisposable
     private readonly IVideoOutputSurfaceBinding _surfaces;
     private readonly IEmbeddedSubtitleTrackInventoryRuntime? _embeddedTracks;
     private readonly IEmbeddedTextSubtitleCueRuntime? _embeddedCues;
+    private readonly IEmbeddedTextSubtitleCancellationRuntime? _subtitleCancellation;
     private readonly SemaphoreSlim _operations = new(1, 1);
     private readonly object _disposeGate = new();
     private Task? _disposeTask;
@@ -33,6 +34,7 @@ public sealed class DesktopPlaybackHost : IAsyncDisposable
         _surfaces = surfaces;
         _embeddedTracks = playbackRuntime as IEmbeddedSubtitleTrackInventoryRuntime;
         _embeddedCues = playbackRuntime as IEmbeddedTextSubtitleCueRuntime;
+        _subtitleCancellation = playbackRuntime as IEmbeddedTextSubtitleCancellationRuntime;
         _session = new PlaybackSession(playbackRuntime, sessionId);
     }
 
@@ -57,6 +59,41 @@ public sealed class DesktopPlaybackHost : IAsyncDisposable
             // other native subtitle queries.
             return await Task.Run(() => source.SupportsEmbeddedTextSubtitleCues,
                 cancellationToken).ConfigureAwait(false);
+        }, cancellationToken);
+
+    public Task<bool> SupportsEmbeddedTextSubtitleCancellationAsync(
+        PlaybackSnapshot expected, CancellationToken cancellationToken = default) =>
+        RunAsync(async () =>
+        {
+            _ = SubtitleContext(expected);
+            if (_subtitleCancellation is not { } source) return false;
+            return await Task.Run(
+                () => source.SupportsEmbeddedTextSubtitleCancellation,
+                cancellationToken).ConfigureAwait(false);
+        }, cancellationToken);
+
+    public Task StartEmbeddedTextSubtitleLoadWithIdAsync(
+        uint streamIndex, ulong requestId, PlaybackSnapshot expected,
+        CancellationToken cancellationToken = default) =>
+        RunAsync(async () =>
+        {
+            var context = SubtitleContext(expected);
+            var source = _subtitleCancellation ?? throw new NotSupportedException(
+                "This runtime has no request-scoped embedded subtitle loader.");
+            await source.StartEmbeddedTextSubtitleLoadWithIdAsync(
+                streamIndex, requestId, context, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken);
+
+    public Task CancelEmbeddedTextSubtitleLoadAsync(
+        ulong requestId, PlaybackSnapshot expected,
+        CancellationToken cancellationToken = default) =>
+        RunAsync(async () =>
+        {
+            var context = SubtitleContext(expected);
+            var source = _subtitleCancellation ?? throw new NotSupportedException(
+                "This runtime has no request-scoped embedded subtitle cancellation.");
+            await source.CancelEmbeddedTextSubtitleLoadAsync(
+                requestId, context, cancellationToken).ConfigureAwait(false);
         }, cancellationToken);
 
     public Task<IReadOnlyList<EmbeddedSubtitleTrack>> ReadEmbeddedSubtitleTracksAsync(

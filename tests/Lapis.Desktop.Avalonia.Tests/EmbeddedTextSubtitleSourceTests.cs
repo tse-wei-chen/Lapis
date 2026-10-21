@@ -177,6 +177,88 @@ public sealed class EmbeddedTextSubtitleSourceTests
         Assert.Equal(0, playback.ReadCalls);
     }
 
+    [Fact]
+    public async Task OffAndReplacementDisposeOnlyTheMatchingNativeSubtitleRequest()
+    {
+        var playback = OneTrack();
+        playback.Cues = [new(0, 2_000_000_000, "Visible")];
+        var source = new EmbeddedTextSubtitleSource(playback, Movie);
+        var descriptor = Assert.Single(await source.DiscoverAsync(
+            Movie, CancellationToken.None));
+
+        var first = await source.LoadAsync(Movie, descriptor, CancellationToken.None);
+        var firstId = playback.ActiveRequestId;
+        Assert.NotEqual(0UL, firstId);
+        Assert.Equal("Visible", first.At(TimeSpan.FromSeconds(1)));
+
+        var second = await source.LoadAsync(Movie, descriptor, CancellationToken.None);
+        var secondId = playback.ActiveRequestId;
+        Assert.NotEqual(firstId, secondId);
+        await ((IAsyncDisposable)first).DisposeAsync();
+        await ((IAsyncDisposable)first).DisposeAsync();
+        Assert.Equal(secondId, playback.ActiveRequestId);
+        Assert.Equal(new ulong[] { firstId }, playback.CancelledRequestIds);
+        Assert.Null(first.At(TimeSpan.FromSeconds(1)));
+        Assert.Equal("Visible", second.At(TimeSpan.FromSeconds(1)));
+
+        // The Watch Off/Close path disposes the currently displayed track.
+        await ((IAsyncDisposable)second).DisposeAsync();
+        Assert.Equal(0UL, playback.ActiveRequestId);
+        Assert.Equal(new ulong[] { firstId, secondId }, playback.CancelledRequestIds);
+        Assert.Null(second.At(TimeSpan.FromSeconds(1)));
+    }
+
+    [Fact]
+    public async Task AbortedInFlightSelectionStopsNativeEvenWithCancelledUiToken()
+    {
+        var playback = OneTrack();
+        playback.LoadingReads = int.MaxValue;
+        var source = new EmbeddedTextSubtitleSource(playback, Movie);
+        var descriptor = Assert.Single(await source.DiscoverAsync(
+            Movie, CancellationToken.None));
+        using var cancellation = new CancellationTokenSource();
+
+        var pending = source.LoadAsync(Movie, descriptor, cancellation.Token);
+        await playback.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        Assert.Equal(1, playback.StartCalls);
+        Assert.Single(playback.CancelledRequestIds);
+        Assert.Equal(0UL, playback.ActiveRequestId);
+    }
+
+    [Fact]
+    public async Task FailedCuePageRetiresTheNativeRequest()
+    {
+        var playback = OneTrack();
+        playback.ForceEmptyPageWithRemainingCues = true;
+        var source = new EmbeddedTextSubtitleSource(playback, Movie);
+        var descriptor = Assert.Single(await source.DiscoverAsync(
+            Movie, CancellationToken.None));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            source.LoadAsync(Movie, descriptor, CancellationToken.None));
+        Assert.Single(playback.CancelledRequestIds);
+        Assert.Equal(0UL, playback.ActiveRequestId);
+    }
+
+    [Fact]
+    public async Task OldCueApiWithoutCancelExtensionPreservesTextPlayback()
+    {
+        var playback = OneTrack();
+        playback.CancellationSupported = false;
+        playback.Cues = [new(0, 1_000_000_000, "Old DLL")];
+        var source = new EmbeddedTextSubtitleSource(playback, Movie);
+        var descriptor = Assert.Single(await source.DiscoverAsync(
+            Movie, CancellationToken.None));
+        var track = await source.LoadAsync(Movie, descriptor, CancellationToken.None);
+        Assert.Equal("Old DLL", track.At(TimeSpan.FromMilliseconds(500)));
+        Assert.Equal(1, playback.LegacyStartCalls);
+        Assert.Empty(playback.CancelledRequestIds);
+        await ((IAsyncDisposable)track).DisposeAsync();
+        Assert.Empty(playback.CancelledRequestIds);
+    }
+
     private static FakeEmbeddedPlayback OneTrack() => new()
     {
         Tracks = [new(1, EmbeddedSubtitleTrackFormat.Text, "eng", "subrip")]
@@ -190,6 +272,13 @@ public sealed class EmbeddedTextSubtitleSourceTests
         public List<EmbeddedTextSubtitleCue> Cues { get; set; } = [];
         public bool MetadataUnsupported { get; set; }
         public bool CueApiUnsupported { get; set; }
+        public bool CancellationSupported { get; set; } = true;
+        public int LegacyStartCalls { get; private set; }
+        public ulong ActiveRequestId { get; private set; }
+        public List<ulong> CancelledRequestIds { get; } = [];
+        public TaskCompletionSource Started { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
         public bool AdvanceDuringStart { get; set; }
         public bool ForceEmptyPageWithRemainingCues { get; set; }
         public int LoadingReads { get; set; }
@@ -221,6 +310,37 @@ public sealed class EmbeddedTextSubtitleSourceTests
             return Task.FromResult(!CueApiUnsupported);
         }
 
+        public Task<bool> SupportsEmbeddedTextSubtitleCancellationAsync(
+            PlaybackSnapshot expected, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Assert.Equal(Snapshot.Epoch, expected.Epoch);
+            return Task.FromResult(CancellationSupported);
+        }
+
+        public Task StartEmbeddedTextSubtitleLoadWithIdAsync(
+            uint streamIndex, ulong requestId, PlaybackSnapshot expected,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Assert.NotEqual(0UL, requestId);
+            ActiveRequestId = requestId;
+            return RecordStart(streamIndex, expected);
+        }
+
+        public Task CancelEmbeddedTextSubtitleLoadAsync(
+            ulong requestId, PlaybackSnapshot expected,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            // Old-epoch cleanup would be rejected by DesktopPlaybackHost.
+            if (Snapshot.Epoch != expected.Epoch)
+                throw new InvalidOperationException("Playback epoch has retired.");
+            CancelledRequestIds.Add(requestId);
+            if (ActiveRequestId == requestId) ActiveRequestId = 0;
+            return Task.CompletedTask;
+        }
+
         public Task<IReadOnlyList<EmbeddedSubtitleTrack>> ReadEmbeddedSubtitleTracksAsync(
             PlaybackSnapshot expected, CancellationToken cancellationToken)
         {
@@ -236,10 +356,17 @@ public sealed class EmbeddedTextSubtitleSourceTests
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            LegacyStartCalls++;
+            return RecordStart(streamIndex, expected);
+        }
+
+        private Task RecordStart(uint streamIndex, PlaybackSnapshot expected)
+        {
             Assert.Equal(1U, streamIndex);
             Assert.Equal(Snapshot.Epoch, expected.Epoch);
             StartCalls++;
             StartEpochs.Add(expected.Epoch.Value);
+            Started.TrySetResult();
             if (AdvanceDuringStart) AdvanceEpoch();
             return Task.CompletedTask;
         }

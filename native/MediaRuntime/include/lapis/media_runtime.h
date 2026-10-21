@@ -26,6 +26,8 @@ extern "C" {
 #define LAPIS_SUBTITLE_TRACK_MAX 64u
 /* Optional, independent SubRip/mov_text cue timeline extension. */
 #define LAPIS_TEXT_SUBTITLE_CUES_API_VERSION 1u
+/* Optional request-scoped cancellation extension. Cue ABI v1 remains intact. */
+#define LAPIS_TEXT_SUBTITLE_CANCEL_API_VERSION 1u
 #define LAPIS_TEXT_SUBTITLE_MAX_PAGE 16u
 #define LAPIS_TEXT_SUBTITLE_MAX_PAGE_BYTES 65536u
 #define LAPIS_DIAGNOSTIC_RING_CAPACITY 128u
@@ -264,6 +266,31 @@ LAPIS_API lapis_result lapis_session_start_text_subtitle_load(
     lapis_session* session,
     lapis_playback_epoch expected_epoch,
     uint32_t stream_index);
+/* A separately negotiated extension. request_id MUST be nonzero and unique
+ * per logical subtitle selection. Start supersedes the prior worker but never
+ * changes the playback epoch or touches its live audio/video demuxer.
+ * Cancel only affects a worker started with the exact same request_id:
+ * a delayed cancel cannot retire a newer stream, even within one epoch.
+ *
+ * Cancellation requests stop without synchronously joining the worker.
+ * The worker checks its cooperative stop token between decoder packets;
+ * blocking disk I/O may still finish before the worker exits.
+ *
+ * No worker / already-cancelled / replaced request IDs are harmless no-ops.
+ * A stale Epoch is still rejected. Older DLLs lack these optional exports;
+ * callers must probe the separate version before invoking them.
+ */
+LAPIS_API uint32_t lapis_runtime_get_text_subtitle_cancel_api_version(void);
+LAPIS_API lapis_result lapis_session_start_text_subtitle_load_with_id(
+    lapis_session* session,
+    lapis_playback_epoch expected_epoch,
+    uint32_t stream_index,
+    uint64_t request_id);
+LAPIS_API lapis_result lapis_session_cancel_text_subtitle_load(
+    lapis_session* session,
+    lapis_playback_epoch expected_epoch,
+    uint64_t request_id);
+
 LAPIS_API lapis_result lapis_session_read_text_subtitle_cues(
     lapis_session* session,
     lapis_playback_epoch expected_epoch,

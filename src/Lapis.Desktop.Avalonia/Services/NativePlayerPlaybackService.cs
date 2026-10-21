@@ -75,6 +75,23 @@ public sealed class NativePlayerPlaybackService(Func<nint> getVideoHwnd)
         PlaybackSnapshot expected, CancellationToken cancellationToken) =>
         RequireHost().SupportsEmbeddedTextSubtitleCuesAsync(expected, cancellationToken);
 
+    public Task<bool> SupportsEmbeddedTextSubtitleCancellationAsync(
+        PlaybackSnapshot expected, CancellationToken cancellationToken) =>
+        RequireHost().SupportsEmbeddedTextSubtitleCancellationAsync(
+            expected, cancellationToken);
+
+    public Task StartEmbeddedTextSubtitleLoadWithIdAsync(
+        uint streamIndex, ulong requestId, PlaybackSnapshot expected,
+        CancellationToken cancellationToken) =>
+        RequireHost().StartEmbeddedTextSubtitleLoadWithIdAsync(
+            streamIndex, requestId, expected, cancellationToken);
+
+    public Task CancelEmbeddedTextSubtitleLoadAsync(
+        ulong requestId, PlaybackSnapshot expected,
+        CancellationToken cancellationToken) =>
+        RequireHost().CancelEmbeddedTextSubtitleLoadAsync(
+            requestId, expected, cancellationToken);
+
     public Task<IReadOnlyList<EmbeddedSubtitleTrack>> ReadEmbeddedSubtitleTracksAsync(
         PlaybackSnapshot expected, CancellationToken cancellationToken) =>
         RequireHost().ReadEmbeddedSubtitleTracksAsync(expected, cancellationToken);

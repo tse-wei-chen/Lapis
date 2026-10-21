@@ -10,6 +10,12 @@ internal interface INativeMediaRuntimeApi
     uint GetNavigationApiVersion();
     uint GetSubtitleTracksApiVersion();
     uint GetTextSubtitleCuesApiVersion();
+    uint GetTextSubtitleCancelApiVersion();
+    NativeResult SessionStartTextSubtitleLoadWithId(
+        nint session, NativePlaybackEpoch expectedEpoch, uint streamIndex,
+        ulong requestId);
+    NativeResult SessionCancelTextSubtitleLoad(
+        nint session, NativePlaybackEpoch expectedEpoch, ulong requestId);
     NativeResult SessionStartTextSubtitleLoad(
         nint session, NativePlaybackEpoch expectedEpoch, uint streamIndex);
     NativeResult SessionReadTextSubtitleCues(
@@ -75,6 +81,20 @@ internal sealed class PInvokeNativeMediaRuntimeApi : INativeMediaRuntimeApi
 
     public uint GetTextSubtitleCuesApiVersion() =>
         NativeMethods.RuntimeGetTextSubtitleCuesApiVersion();
+
+    public uint GetTextSubtitleCancelApiVersion() =>
+        NativeMethods.RuntimeGetTextSubtitleCancelApiVersion();
+
+    public NativeResult SessionStartTextSubtitleLoadWithId(
+        nint session, NativePlaybackEpoch expectedEpoch, uint streamIndex,
+        ulong requestId) =>
+        NativeMethods.SessionStartTextSubtitleLoadWithId(
+            session, expectedEpoch, streamIndex, requestId);
+
+    public NativeResult SessionCancelTextSubtitleLoad(
+        nint session, NativePlaybackEpoch expectedEpoch, ulong requestId) =>
+        NativeMethods.SessionCancelTextSubtitleLoad(
+            session, expectedEpoch, requestId);
 
     public NativeResult SessionStartTextSubtitleLoad(
         nint session, NativePlaybackEpoch expectedEpoch, uint streamIndex) =>

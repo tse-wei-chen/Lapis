@@ -41,6 +41,8 @@ int main() {
     static_assert(offsetof(lapis_text_subtitle_cue_info, text_offset) == 16);
     CHECK(lapis_runtime_get_text_subtitle_cues_api_version() ==
           LAPIS_TEXT_SUBTITLE_CUES_API_VERSION);
+    CHECK(lapis_runtime_get_text_subtitle_cancel_api_version() ==
+          LAPIS_TEXT_SUBTITLE_CANCEL_API_VERSION);
 
     lapis_runtime* runtime = nullptr;
     CHECK(lapis_runtime_create(&runtime) == LAPIS_OK);
@@ -93,6 +95,46 @@ int main() {
     CHECK(cue.start_nanoseconds == 3'000'000'000);
     CHECK(std::string_view(bytes.data(), cue.text_length) == "Second cue");
 
+    // Optional cancellation is request-ID scoped. An older completion
+    // must not be able to stop a later selection at the *same* Epoch.
+    CHECK(lapis_session_start_text_subtitle_load_with_id(
+        session, first, 1, 0) == LAPIS_E_INVALID_ARGUMENT);
+    CHECK(lapis_session_start_text_subtitle_load_with_id(
+        session, first, 1, 100) == LAPIS_OK);
+    CHECK(await_ready(session, first, total));
+    CHECK(lapis_session_cancel_text_subtitle_load(session, first, 99) == LAPIS_OK);
+    CHECK(lapis_session_read_text_subtitle_cues(
+        session, first, 0, nullptr, 0, nullptr, 0,
+        &count, &total, &required, &state) == LAPIS_OK);
+    CHECK(state == LAPIS_TEXT_SUBTITLE_READY && total == 2);
+    CHECK(lapis_session_cancel_text_subtitle_load(session, first, 100) == LAPIS_OK);
+    CHECK(lapis_session_read_text_subtitle_cues(
+        session, first, 0, nullptr, 0, nullptr, 0,
+        &count, &total, &required, &state) == LAPIS_OK);
+    CHECK(state == LAPIS_TEXT_SUBTITLE_CANCELLED &&
+          total == 0 && count == 0 && required == 0);
+    CHECK(lapis_session_cancel_text_subtitle_load(session, first, 100) == LAPIS_OK);
+
+    // Replace a request with a newer one for the same stream. The obsolete
+    // request's delayed cancel may not erase the new decoder's snapshot.
+    CHECK(lapis_session_start_text_subtitle_load_with_id(
+        session, first, 1, 101) == LAPIS_OK);
+    CHECK(lapis_session_start_text_subtitle_load_with_id(
+        session, first, 1, 102) == LAPIS_OK);
+    CHECK(lapis_session_cancel_text_subtitle_load(session, first, 101) == LAPIS_OK);
+    CHECK(await_ready(session, first, total));
+    CHECK(total == 2);
+    CHECK(lapis_session_cancel_text_subtitle_load(session, first, 102) == LAPIS_OK);
+    CHECK(lapis_session_read_text_subtitle_cues(
+        session, first, 0, nullptr, 0, nullptr, 0,
+        &count, &total, &required, &state) == LAPIS_OK);
+    CHECK(state == LAPIS_TEXT_SUBTITLE_CANCELLED);
+
+    CHECK(lapis_session_cancel_text_subtitle_load(session, first, 0) ==
+          LAPIS_E_INVALID_ARGUMENT);
+    CHECK(lapis_session_cancel_text_subtitle_load(nullptr, first, 42) ==
+          LAPIS_E_INVALID_ARGUMENT);
+
     // A seek invalidates the whole worker. Neither an old Epoch nor a new
     // Epoch without a fresh request may fetch a previously decoded cue.
     lapis_playback_epoch second{2};
@@ -119,6 +161,10 @@ int main() {
     CHECK(lapis_session_read_text_subtitle_cues(
         session, third, 0, nullptr, 0, nullptr, 0,
         &count, &total, &required, &state) == LAPIS_E_INVALID_STATE);
+    CHECK(lapis_session_cancel_text_subtitle_load(session, second, 102) ==
+          LAPIS_E_STALE_EPOCH);
+    CHECK(lapis_session_cancel_text_subtitle_load(session, third, 102) ==
+          LAPIS_E_INVALID_STATE);
     CHECK(lapis_session_read_text_subtitle_cues(
         session, second, 0, nullptr, 0, nullptr, 0,
         &count, &total, &required, &state) == LAPIS_E_STALE_EPOCH);

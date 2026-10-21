@@ -905,6 +905,113 @@ public sealed class NativePlaybackRuntimeTests
                 0, context, CancellationToken.None));
     }
 
+    [Fact]
+    public async Task RequestScopedSubtitleCancellationUsesNativeIdentityWithoutMutatingEpoch()
+    {
+        var api = new FakeNativeApi();
+        await using var runtime = new NativePlaybackRuntime(api);
+        var id = new PlaybackSessionId(Guid.NewGuid());
+        var context = new RuntimeCommandContext(id, new PlaybackEpoch(3));
+        await runtime.OpenAsync(new MediaLocator(MediaLocatorKind.File, "film.mkv"),
+            context, CancellationToken.None);
+
+        Assert.True(runtime.SupportsEmbeddedTextSubtitleCancellation);
+        IEmbeddedTextSubtitleCancellationRuntime decoder = runtime;
+        await decoder.StartEmbeddedTextSubtitleLoadWithIdAsync(
+            2, 41, context, CancellationToken.None);
+        await decoder.StartEmbeddedTextSubtitleLoadWithIdAsync(
+            2, 42, context, CancellationToken.None);
+        await decoder.CancelEmbeddedTextSubtitleLoadAsync(
+            41, context, CancellationToken.None); // obsolete ID is ignored
+        Assert.Equal(42UL, api.NativeActiveSubtitleRequestId);
+        Assert.Equal(0, api.NativeCancelledSubtitleCount);
+
+        await decoder.CancelEmbeddedTextSubtitleLoadAsync(
+            42, context, CancellationToken.None);
+        Assert.Equal(1, api.NativeCancelledSubtitleCount);
+        Assert.Equal(3UL, api.LastEpoch.Value);
+        Assert.Equal(2, api.CancellableTextCueStartCalls);
+        Assert.Equal(2, api.CancellableTextCueCancelCalls);
+        Assert.DoesNotContain("session_seek", api.Calls);
+        Assert.DoesNotContain("session_close", api.Calls);
+    }
+
+    [Fact]
+    public async Task OptionalCancellationVersionAndExportsAreNegotiatedLazily()
+    {
+        var api = new FakeNativeApi();
+        await using var runtime = new NativePlaybackRuntime(api);
+        var id = new PlaybackSessionId(Guid.NewGuid());
+        var context = new RuntimeCommandContext(id, new PlaybackEpoch(1));
+        await runtime.OpenAsync(new MediaLocator(MediaLocatorKind.File, "film.mkv"),
+            context, CancellationToken.None);
+        Assert.True(runtime.SupportsEmbeddedTextSubtitleCues);
+
+        api.HasCueCancelVersionExport = false;
+        Assert.False(runtime.SupportsEmbeddedTextSubtitleCancellation);
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await runtime.StartEmbeddedTextSubtitleLoadWithIdAsync(
+                1, 100, context, CancellationToken.None));
+        Assert.Equal(0, api.CancellableTextCueStartCalls);
+
+        api.HasCueCancelVersionExport = true;
+        api.CueCancelVersion = 777;
+        Assert.False(runtime.SupportsEmbeddedTextSubtitleCancellation);
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await runtime.CancelEmbeddedTextSubtitleLoadAsync(
+                100, context, CancellationToken.None));
+
+        api.CueCancelVersion = NativeAbi.TextSubtitleCancelVersion;
+        Assert.True(runtime.SupportsEmbeddedTextSubtitleCancellation);
+        api.HasCueCancelStartExport = false;
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await runtime.StartEmbeddedTextSubtitleLoadWithIdAsync(
+                1, 100, context, CancellationToken.None));
+        api.HasCueCancelStartExport = true;
+        api.HasCueCancelExport = false;
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await runtime.CancelEmbeddedTextSubtitleLoadAsync(
+                100, context, CancellationToken.None));
+
+        // Legacy cue ABI v1 is still independently functional.
+        await runtime.StartEmbeddedTextSubtitleLoadAsync(
+            1, context, CancellationToken.None);
+        Assert.Equal(1, api.TextCueStartCalls);
+    }
+
+    [Fact]
+    public async Task RequestScopedCancelRejectsNullLeaseAndCancelledCalls()
+    {
+        var api = new FakeNativeApi();
+        await using var runtime = new NativePlaybackRuntime(api);
+        var context = new RuntimeCommandContext(
+            new PlaybackSessionId(Guid.NewGuid()), new PlaybackEpoch(1));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runtime.CancelEmbeddedTextSubtitleLoadAsync(
+                1, context, CancellationToken.None));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            runtime.CancelEmbeddedTextSubtitleLoadAsync(
+                0, context, CancellationToken.None));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            runtime.StartEmbeddedTextSubtitleLoadWithIdAsync(
+                1, 0, context, CancellationToken.None));
+        Assert.Equal(0, api.SessionCreateCount);
+
+        await runtime.OpenAsync(new MediaLocator(MediaLocatorKind.File, "film.mkv"),
+            context, CancellationToken.None);
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await runtime.CancelEmbeddedTextSubtitleLoadAsync(
+                1, context, cancelled.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await runtime.StartEmbeddedTextSubtitleLoadWithIdAsync(
+                1, 1, context, cancelled.Token));
+        Assert.Equal(0, api.CancellableTextCueStartCalls);
+        Assert.Equal(0, api.CancellableTextCueCancelCalls);
+    }
+
     private sealed class FakeNativeApi : INativeMediaRuntimeApi
     {
         internal uint AbiVersion { get; set; } = NativeAbi.Version;
@@ -914,6 +1021,15 @@ public sealed class NativePlaybackRuntimeTests
         internal uint NavigationVersion { get; set; } = NativeAbi.NavigationVersion;
         internal uint SubtitleVersion { get; set; } = NativeAbi.SubtitleTracksVersion;
         internal uint TextCueVersion { get; set; } = NativeAbi.TextSubtitleCuesVersion;
+        internal uint CueCancelVersion { get; set; } = NativeAbi.TextSubtitleCancelVersion;
+        internal bool HasCueCancelVersionExport { get; set; } = true;
+        internal bool HasCueCancelStartExport { get; set; } = true;
+        internal bool HasCueCancelExport { get; set; } = true;
+        internal ulong NativeActiveSubtitleRequestId { get; private set; }
+        internal int NativeCancelledSubtitleCount { get; private set; }
+        internal int CancellableTextCueStartCalls { get; private set; }
+        internal int CancellableTextCueCancelCalls { get; private set; }
+
         internal bool HasTextCueVersionExport { get; set; } = true;
         internal bool HasTextCueStartExport { get; set; } = true;
         internal bool HasTextCueReadExport { get; set; } = true;
@@ -964,6 +1080,43 @@ public sealed class NativePlaybackRuntimeTests
                 throw new EntryPointNotFoundException("Feature query unsupported");
         public uint GetDiagnosticsApiVersion() => DiagnosticVersion;
         public uint GetNavigationApiVersion() => NavigationVersion;
+        public uint GetTextSubtitleCancelApiVersion() =>
+            HasCueCancelVersionExport ? CueCancelVersion :
+                throw new EntryPointNotFoundException("Optional cue cancellation absent");
+
+        public NativeResult SessionStartTextSubtitleLoadWithId(
+            nint session, NativePlaybackEpoch expectedEpoch, uint streamIndex,
+            ulong requestId)
+        {
+            if (!HasCueCancelStartExport)
+                throw new EntryPointNotFoundException("Optional cancellable start absent");
+            Assert.Equal((nint)22, session);
+            Assert.NotEqual(0UL, requestId);
+            Calls.Add("session_start_text_subtitle_load_with_id");
+            LastEpoch = expectedEpoch;
+            TextCueSelectedStreamIndex = streamIndex;
+            NativeActiveSubtitleRequestId = requestId;
+            CancellableTextCueStartCalls++;
+            return NativeResult.Ok;
+        }
+
+        public NativeResult SessionCancelTextSubtitleLoad(
+            nint session, NativePlaybackEpoch expectedEpoch, ulong requestId)
+        {
+            if (!HasCueCancelExport)
+                throw new EntryPointNotFoundException("Optional cancellation absent");
+            Assert.Equal((nint)22, session);
+            Calls.Add("session_cancel_text_subtitle_load");
+            LastEpoch = expectedEpoch;
+            CancellableTextCueCancelCalls++;
+            if (requestId == NativeActiveSubtitleRequestId)
+            {
+                NativeActiveSubtitleRequestId = 0;
+                NativeCancelledSubtitleCount++;
+            }
+            return NativeResult.Ok;
+        }
+
         public uint GetTextSubtitleCuesApiVersion() =>
             HasTextCueVersionExport ? TextCueVersion :
                 throw new EntryPointNotFoundException("Optional cue version absent");

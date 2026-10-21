@@ -13,6 +13,7 @@ namespace Lapis.Desktop.Avalonia.Services;
 public sealed class EmbeddedTextSubtitleSource : ITextSubtitleSource
 {
     public const string Id = "embedded-ffmpeg-text";
+    private static long _nextLoadRequestId;
     private readonly IEmbeddedSubtitlePlaybackService _playback;
     private readonly string _mediaPath;
     private readonly PlaybackSessionId _sessionId;
@@ -88,9 +89,28 @@ public sealed class EmbeddedTextSubtitleSource : ITextSubtitleSource
                 "Unknown or unplayable embedded text subtitle track.", nameof(descriptor));
 
         var captured = ActiveSnapshot();
-        await _playback.StartEmbeddedTextSubtitleLoadAsync(
-            streamIndex, captured, cancellationToken);
+        // IDs remain unique across multiple providers and Watch windows
+        // within the same process. Native also fences on Session + Epoch.
+        var cancellationAvailable =
+            await _playback.SupportsEmbeddedTextSubtitleCancellationAsync(
+                captured, cancellationToken);
         EnsureCurrent(captured, cancellationToken);
+        var requestId = cancellationAvailable
+            ? unchecked((ulong)Interlocked.Increment(ref _nextLoadRequestId))
+            : 0UL;
+        if (cancellationAvailable && requestId == 0)
+            requestId = unchecked((ulong)Interlocked.Increment(ref _nextLoadRequestId));
+
+        var transferred = false;
+        try
+        {
+            if (cancellationAvailable)
+                await _playback.StartEmbeddedTextSubtitleLoadWithIdAsync(
+                    streamIndex, requestId, captured, cancellationToken);
+            else
+                await _playback.StartEmbeddedTextSubtitleLoadAsync(
+                    streamIndex, captured, cancellationToken);
+            EnsureCurrent(captured, cancellationToken);
 
         var start = Stopwatch.GetTimestamp();
         const int maxCues = 4096;
@@ -150,8 +170,39 @@ public sealed class EmbeddedTextSubtitleSource : ITextSubtitleSource
         }
 
         EnsureCurrent(captured, cancellationToken);
-        return new EpochGuardedTrack(
-            SidecarSubtitleTrack.FromCues(cues), _playback, captured);
+        var track = new EpochGuardedTrack(
+            SidecarSubtitleTrack.FromCues(cues), _playback, captured, requestId);
+        transferred = true;
+        return track;
+        }
+        finally
+        {
+            // A selection that never reached the UI (Off, another track,
+            // window close, timeout, Seek) must still retire its native
+            // worker. Use a fresh cleanup token, NOT the cancelled UI token.
+            if (cancellationAvailable && !transferred)
+                await CancelBestEffortAsync(_playback, captured, requestId);
+        }
+    }
+
+    private static async Task CancelBestEffortAsync(
+        IEmbeddedSubtitlePlaybackService playback,
+        PlaybackSnapshot snapshot, ulong requestId)
+    {
+        if (requestId == 0) return;
+        try
+        {
+            await playback.CancelEmbeddedTextSubtitleLoadAsync(
+                requestId, snapshot, CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            // The host rejects cancellation for an already retired Epoch.
+            // Native Seek/Open/Close has already cancelled that worker.
+            Trace.TraceInformation(
+                "Lapis embedded subtitle cancellation completed without ACK: {0}",
+                exception.Message);
+        }
     }
 
     public Task<ITextSubtitleTrack> LoadPreferredAsync(
@@ -201,10 +252,19 @@ public sealed class EmbeddedTextSubtitleSource : ITextSubtitleSource
 
     private sealed class EpochGuardedTrack(
         ITextSubtitleTrack inner, IEmbeddedSubtitlePlaybackService playback,
-        PlaybackSnapshot origin) : ITextSubtitleTrack
+        PlaybackSnapshot origin, ulong requestId) : ITextSubtitleTrack, IAsyncDisposable
     {
+        private int _retired;
+
+        public async ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _retired, 1) != 0) return;
+            await CancelBestEffortAsync(playback, origin, requestId);
+        }
+
         public string? At(TimeSpan position)
         {
+            if (Volatile.Read(ref _retired) != 0) return null;
             var now = playback.Snapshot;
             return now.SessionId == origin.SessionId &&
                    now.Epoch == origin.Epoch &&

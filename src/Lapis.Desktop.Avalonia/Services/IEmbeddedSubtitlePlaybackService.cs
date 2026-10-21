@@ -16,6 +16,17 @@ public interface IEmbeddedSubtitlePlaybackService
     Task<bool> SupportsEmbeddedTextSubtitleCuesAsync(
         PlaybackSnapshot expected, CancellationToken cancellationToken);
 
+    Task<bool> SupportsEmbeddedTextSubtitleCancellationAsync(
+        PlaybackSnapshot expected, CancellationToken cancellationToken);
+
+    Task StartEmbeddedTextSubtitleLoadWithIdAsync(
+        uint streamIndex, ulong requestId, PlaybackSnapshot expected,
+        CancellationToken cancellationToken);
+
+    Task CancelEmbeddedTextSubtitleLoadAsync(
+        ulong requestId, PlaybackSnapshot expected,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyList<EmbeddedSubtitleTrack>> ReadEmbeddedSubtitleTracksAsync(
         PlaybackSnapshot expected, CancellationToken cancellationToken);
 
