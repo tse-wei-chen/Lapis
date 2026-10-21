@@ -32,6 +32,7 @@ add_library(Lapis.MediaRuntime.Core STATIC
     src/decode/ffmpeg/ffmpeg_video_decoder.cpp
     src/decode/ffmpeg/ffmpeg_audio_decoder.cpp
     src/decode/ffmpeg/ffmpeg_text_subtitle_decoder.cpp
+    src/session/async_text_subtitle_timeline.cpp
     src/process/ffmpeg/ffmpeg_audio_frame_converter.cpp
     src/process/ffmpeg/ffmpeg_video_frame_converter.cpp
     src/execution/video_decode_worker.cpp
@@ -182,6 +183,36 @@ if(BUILD_TESTING)
     lapis_enable_strict_warnings(Lapis.MediaRuntime.EmbeddedTextSubtitleTests)
     add_test(NAME embedded_text_subtitle_decode_seek
         COMMAND Lapis.MediaRuntime.EmbeddedTextSubtitleTests)
+
+    # Dedicated local-file subtitle worker uses an independent demuxer. It
+    # must never block the UI or steal packets from active A/V playback.
+    add_executable(Lapis.MediaRuntime.AsyncTextSubtitleTests
+        tests/async_text_subtitle_timeline.cpp)
+    target_compile_features(Lapis.MediaRuntime.AsyncTextSubtitleTests
+        PRIVATE cxx_std_20)
+    target_compile_definitions(Lapis.MediaRuntime.AsyncTextSubtitleTests
+        PRIVATE LAPIS_TEST_SUBTITLE_MEDIA_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/test_embedded_subtitles.mkv")
+    target_link_libraries(Lapis.MediaRuntime.AsyncTextSubtitleTests
+        PRIVATE Lapis.MediaRuntime.Core)
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.AsyncTextSubtitleTests)
+    add_test(NAME async_embedded_text_subtitle_timeline
+        COMMAND Lapis.MediaRuntime.AsyncTextSubtitleTests)
+
+    # Public C ABI consumes at most 16 owned cues per call; test fixed layout,
+    # byte-buffer paging, insufficient-capacity behavior and Seek/Close fences.
+    add_executable(Lapis.MediaRuntime.AsyncTextSubtitleAbiTests
+        tests/async_text_subtitle_c_abi.cpp)
+    target_compile_features(Lapis.MediaRuntime.AsyncTextSubtitleAbiTests
+        PRIVATE cxx_std_20)
+    target_include_directories(Lapis.MediaRuntime.AsyncTextSubtitleAbiTests
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(Lapis.MediaRuntime.AsyncTextSubtitleAbiTests
+        PRIVATE LAPIS_TEST_SUBTITLE_MEDIA_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/test_embedded_subtitles.mkv")
+    target_link_libraries(Lapis.MediaRuntime.AsyncTextSubtitleAbiTests
+        PRIVATE Lapis.MediaRuntime)
+    lapis_enable_strict_warnings(Lapis.MediaRuntime.AsyncTextSubtitleAbiTests)
+    add_test(NAME async_embedded_text_subtitle_c_abi
+        COMMAND Lapis.MediaRuntime.AsyncTextSubtitleAbiTests)
 
     add_executable(Lapis.MediaRuntime.SourceFeatureTests tests/source_feature_flags.c)
     target_compile_features(Lapis.MediaRuntime.SourceFeatureTests PRIVATE c_std_17)
