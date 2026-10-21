@@ -8,6 +8,10 @@ internal interface INativeMediaRuntimeApi
     uint GetSourceFeatures();
     uint GetDiagnosticsApiVersion();
     uint GetNavigationApiVersion();
+    uint GetSubtitleTracksApiVersion();
+    NativeResult SessionListSubtitleTracks(
+        nint session, NativePlaybackEpoch expectedEpoch,
+        NativeSubtitleTrackInfo[]? buffer, out uint count);
     NativeResult SessionResolveChapter(
         nint session, uint chapterId, NativePlaybackEpoch expectedEpoch,
         out NativeMediaTime start);
@@ -57,6 +61,28 @@ internal sealed class PInvokeNativeMediaRuntimeApi : INativeMediaRuntimeApi
 
     public uint GetNavigationApiVersion() =>
         NativeMethods.RuntimeGetNavigationApiVersion();
+
+    public uint GetSubtitleTracksApiVersion() =>
+        NativeMethods.RuntimeGetSubtitleTracksApiVersion();
+
+    public unsafe NativeResult SessionListSubtitleTracks(
+        nint session, NativePlaybackEpoch expectedEpoch,
+        NativeSubtitleTrackInfo[]? buffer, out uint count)
+    {
+        if (buffer is { Length: > NativeAbi.SubtitleTrackCapacity })
+            throw new ArgumentOutOfRangeException(nameof(buffer));
+
+        fixed (NativeSubtitleTrackInfo* pointer = buffer)
+        {
+            var result = NativeMethods.SessionListSubtitleTracks(
+                session, expectedEpoch, pointer, checked((uint)(buffer?.Length ?? 0)),
+                out count);
+            if (count > NativeAbi.SubtitleTrackCapacity)
+                throw new InvalidOperationException(
+                    "Native subtitle query exceeded the protocol track limit.");
+            return result;
+        }
+    }
 
     public NativeResult SessionResolveChapter(
         nint session, uint chapterId, NativePlaybackEpoch expectedEpoch,

@@ -8,6 +8,8 @@ internal static class NativeAbi
     internal const uint Version = 2;
     internal const uint DiagnosticsVersion = 1;
     internal const uint NavigationVersion = 1;
+    internal const uint SubtitleTracksVersion = 1;
+    internal const int SubtitleTrackCapacity = 64;
     internal const int DiagnosticRingCapacity = 128;
 }
 
@@ -35,7 +37,48 @@ internal enum NativeResult : int
     AbiMismatch = 5,
     Unsupported = 6,
     OutputUnavailable = 7,
+    BufferTooSmall = 8,
     Internal = 100
+}
+
+// Exact 72-byte native subtitle descriptor with owned, fixed UTF-8 fields.
+// Keep the two strings as inline byte buffers, never managed object pointers.
+internal enum NativeSubtitleTrackKind : uint
+{
+    Unknown = 0,
+    Text = 1,
+    Bitmap = 2
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct NativeSubtitleTrackInfo
+{
+    public uint StreamIndex;
+    public NativeSubtitleTrackKind Kind;
+    public fixed byte LanguageUtf8[24];
+    public fixed byte CodecNameUtf8[40];
+
+    internal string GetLanguage()
+    {
+        fixed (byte* pointer = LanguageUtf8)
+            return Decode(pointer, 24);
+    }
+
+    internal string GetCodecName()
+    {
+        fixed (byte* pointer = CodecNameUtf8)
+            return Decode(pointer, 40);
+    }
+
+    private static string Decode(byte* pointer, int length)
+    {
+        var data = new ReadOnlySpan<byte>(pointer, length);
+        var end = data.IndexOf((byte)0);
+        if (end < 0)
+            throw new InvalidOperationException(
+                "Native subtitle descriptor has no NUL terminator.");
+        return System.Text.Encoding.UTF8.GetString(data[..end]);
+    }
 }
 
 internal enum NativeMediaLocatorKind : int

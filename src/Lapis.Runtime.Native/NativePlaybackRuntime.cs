@@ -27,7 +27,7 @@ public sealed class NativeMediaRuntimeException : Exception
 /// In-process adapter from the Application playback-runtime port to the stable
 /// native C ABI. One adapter instance binds to exactly one PlaybackSessionId.
 /// </summary>
-public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfaceBinding, IPlaybackRuntimeObserver, IChapterNavigationRuntime
+public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfaceBinding, IPlaybackRuntimeObserver, IChapterNavigationRuntime, IEmbeddedSubtitleTrackInventoryRuntime
 {
     private readonly object _gate = new();
     private readonly INativeMediaRuntimeApi _api;
@@ -243,6 +243,95 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
                     "Native navigation returned a negative chapter time.");
             }
             return ValueTask.FromResult(new MediaTime(position.Nanoseconds));
+        }
+    }
+
+    /// <summary>
+    /// Reads the optional native subtitle-stream inventory. This is metadata
+    /// only: it does not enable an embedded decoder or create a subtitle UI
+    /// choice that would misleadingly appear playable.
+    /// </summary>
+    public ValueTask<IReadOnlyList<EmbeddedSubtitleTrack>> ReadEmbeddedSubtitleTracksAsync(
+        RuntimeCommandContext context,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ThrowIfDisposed();
+            if (_session is null || _boundSessionId != context.SessionId)
+                throw new InvalidOperationException(
+                    "Embedded subtitle enumeration requires an opened playback session.");
+
+            uint version;
+            try
+            {
+                version = _api.GetSubtitleTracksApiVersion();
+            }
+            catch (EntryPointNotFoundException exception)
+            {
+                throw new NotSupportedException(
+                    "The installed native runtime has no subtitle inventory extension.",
+                    exception);
+            }
+            if (version != NativeAbi.SubtitleTracksVersion)
+                throw new NotSupportedException(
+                    $"Native subtitle inventory API version {version} is unsupported.");
+
+            var nativeEpoch = new NativePlaybackEpoch { Value = context.Epoch.Value };
+            uint count;
+            NativeResult result;
+            try
+            {
+                result = _api.SessionListSubtitleTracks(
+                    _session.Handle, nativeEpoch, null, out count);
+            }
+            catch (EntryPointNotFoundException exception)
+            {
+                throw new NotSupportedException(
+                    "The installed native runtime lacks subtitle inventory enumeration.",
+                    exception);
+            }
+            ThrowForResult(result, "session_list_subtitle_tracks.probe");
+            if (count > NativeAbi.SubtitleTrackCapacity)
+                throw new InvalidOperationException(
+                    "Native subtitle inventory exceeds the maximum track count.");
+            if (count == 0)
+                return ValueTask.FromResult<IReadOnlyList<EmbeddedSubtitleTrack>>([]);
+
+            var native = new NativeSubtitleTrackInfo[checked((int)count)];
+            try
+            {
+                result = _api.SessionListSubtitleTracks(
+                    _session.Handle, nativeEpoch, native, out count);
+            }
+            catch (EntryPointNotFoundException exception)
+            {
+                throw new NotSupportedException(
+                    "The installed native runtime lacks subtitle inventory enumeration.",
+                    exception);
+            }
+            ThrowForResult(result, "session_list_subtitle_tracks.read");
+            if (count > native.Length)
+                throw new InvalidOperationException(
+                    "Native subtitle inventory returned more tracks than buffer capacity.");
+
+            var tracks = new List<EmbeddedSubtitleTrack>(checked((int)count));
+            for (var i = 0; i < count; ++i)
+            {
+                var item = native[i];
+                var type = item.Kind switch
+                {
+                    NativeSubtitleTrackKind.Text => EmbeddedSubtitleTrackFormat.Text,
+                    NativeSubtitleTrackKind.Bitmap => EmbeddedSubtitleTrackFormat.Bitmap,
+                    _ => EmbeddedSubtitleTrackFormat.Unknown
+                };
+                tracks.Add(new EmbeddedSubtitleTrack(
+                    item.StreamIndex, type, item.GetLanguage(), item.GetCodecName()));
+            }
+
+            return ValueTask.FromResult<IReadOnlyList<EmbeddedSubtitleTrack>>(tracks);
         }
     }
 
@@ -557,6 +646,9 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
             case NativeResult.Unsupported:
                 throw new NotSupportedException(
                     $"Native media runtime does not support '{operation}'.");
+            case NativeResult.BufferTooSmall:
+                throw new InvalidOperationException(
+                    $"Native media runtime reported insufficient buffer for '{operation}'.");
             case NativeResult.OutputUnavailable:
                 throw new InvalidOperationException(
                     $"Native video output is unavailable during '{operation}'.");
