@@ -68,6 +68,21 @@ public sealed class WindowsDesktopJourneys
     }
 
     [Fact]
+    public async Task ExistingWatchBookmarkAppearsAsResumeActionInMovieDetails()
+    {
+        using var session = await DesktopSession.CreateAsync();
+        await session.SeedWatchBookmarkAsync();
+        session.Start();
+        var main = session.MainWindow();
+
+        // The bookmark was written to the isolated sidecar BEFORE launch.
+        session.Click(session.WaitFor(main, "Lapis.Library.FeaturedDetails"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.DetailResume"));
+        session.Click(session.WaitFor(main, "Lapis.Library.DetailClose"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.PlayFeatured"));
+    }
+
+    [Fact]
     public async Task Movie_Watch_Subtitles_And_Back_RoundTripThroughRealExe()
     {
         using var session = await DesktopSession.CreateAsync();
@@ -137,6 +152,13 @@ internal sealed class DesktopSession : IDisposable
         await new JsonMediaLibrary(session._catalogPath)
             .ImportAsync(new MediaLocator(MediaLocatorKind.File, file));
         return session;
+    }
+
+    public async Task SeedWatchBookmarkAsync()
+    {
+        var item = Assert.Single(await new JsonMediaLibrary(_catalogPath).ListAsync());
+        await new JsonWatchProgressStore(_catalogPath + ".watch.v1.json").SaveAsync(
+            new WatchProgress(item.Id, 70, 240, DateTimeOffset.UtcNow));
     }
 
     public bool ProcessIsRunning => _process is { HasExited: false };

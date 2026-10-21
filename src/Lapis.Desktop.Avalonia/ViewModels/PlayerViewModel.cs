@@ -162,6 +162,25 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
         });
     }
 
+    /// <summary>
+    /// Seek to a stored bookmark only after a fresh successful Open, and only
+    /// for a duration-aware, seekable transport. Does not alter native ownership.
+    /// </summary>
+    public Task ResumeAtAsync(double seconds)
+    {
+        if (!CanScrub || !double.IsFinite(seconds) || seconds < 20)
+            return Task.CompletedTask;
+        return RunAsync(async () =>
+        {
+            if (!HasSeekableTransport || _player.Snapshot.Duration is not { Nanoseconds: > 0 })
+                return;
+            var duration = _player.Snapshot.Duration.Value.ToTimeSpan().TotalSeconds;
+            if (seconds >= duration - 30 || seconds > duration * 0.95)
+                return;
+            await _player.SeekAsync(TimeSpan.FromSeconds(seconds), _lifetime.Token);
+        });
+    }
+
     /// <summary>Stop/detach media before leaving the watch screen.</summary>
     public Task CloseAsync() => RunAsync(() => _player.CloseAsync(_lifetime.Token));
 

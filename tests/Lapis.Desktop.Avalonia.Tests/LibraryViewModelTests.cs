@@ -144,6 +144,44 @@ public sealed class LibraryViewModelTests
     }
 
     [Fact]
+    public async Task ContinueWatchingShelfTracksOnlyResumableAvailableFilms()
+    {
+        var file = Path.Combine(Path.GetTempPath(), "lapis-watch-test-" + Guid.NewGuid() + ".mp4");
+        await File.WriteAllTextAsync(file, "fake media content");
+        try
+        {
+            using var view = new LibraryViewModel(new FakeLibrary());
+            await view.LoadAsync();
+            await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, file));
+            var card = Assert.Single(view.VisibleItems);
+            var progress = new WatchProgress(card.Item.Id, 80, 240, DateTimeOffset.UtcNow);
+
+            view.LoadWatchProgress([progress]);
+            Assert.True(view.HasContinueWatching);
+            Assert.Same(card, Assert.Single(view.ContinueWatchingItems));
+            Assert.Equal(80, card.ResumePositionSeconds);
+            Assert.Equal("▶  繼續播放", card.PlayActionLabel);
+
+            view.SearchText = "nothing";
+            Assert.False(view.HasContinueWatching);
+            view.SearchText = "";
+            Assert.True(view.HasContinueWatching);
+            view.ShowDiscs();
+            Assert.False(view.HasContinueWatching);
+            view.ShowAll();
+            Assert.True(view.HasContinueWatching);
+
+            view.UpdateWatchProgress(progress with { PositionSeconds = 239 });
+            Assert.Empty(view.ContinueWatchingItems);
+            Assert.False(card.CanResume);
+        }
+        finally
+        {
+            File.Delete(file);
+        }
+    }
+
+    [Fact]
     public async Task SidebarNavigationMaintainsExactlyOneActiveTarget()
     {
         using var view = new LibraryViewModel(new FakeLibrary());

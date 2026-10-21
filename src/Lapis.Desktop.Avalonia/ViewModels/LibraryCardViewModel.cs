@@ -16,6 +16,7 @@ public sealed class LibraryCardViewModel : INotifyPropertyChanged, IDisposable
     private static readonly SemaphoreSlim DecodeSlots = new(2, 2);
     private readonly CancellationTokenSource _lifetime = new();
     private Bitmap? _poster;
+    private WatchProgress? _watchProgress;
     private bool _started;
     private bool _disposed;
 
@@ -35,6 +36,34 @@ public sealed class LibraryCardViewModel : INotifyPropertyChanged, IDisposable
     public Bitmap? Poster => _poster;
     public bool HasPoster => _poster is not null;
     public bool ShowPlaceholder => _poster is null;
+    public bool CanResume => !IsDisc && IsAvailable && _watchProgress?.IsResumable == true;
+    public double ResumePositionSeconds => CanResume ? _watchProgress!.PositionSeconds : 0;
+    public string PlayActionLabel => CanResume ? "▶  繼續播放" : "▶  開始播放";
+    public string ProgressLabel => CanResume
+        ? $"從 {FormatPosition(ResumePositionSeconds)} 繼續觀看" : "";
+    public double ProgressPercent => CanResume
+        ? 100 * _watchProgress!.PositionSeconds / _watchProgress.DurationSeconds : 0;
+    public DateTimeOffset LastWatchedUtc => _watchProgress?.UpdatedAtUtc ?? DateTimeOffset.MinValue;
+
+    internal void SetWatchProgress(WatchProgress? progress)
+    {
+        if (Equals(_watchProgress, progress)) return;
+        _watchProgress = progress;
+        Notify(nameof(CanResume));
+        Notify(nameof(ResumePositionSeconds));
+        Notify(nameof(PlayActionLabel));
+        Notify(nameof(ProgressLabel));
+        Notify(nameof(ProgressPercent));
+        Notify(nameof(LastWatchedUtc));
+    }
+
+    private static string FormatPosition(double seconds)
+    {
+        var time = TimeSpan.FromSeconds(Math.Max(0, seconds));
+        return time.TotalHours >= 1
+            ? $"{(long)time.TotalHours:00}:{time.Minutes:00}:{time.Seconds:00}"
+            : $"{(long)time.TotalMinutes:00}:{time.Seconds:00}";
+    }
 
     public void EnsurePosterLoaded()
     {

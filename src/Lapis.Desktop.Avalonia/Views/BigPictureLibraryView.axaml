@@ -102,7 +102,7 @@
                 <TextBlock Text="{Binding FeaturedCard.AvailabilityLabel}"
                            FontSize="13" Foreground="#B6C6D5"/>
                 <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,15,0,0">
-                  <Button Classes="bp-primary" Content="▶  開始播放"
+                  <Button Classes="bp-primary" Content="{Binding FeaturedCard.PlayActionLabel}"
                           AutomationProperties.AutomationId="Lapis.Library.PlayFeatured"
                           Click="FeaturedPlay_Click" AutomationProperties.Name="播放選中影片"/>
                   <Button Classes="bp-secondary" Content="更多資訊"
@@ -142,6 +142,54 @@
                     Click="Import_Click" HorizontalAlignment="Center"/>
           </StackPanel>
         </Border>
+
+        <!-- Resumable local files, sorted by the last viewing session. -->
+        <StackPanel Spacing="12" IsVisible="{Binding HasContinueWatching}">
+          <TextBlock Text="繼續觀看" FontSize="25" FontWeight="SemiBold"
+                     AutomationProperties.AutomationId="Lapis.Library.ContinueWatchingHeading"/>
+          <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                        VerticalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{Binding ContinueWatchingItems}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <StackPanel Orientation="Horizontal"/>
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Button Classes="bp-tile" Width="294" Height="212"
+                          Margin="0,0,15,4" CommandParameter="{Binding}"
+                          Click="TilePlay_Click" GotFocus="TileGotFocus"
+                          PointerEntered="TilePointerEntered"
+                          AutomationProperties.Name="{Binding Title}">
+                    <Grid RowDefinitions="149,4,*">
+                      <Border Grid.Row="0" CornerRadius="8" Background="#243449"
+                              ClipToBounds="True">
+                        <Grid>
+                          <Image Source="{Binding Poster}" Stretch="Uniform"/>
+                          <TextBlock Text="L" FontSize="64"
+                                     IsVisible="{Binding ShowPlaceholder}"
+                                     Foreground="#647B93"
+                                     HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Grid>
+                      </Border>
+                      <ProgressBar Grid.Row="1" Minimum="0" Maximum="100"
+                                   Height="4" Value="{Binding ProgressPercent}"
+                                   Foreground="#B7E7FA" Background="#314256"
+                                   IsHitTestVisible="False"/>
+                      <StackPanel Grid.Row="2" Margin="10,5" Spacing="2">
+                        <TextBlock Text="{Binding Title}" FontSize="14"
+                                   FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="{Binding ProgressLabel}" FontSize="11"
+                                   Foreground="#AFC9D9" TextTrimming="CharacterEllipsis"/>
+                      </StackPanel>
+                    </Grid>
+                  </Button>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </StackPanel>
 
         <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding HasItems}">
           <StackPanel>
@@ -320,12 +368,20 @@
               <TextBlock Text="{Binding FeaturedCard.ImportedAtText}"
                          FontSize="13" Foreground="#D9E8F3"/>
             </StackPanel>
+            <TextBlock Text="{Binding FeaturedCard.ProgressLabel}"
+                       IsVisible="{Binding FeaturedCard.CanResume}"
+                       Foreground="#B7E7FA" FontSize="14"/>
             <TextBlock Text="資訊來自本機電影庫，沒有擅自下載外部電影資料。"
                        TextWrapping="Wrap" FontSize="12"
                        Foreground="#8FA5B8" MaxWidth="490"/>
             <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,18,0,0">
-              <Button x:Name="BigPictureDetailsPlay" Classes="bp-primary"
-                      Content="▶  播放電影" Click="DetailsPlay_Click"
+              <Button x:Name="BigPictureDetailsResume" Classes="bp-primary"
+                      Content="▶  繼續播放" Click="DetailsResume_Click"
+                      IsVisible="{Binding FeaturedCard.CanResume}"
+                      AutomationProperties.AutomationId="Lapis.Library.DetailResume"
+                      AutomationProperties.Name="從上次觀影進度繼續播放"/>
+              <Button x:Name="BigPictureDetailsPlay" Classes="bp-secondary"
+                      Content="從頭播放" Click="DetailsPlay_Click"
                       IsEnabled="{Binding FeaturedCard.IsAvailable}"
                       AutomationProperties.AutomationId="Lapis.Library.DetailPlay"
                       AutomationProperties.Name="播放目前選取的電影"/>

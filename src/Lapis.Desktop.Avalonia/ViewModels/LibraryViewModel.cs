@@ -21,6 +21,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
 {
     private readonly IMediaLibrary _library = library;
     private readonly Dictionary<Guid, LibraryCardViewModel> _cards = [];
+    private readonly Dictionary<Guid, WatchProgress> _watchProgress = [];
     private IReadOnlyList<MediaLibraryItem> _items = [];
     private bool _disposed;
     private string _searchText = "";
@@ -34,6 +35,44 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
     public event PropertyChangedEventHandler? PropertyChanged;
     public ObservableCollection<LibraryCardViewModel> VisibleItems { get; } = [];
     public ObservableCollection<LibraryCardViewModel> RecentItems { get; } = [];
+    public ObservableCollection<LibraryCardViewModel> ContinueWatchingItems { get; } = [];
+    public bool HasContinueWatching => ContinueWatchingItems.Count != 0;
+
+    /// <summary>Local bookmarks are independent of the media catalog.</summary>
+    public void LoadWatchProgress(IEnumerable<WatchProgress> snapshots)
+    {
+        ArgumentNullException.ThrowIfNull(snapshots);
+        _watchProgress.Clear();
+        foreach (var item in snapshots.Where(item => item.IsResumable))
+            _watchProgress[item.ItemId] = item;
+        UpdateWatchShelf();
+    }
+
+    public void UpdateWatchProgress(WatchProgress progress)
+    {
+        ArgumentNullException.ThrowIfNull(progress);
+        if (progress.IsResumable) _watchProgress[progress.ItemId] = progress;
+        else _watchProgress.Remove(progress.ItemId);
+        UpdateWatchShelf();
+    }
+
+    private void UpdateWatchShelf()
+    {
+        foreach (var card in _cards.Values)
+        {
+            _watchProgress.TryGetValue(card.Item.Id, out var progress);
+            card.SetWatchProgress(progress);
+        }
+        var watching = _cards.Values
+            .Where(card => card.CanResume &&
+                _category == LibraryCategory.All &&
+                string.IsNullOrWhiteSpace(_searchText))
+            .OrderByDescending(card => card.LastWatchedUtc)
+            .Take(12)
+            .ToArray();
+        ReconcileItems(ContinueWatchingItems, watching);
+        Notify(nameof(HasContinueWatching));
+    }
 
     public LibraryCardViewModel? FeaturedCard => _featuredCard;
     public bool HasFeaturedCard => _featuredCard is not null;
@@ -143,6 +182,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         foreach (var item in _items)
             _cards.TryAdd(item.Id, new LibraryCardViewModel(item));
         _loaded = true;
+        UpdateWatchShelf();
         Notify(nameof(CountText));
         Notify(nameof(HasItems));
         ApplyFilter();
@@ -298,6 +338,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         Notify(nameof(IsEmpty));
         Notify(nameof(HasNoResults));
         Notify(nameof(IsRecentlyAddedSort));
+        UpdateWatchShelf();
     }
 
     private static void ReconcileItems(ObservableCollection<LibraryCardViewModel> target,
@@ -323,6 +364,8 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         VisibleItems.Clear();
         RecentItems.Clear();
         _featuredCard = null;
+        ContinueWatchingItems.Clear();
+        _watchProgress.Clear();
     }
 
     private void Notify([CallerMemberName] string property = "") =>
