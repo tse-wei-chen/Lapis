@@ -57,6 +57,23 @@ public sealed class PlayerViewModelTests
     }
 
     [Fact]
+    public async Task ResumeSeekUsesExistingSerializedPlaybackActor()
+    {
+        var fake = new FakePlayer();
+        await using var player = new PlayerViewModel(fake);
+        await player.OpenAsync(new MediaLocator(MediaLocatorKind.File, "movie.mkv"));
+
+        await player.ResumeAtAsync(25);
+        Assert.Equal(1, fake.SeekCount);
+        Assert.Equal(TimeSpan.FromSeconds(25), fake.LastSeek);
+
+        // Invalid bookmarks and near-end snapshots do not trigger a seek.
+        await player.ResumeAtAsync(double.NaN);
+        await player.ResumeAtAsync(55);
+        Assert.Equal(1, fake.SeekCount);
+    }
+
+    [Fact]
     public async Task DragPreviewsTimeAndCommitsExactlyOneSeekAtRelease()
     {
         var fake = new FakePlayer();

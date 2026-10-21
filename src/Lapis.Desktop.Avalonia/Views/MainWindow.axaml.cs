@@ -8,6 +8,7 @@ using Avalonia.Markup.Xaml;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Lapis.Contracts.Media;
+using Lapis.Contracts.Playback;
 using Lapis.Desktop.Avalonia.Controls;
 using Lapis.Desktop.Avalonia.Services;
 using Lapis.Desktop.Avalonia.ViewModels;
@@ -49,6 +50,10 @@ public sealed partial class MainWindow : Window
     private readonly TextBlock _currentHeading;
     private readonly PlayerViewModel _player;
     private readonly LibraryViewModel _library;
+    private readonly JsonWatchProgressStore _watchProgressStore;
+    private LibraryCardViewModel? _activeWatchCard;
+    private readonly DispatcherTimer _watchProgressTimer = new()
+        { Interval = TimeSpan.FromSeconds(10) };
     private bool _closeStarted;
     private bool _shutdownComplete;
 
@@ -110,12 +115,15 @@ public sealed partial class MainWindow : Window
             Path.IsPathFullyQualified(e2eCatalog))
             libraryFile = e2eCatalog;
         _library = new LibraryViewModel(new JsonMediaLibrary(libraryFile));
+        // Same parent path means E2E fixtures get a private bookmark journal.
+        _watchProgressStore = new JsonWatchProgressStore(libraryFile + ".watch.v1.json");
         _player = new PlayerViewModel(
             new NativePlayerPlaybackService(() => _videoSurface.OutputHandle));
         _libraryPage.DataContext = _library;
         _playerPage.DataContext = _player;
 
-        _bigPicture.PlayRequested += card => _ = PlayLibraryItemAsync(card);
+        _bigPicture.PlayRequested += card => _ = PlayLibraryItemAsync(card, resume: false);
+        _bigPicture.ResumeRequested += card => _ = PlayLibraryItemAsync(card, resume: true);
         _bigPicture.ImportRequested += () => _ = ImportFromBigPictureAsync();
         _bigPicture.ImportDiscRequested += () => _ = ImportDiscCoreAsync();
         _bigPicture.ManageRequested += () => ShowLibraryManagement(true);
@@ -129,6 +137,14 @@ public sealed partial class MainWindow : Window
             try
             {
                 await _library.LoadAsync();
+                try
+                {
+                    _library.LoadWatchProgress(await _watchProgressStore.LoadAsync());
+                }
+                catch (Exception exception)
+                {
+                    _library.ReportError($"觀影紀錄無法載入：{exception.Message}");
+                }
                 WindowState = WindowState.Maximized;
                 Dispatcher.UIThread.Post(_bigPicture.RestoreMovieFocus,
                     DispatcherPriority.Loaded);
@@ -151,6 +167,7 @@ public sealed partial class MainWindow : Window
 
         KeyDown += WatchKeyDown;
         _gamepadTimer.Tick += GamepadTick;
+        _watchProgressTimer.Tick += WatchProgressTick;
         Opened += (_, _) => _gamepadTimer.Start();
         Closing += OnClosing;
     }
@@ -672,9 +689,9 @@ public sealed partial class MainWindow : Window
         return dialog;
     }
 
-    private async Task PlayLibraryItemAsync(LibraryCardViewModel card)
+    private async Task PlayLibraryItemAsync(LibraryCardViewModel card, bool resume = false)
     {
-        if (_closeStarted || !_libraryPage.IsVisible) return;
+        if (_closeStarted || !_libraryPage.IsVisible || _playerPage.IsVisible) return;
         var watchGeneration = ++_watchGeneration;
         var item = card.Item;
         try
@@ -698,6 +715,14 @@ public sealed partial class MainWindow : Window
                 RestoreLibraryView();
                 return;
             }
+
+            // Resuming BDMV navigation is intentionally unsupported until the
+            // native title/chapter seek contract is available.
+            if (resume && !item.IsDisc && card.CanResume)
+                await _player.ResumeAtAsync(card.ResumePositionSeconds);
+            if (watchGeneration != _watchGeneration) return;
+            _activeWatchCard = card;
+            _watchProgressTimer.Start();
 
             var playlists = item.IsDisc
                 ? DiscPlaylistIndex.ListIdentifiers(item)
@@ -762,6 +787,8 @@ public sealed partial class MainWindow : Window
 
     private void RestoreLibraryView()
     {
+        _watchProgressTimer.Stop();
+        _activeWatchCard = null;
         InvalidateWatchSubtitleLoad();
         _watchChrome?.Close();
         _watchChrome = null;
@@ -795,11 +822,44 @@ public sealed partial class MainWindow : Window
 
     private async Task BackToLibraryAsync()
     {
+        _watchProgressTimer.Stop();
+        await SaveWatchProgressAsync();
         // Cancel background subtitle reads immediately, before native shutdown.
         InvalidateWatchSubtitleLoad();
         // Native render worker is stopped/detached before hiding the host.
         await _player.CloseAsync();
         RestoreLibraryView();
+    }
+
+    private async void WatchProgressTick(object? sender, EventArgs args) =>
+        await SaveWatchProgressAsync();
+
+    private async Task SaveWatchProgressAsync()
+    {
+        var card = _activeWatchCard;
+        if (card is null || card.IsDisc) return;
+        var snapshot = _player.PlaybackSnapshot;
+        if (snapshot.Transport is not (TransportState.Ready or
+            TransportState.Playing or TransportState.Paused or TransportState.Ended))
+            return;
+        var duration = snapshot.Duration?.ToTimeSpan().TotalSeconds ?? 0;
+        if (!double.IsFinite(duration) || duration < 60) return;
+        var seconds = snapshot.Transport == TransportState.Ended
+            ? duration : snapshot.Position.ToTimeSpan().TotalSeconds;
+        if (!double.IsFinite(seconds)) return;
+        var progress = new WatchProgress(card.Item.Id, seconds, duration,
+            DateTimeOffset.UtcNow);
+        try
+        {
+            await _watchProgressStore.SaveAsync(progress);
+            if (!_closeStarted) _library.UpdateWatchProgress(progress);
+        }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Trace.TraceWarning(
+                "Failed to save watch progress: {0}", exception);
+            if (!_closeStarted) _library.ReportError($"觀影進度無法儲存：{exception.Message}");
+        }
     }
 
     private void InvalidateWatchSubtitleLoad()
@@ -823,6 +883,9 @@ public sealed partial class MainWindow : Window
             // Native render worker joins before the persistent GPU HWND dies.
             _gamepadTimer.Stop();
             _gamepadTimer.Tick -= GamepadTick;
+            _watchProgressTimer.Stop();
+            _watchProgressTimer.Tick -= WatchProgressTick;
+            await SaveWatchProgressAsync();
             InvalidateWatchSubtitleLoad();
             _watchChrome?.Close();
             _watchChrome = null;

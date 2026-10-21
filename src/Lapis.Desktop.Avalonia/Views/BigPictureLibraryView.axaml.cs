@@ -19,9 +19,11 @@ public sealed partial class BigPictureLibraryView : UserControl
     private readonly Border _hero;
     private readonly Grid _detailsOverlay;
     private readonly Button _detailsPlay;
+    private readonly Button _detailsResume;
     private Button? _focusedTile;
 
     public event Action<LibraryCardViewModel>? PlayRequested;
+    public event Action<LibraryCardViewModel>? ResumeRequested;
     public event Action? ImportRequested;
     public event Action? ImportDiscRequested;
     public event Action? ManageRequested;
@@ -37,6 +39,8 @@ public sealed partial class BigPictureLibraryView : UserControl
             ?? throw new InvalidOperationException("Missing Big Picture film details.");
         _detailsPlay = this.FindControl<Button>("BigPictureDetailsPlay")
             ?? throw new InvalidOperationException("Missing film detail play action.");
+        _detailsResume = this.FindControl<Button>("BigPictureDetailsResume")
+            ?? throw new InvalidOperationException("Missing film detail resume action.");
         // Tunnel before Button/ScrollViewer swallow navigation arrows.
         AddHandler(InputElement.KeyDownEvent, BigPictureKeyDown,
             RoutingStrategies.Tunnel, handledEventsToo: true);
@@ -62,7 +66,8 @@ public sealed partial class BigPictureLibraryView : UserControl
         if (tile is not null) _focusedTile = tile;
         Library?.SelectFeatured(card);
         _detailsOverlay.IsVisible = true;
-        _detailsPlay.Focus();
+        if (card.CanResume) _detailsResume.Focus();
+        else _detailsPlay.Focus();
         LibraryMotion.Enter(_detailsOverlay);
     }
 
@@ -79,6 +84,13 @@ public sealed partial class BigPictureLibraryView : UserControl
         if (!_detailsPlay.IsEnabled || Library?.FeaturedCard is not { } card) return;
         CloseDetails();
         PlayRequested?.Invoke(card);
+    }
+
+    private void DetailsResume_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Library?.FeaturedCard is not { CanResume: true } card) return;
+        CloseDetails();
+        ResumeRequested?.Invoke(card);
     }
 
     public void RestoreMovieFocus()
@@ -138,8 +150,9 @@ public sealed partial class BigPictureLibraryView : UserControl
 
     private void FeaturedPlay_Click(object? sender, RoutedEventArgs e)
     {
-        if (Library?.FeaturedCard is { } card)
-            PlayRequested?.Invoke(card);
+        if (Library?.FeaturedCard is not { } card) return;
+        if (card.CanResume) ResumeRequested?.Invoke(card);
+        else PlayRequested?.Invoke(card);
     }
 
     private void ContextPlay_Click(object? sender, RoutedEventArgs e)
@@ -198,8 +211,13 @@ public sealed partial class BigPictureLibraryView : UserControl
                 var focus = InteractiveButtons().FirstOrDefault(b => b.IsFocused);
                 if (focus is null)
                 {
-                    if (_detailsOverlay.IsVisible && _detailsPlay.IsEnabled)
-                        _detailsPlay.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    if (_detailsOverlay.IsVisible)
+                    {
+                        var targetButton = _detailsResume.IsVisible
+                            ? _detailsResume : _detailsPlay;
+                        if (targetButton.IsEnabled)
+                            targetButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    }
                     else if (!_detailsOverlay.IsVisible && Library?.FeaturedCard is { } card)
                         OpenDetails(card, null);
                 }
