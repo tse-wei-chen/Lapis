@@ -42,6 +42,8 @@ public sealed partial class BigPictureLibraryView : UserControl
     /// Return keyboard/controller focus to the previously selected movie
     /// after exiting Watch, without recreating or re-sorting the catalog.
     /// </summary>
+    public void ResetScroll() => _scroll.Offset = new Vector(0, 0);
+
     public void RestoreMovieFocus()
     {
         if (!IsVisible) return;

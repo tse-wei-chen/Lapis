@@ -71,46 +71,10 @@
       <Setter Property="Background" Value="#456075"/>
     </Style>
   </UserControl.Styles>
-  <Grid x:Name="BigPictureRoot" AutomationProperties.AutomationId="Lapis.Library.Root" RowDefinitions="76,*,46"
+  <Grid x:Name="BigPictureRoot" AutomationProperties.AutomationId="Lapis.Library.Root" RowDefinitions="*,46"
         Background="#0A111C">
 
-    <!-- Quiet console-style navigation that remains accessible from a couch. -->
-    <Border Grid.Row="0" Background="#EA111C29" Padding="32,8"
-            BorderBrush="#304154" BorderThickness="0,0,0,1">
-      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="32">
-        <StackPanel Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
-          <TextBlock Text="LAPIS" FontSize="23" FontWeight="Bold"
-                     LetterSpacing="3" VerticalAlignment="Center"
-                     Foreground="#F3FAFF"/>
-          <TextBlock Text="◈" FontSize="16" VerticalAlignment="Center"
-                     Margin="10,0,0,0" Foreground="#9DDDEE"/>
-        </StackPanel>
-        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7"
-                    VerticalAlignment="Center">
-          <Button Classes="bp-nav" Classes.selected="{Binding IsAllCategory}"
-                  Content="首頁 / 所有收藏" Click="All_Click"/>
-          <Button Classes="bp-nav" Classes.selected="{Binding IsRecentlyAddedCategory}"
-                  Content="最近加入" Click="Recent_Click"/>
-          <Button Classes="bp-nav" Classes.selected="{Binding IsBluRayCategory}"
-                  Content="Blu-ray" Click="BluRay_Click"/>
-          <Button Classes="bp-nav" Classes.selected="{Binding IsVideoCategory}"
-                  Content="本機影片" Click="Videos_Click"/>
-        </StackPanel>
-        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10"
-                    VerticalAlignment="Center">
-          <Button Classes="bp-secondary" Content="＋ 影片"
-                  AutomationProperties.AutomationId="Lapis.Library.ImportVideo"
-                  Click="Import_Click" AutomationProperties.Name="匯入影片"/>
-          <Button Classes="bp-secondary" Content="＋ Blu-ray"
-                  Click="ImportDisc_Click" AutomationProperties.Name="匯入完整 Blu-ray 資料夾"/>
-          <Button Classes="bp-secondary" Content="☷ 管理"
-                  AutomationProperties.AutomationId="Lapis.Library.Manage"
-                  Click="Manage_Click" AutomationProperties.Name="切換管理清單"/>
-        </StackPanel>
-      </Grid>
-    </Border>
-
-    <ScrollViewer Grid.Row="1" x:Name="BigPictureScroll"
+    <ScrollViewer Grid.Row="0" x:Name="BigPictureScroll"
                   HorizontalScrollBarVisibility="Disabled"
                   VerticalScrollBarVisibility="Auto">
       <StackPanel Spacing="25" Margin="42,28,42,42">
@@ -141,7 +105,7 @@
                   <Button Classes="bp-primary" Content="▶  開始播放"
                           AutomationProperties.AutomationId="Lapis.Library.PlayFeatured"
                           Click="FeaturedPlay_Click" AutomationProperties.Name="播放選中影片"/>
-                  <Button Classes="bp-secondary" Content="檢視收藏"
+                  <Button Classes="bp-secondary" Content="管理收藏"
                           Click="Manage_Click"/>
                 </StackPanel>
               </StackPanel>
@@ -315,7 +279,7 @@
       </StackPanel>
     </ScrollViewer>
 
-    <Border Grid.Row="2" BorderBrush="#2D4053" BorderThickness="0,1,0,0"
+    <Border Grid.Row="1" BorderBrush="#2D4053" BorderThickness="0,1,0,0"
             Background="#F009121E" Padding="35,8">
       <Grid ColumnDefinitions="*,Auto">
         <TextBlock Text="{Binding StatusText}" Foreground="#8FA2B6"

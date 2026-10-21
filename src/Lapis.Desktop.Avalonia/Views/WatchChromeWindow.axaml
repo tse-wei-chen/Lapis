@@ -23,6 +23,14 @@
     <Style Selector="Button.watch-action:pointerover">
       <Setter Property="Background" Value="#CC466477"/>
     </Style>
+    <Style Selector="Button.watch-primary">
+      <Setter Property="Background" Value="#B7E7FA"/>
+      <Setter Property="Foreground" Value="#10212E"/>
+      <Setter Property="CornerRadius" Value="11"/>
+    </Style>
+    <Style Selector="Button.watch-primary:pointerover">
+      <Setter Property="Background" Value="#E3F7FF"/>
+    </Style>
   </Window.Styles>
   <Grid x:Name="WatchChromeRoot" AutomationProperties.AutomationId="Lapis.Watch.Root" RowDefinitions="Auto,*,Auto"
         Background="Transparent" PointerMoved="WatchPointerMoved">
@@ -106,12 +114,23 @@
           <Button Grid.Column="0" Classes="watch-action" Content="◀ 10s"
                   Command="{Binding BackCommand}" IsEnabled="{Binding CanSeek}"
                   AutomationProperties.Name="後退十秒"/>
-          <Button Grid.Column="1" Classes="watch-action"
-                  Content="{Binding PlayPauseLabel}"
+          <!-- Vector Play/Pause switches with the native transport snapshot. -->
+          <Button Grid.Column="1" Classes="watch-action watch-primary"
                   AutomationProperties.AutomationId="Lapis.Watch.PlayPause"
+                  AutomationProperties.Name="{Binding PlayPauseLabel}"
+                  ToolTip.Tip="{Binding PlayPauseLabel}"
                   Command="{Binding ToggleCommand}"
                   IsEnabled="{Binding CanTransport}"
-                  MinWidth="80" AutomationProperties.Name="播放暫停"/>
+                  Width="58" Height="44" Padding="0">
+            <Grid Width="25" Height="25">
+              <Path Data="M5,3 L10,3 L10,21 L5,21 Z M14,3 L19,3 L19,21 L14,21 Z"
+                    Width="25" Height="25" Stretch="Uniform"
+                    Fill="#10212E" IsVisible="{Binding IsPlaying}"/>
+              <Path Data="M6,3 L20,12 L6,21 Z"
+                    Width="25" Height="25" Stretch="Uniform"
+                    Fill="#10212E" IsVisible="{Binding IsNotPlaying}"/>
+            </Grid>
+          </Button>
           <Button Grid.Column="2" Classes="watch-action" Content="10s ▶"
                   Command="{Binding ForwardCommand}" IsEnabled="{Binding CanSeek}"
                   AutomationProperties.Name="前進十秒"/>

@@ -20,6 +20,8 @@ public sealed class PlayerViewModelTests
         Assert.Same(locator, fake.LastLocator);
         Assert.Equal("BDMV · BDMV", viewModel.MediaTitle);
         Assert.Equal("Playing", viewModel.TransportText);
+        Assert.True(viewModel.IsPlaying);
+        Assert.False(viewModel.IsNotPlaying);
         Assert.Equal("00:12 / 01:00", viewModel.PositionText);
         Assert.True(viewModel.CanTransport);
         Assert.True(viewModel.CanSeek);
@@ -50,6 +52,8 @@ public sealed class PlayerViewModelTests
         Assert.True(viewModel.CanTransport);
         Assert.False(viewModel.CanSeek);
         Assert.Equal("重播", viewModel.PlayPauseLabel);
+        Assert.False(viewModel.IsPlaying);
+        Assert.True(viewModel.IsNotPlaying);
     }
 
     [Fact]
