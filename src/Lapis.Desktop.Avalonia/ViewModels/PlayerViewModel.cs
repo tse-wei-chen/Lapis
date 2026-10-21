@@ -76,6 +76,8 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
     public string TransportText => _transport.ToString();
     public string PlayPauseLabel => _transport == TransportState.Playing
         ? "暫停" : _transport == TransportState.Ended ? "重播" : "播放";
+    public bool IsPlaying => _transport == TransportState.Playing;
+    public bool IsNotPlaying => !IsPlaying;
     public bool CanTransport => !_busy && _currentMedia is not null &&
         _transport is TransportState.Ready or TransportState.Playing
             or TransportState.Paused or TransportState.Ended;
@@ -280,6 +282,8 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
         _transport = snapshot.Transport;
         OnPropertyChanged(nameof(TransportText));
         OnPropertyChanged(nameof(PlayPauseLabel));
+        OnPropertyChanged(nameof(IsPlaying));
+        OnPropertyChanged(nameof(IsNotPlaying));
         OnPropertyChanged(nameof(CanTransport));
         OnPropertyChanged(nameof(CanSeek));
         OnPropertyChanged(nameof(CanScrub));

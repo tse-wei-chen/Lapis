@@ -17,6 +17,8 @@ public sealed partial class BigPictureLibraryView : UserControl
 {
     private readonly ScrollViewer _scroll;
     private readonly Border _hero;
+    private readonly Grid _detailsOverlay;
+    private readonly Button _detailsPlay;
     private Button? _focusedTile;
 
     public event Action<LibraryCardViewModel>? PlayRequested;
@@ -31,6 +33,10 @@ public sealed partial class BigPictureLibraryView : UserControl
             ?? throw new InvalidOperationException("Missing Big Picture scroll.");
         _hero = this.FindControl<Border>("BigPictureHero")
             ?? throw new InvalidOperationException("Missing Big Picture hero.");
+        _detailsOverlay = this.FindControl<Grid>("BigPictureDetailsOverlay")
+            ?? throw new InvalidOperationException("Missing Big Picture film details.");
+        _detailsPlay = this.FindControl<Button>("BigPictureDetailsPlay")
+            ?? throw new InvalidOperationException("Missing film detail play action.");
         // Tunnel before Button/ScrollViewer swallow navigation arrows.
         AddHandler(InputElement.KeyDownEvent, BigPictureKeyDown,
             RoutingStrategies.Tunnel, handledEventsToo: true);
@@ -42,6 +48,39 @@ public sealed partial class BigPictureLibraryView : UserControl
     /// Return keyboard/controller focus to the previously selected movie
     /// after exiting Watch, without recreating or re-sorting the catalog.
     /// </summary>
+    public void ResetScroll() => _scroll.Offset = new Vector(0, 0);
+
+    public void CloseDetails()
+    {
+        if (!_detailsOverlay.IsVisible) return;
+        _detailsOverlay.IsVisible = false;
+        if (IsVisible) _focusedTile?.Focus();
+    }
+
+    private void OpenDetails(LibraryCardViewModel card, Button? tile)
+    {
+        if (tile is not null) _focusedTile = tile;
+        Library?.SelectFeatured(card);
+        _detailsOverlay.IsVisible = true;
+        _detailsPlay.Focus();
+        LibraryMotion.Enter(_detailsOverlay);
+    }
+
+    private void FeaturedDetails_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Library?.FeaturedCard is { } card) OpenDetails(card, null);
+    }
+
+    private void DetailsClose_Click(object? sender, RoutedEventArgs e) =>
+        CloseDetails();
+
+    private void DetailsPlay_Click(object? sender, RoutedEventArgs e)
+    {
+        if (!_detailsPlay.IsEnabled || Library?.FeaturedCard is not { } card) return;
+        CloseDetails();
+        PlayRequested?.Invoke(card);
+    }
+
     public void RestoreMovieFocus()
     {
         if (!IsVisible) return;
@@ -93,8 +132,8 @@ public sealed partial class BigPictureLibraryView : UserControl
 
     private void TilePlay_Click(object? sender, RoutedEventArgs e)
     {
-        if (sender is Button { CommandParameter: LibraryCardViewModel card })
-            PlayRequested?.Invoke(card);
+        if (sender is Button { CommandParameter: LibraryCardViewModel card } tile)
+            OpenDetails(card, tile);
     }
 
     private void FeaturedPlay_Click(object? sender, RoutedEventArgs e)
@@ -109,8 +148,11 @@ public sealed partial class BigPictureLibraryView : UserControl
             PlayRequested?.Invoke(card);
     }
 
-    private void ContextManage_Click(object? sender, RoutedEventArgs e) =>
+    private void ContextManage_Click(object? sender, RoutedEventArgs e)
+    {
+        CloseDetails();
         ManageRequested?.Invoke();
+    }
 
     private void Import_Click(object? sender, RoutedEventArgs e) =>
         ImportRequested?.Invoke();
@@ -118,8 +160,11 @@ public sealed partial class BigPictureLibraryView : UserControl
     private void ImportDisc_Click(object? sender, RoutedEventArgs e) =>
         ImportDiscRequested?.Invoke();
 
-    private void Manage_Click(object? sender, RoutedEventArgs e) =>
+    private void Manage_Click(object? sender, RoutedEventArgs e)
+    {
+        CloseDetails();
         ManageRequested?.Invoke();
+    }
 
     private static readonly LibraryCategory[] Categories =
     [
@@ -153,8 +198,10 @@ public sealed partial class BigPictureLibraryView : UserControl
                 var focus = InteractiveButtons().FirstOrDefault(b => b.IsFocused);
                 if (focus is null)
                 {
-                    if (Library?.FeaturedCard is { } card)
-                        PlayRequested?.Invoke(card);
+                    if (_detailsOverlay.IsVisible && _detailsPlay.IsEnabled)
+                        _detailsPlay.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    else if (!_detailsOverlay.IsVisible && Library?.FeaturedCard is { } card)
+                        OpenDetails(card, null);
                 }
                 else
                 {
@@ -162,6 +209,11 @@ public sealed partial class BigPictureLibraryView : UserControl
                 }
                 break;
             case GamepadAction.Back:
+                if (_detailsOverlay.IsVisible)
+                {
+                    CloseDetails();
+                    break;
+                }
                 Navigate(() =>
                 {
                     Library?.ShowAll();
@@ -170,13 +222,14 @@ public sealed partial class BigPictureLibraryView : UserControl
                 RestoreMovieFocus();
                 break;
             case GamepadAction.Menu:
+                CloseDetails();
                 ManageRequested?.Invoke();
                 break;
             case GamepadAction.PreviousCategory:
-                CycleCategory(-1);
+                if (!_detailsOverlay.IsVisible) CycleCategory(-1);
                 break;
             case GamepadAction.NextCategory:
-                CycleCategory(1);
+                if (!_detailsOverlay.IsVisible) CycleCategory(1);
                 break;
         }
     }
@@ -200,7 +253,8 @@ public sealed partial class BigPictureLibraryView : UserControl
         RestoreMovieFocus();
     }
 
-    private Button[] InteractiveButtons() => this.GetVisualDescendants()
+    private Button[] InteractiveButtons() =>
+        (_detailsOverlay.IsVisible ? _detailsOverlay : (Visual)this).GetVisualDescendants()
         .OfType<Button>()
         .Where(button => button.IsVisible &&
             button.Bounds.Width > 0 && button.Bounds.Height > 0 &&

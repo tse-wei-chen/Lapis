@@ -275,7 +275,12 @@ public sealed partial class WatchChromeWindow : Window
             }
         }
 
-        if (_player.TransportText != "Playing" || _sidebarOpen || _subtitlePicker.IsDropDownOpen)
+        // Do not disappear beneath a stationary cursor, scrub gesture, or
+        // keyboard focus: playback chrome stays usable until interaction ends.
+        if (_player.TransportText != "Playing" || _sidebarOpen ||
+            _subtitlePicker.IsDropDownOpen || _controls.IsPointerOver ||
+            _header.IsPointerOver || _controls.IsKeyboardFocusWithin ||
+            _header.IsKeyboardFocusWithin)
             SetChromeVisible(true);
         else if ((DateTime.UtcNow - _lastActivity).TotalMilliseconds >= 3000)
             SetChromeVisible(false);

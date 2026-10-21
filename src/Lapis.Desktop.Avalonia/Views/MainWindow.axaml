@@ -9,16 +9,16 @@
   <Window.Resources>
     <!-- Cinema dark palette. Single set of brush tokens shared across grid,
          list, context menus, navigation, and animated states. -->
-    <SolidColorBrush x:Key="LibraryCanvas" Color="#0C1118"/>
-    <SolidColorBrush x:Key="LibrarySurface" Color="#151C26"/>
-    <SolidColorBrush x:Key="LibrarySurfaceAlt" Color="#202B37"/>
-    <SolidColorBrush x:Key="LibraryAccent" Color="#60B9CC"/>
-    <SolidColorBrush x:Key="LibraryAccentHover" Color="#78CDD9"/>
-    <SolidColorBrush x:Key="LibraryAccentSoft" Color="#1C3844"/>
-    <SolidColorBrush x:Key="LibraryText" Color="#ECF3F9"/>
-    <SolidColorBrush x:Key="LibrarySubtext" Color="#9BAAB9"/>
-    <SolidColorBrush x:Key="LibraryBorder" Color="#2B3949"/>
-    <SolidColorBrush x:Key="LibraryHover" Color="#243340"/>
+    <SolidColorBrush x:Key="LibraryCanvas" Color="#0A111C"/>
+    <SolidColorBrush x:Key="LibrarySurface" Color="#111C29"/>
+    <SolidColorBrush x:Key="LibrarySurfaceAlt" Color="#1B2C40"/>
+    <SolidColorBrush x:Key="LibraryAccent" Color="#B7E7FA"/>
+    <SolidColorBrush x:Key="LibraryAccentHover" Color="#E3F7FF"/>
+    <SolidColorBrush x:Key="LibraryAccentSoft" Color="#304E65"/>
+    <SolidColorBrush x:Key="LibraryText" Color="#F0F5FA"/>
+    <SolidColorBrush x:Key="LibrarySubtext" Color="#A6BACB"/>
+    <SolidColorBrush x:Key="LibraryBorder" Color="#304154"/>
+    <SolidColorBrush x:Key="LibraryHover" Color="#263D50"/>
   </Window.Resources>
 
   <Window.Styles>
@@ -153,6 +153,43 @@
       <Setter Property="FontSize" Value="12"/>
       <Setter Property="Margin" Value="9,0"/>
     </Style>
+    <!-- Cinema-shell UI tokens shared across Big Picture and management. -->
+    <Style Selector="Button.shell-brand">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="#F3FAFF"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="CornerRadius" Value="8"/>
+      <Setter Property="Padding" Value="4,9"/>
+    </Style>
+    <Style Selector="Button.shell-tab">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="#B5C5D3"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="CornerRadius" Value="8"/>
+      <Setter Property="Padding" Value="13,10"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="FontWeight" Value="Medium"/>
+    </Style>
+    <Style Selector="Button.shell-tab:pointerover, Button.shell-tab:focus-visible">
+      <Setter Property="Background" Value="#263D50"/>
+      <Setter Property="Foreground" Value="#F0F5FA"/>
+    </Style>
+    <Style Selector="Button.shell-tab.selected">
+      <Setter Property="Background" Value="#304E65"/>
+      <Setter Property="Foreground" Value="#F5FAFF"/>
+    </Style>
+    <Style Selector="Button.shell-import">
+      <Setter Property="Background" Value="#B7E7FA"/>
+      <Setter Property="Foreground" Value="#10212E"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="CornerRadius" Value="8"/>
+      <Setter Property="Padding" Value="16,10"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+    <Style Selector="Button.shell-import:pointerover, Button.shell-import:focus-visible">
+      <Setter Property="Background" Value="#E3F7FF"/>
+    </Style>
   </Window.Styles>
 
   <Grid>
@@ -162,24 +199,51 @@
           IsVisible="True" DragDrop.AllowDrop="True"
           Background="{StaticResource LibraryCanvas}">
 
-      <Border x:Name="LegacyLibraryHeader" AutomationProperties.AutomationId="Lapis.Library.ManagementHeader" Grid.Row="0" IsVisible="False" Background="{StaticResource LibrarySurface}" BorderBrush="{StaticResource LibraryBorder}"
-              BorderThickness="0,0,0,1" Padding="23,12" MinHeight="64">
-        <Grid ColumnDefinitions="210,*,Auto" ColumnSpacing="16">
-          <StackPanel VerticalAlignment="Center" Spacing="2">
-            <TextBlock Text="LAPIS" FontWeight="SemiBold" FontSize="20"
-                       LetterSpacing="3" Foreground="{StaticResource LibraryText}"/>
-            <TextBlock Text="YOUR PERSONAL CINEMA" FontSize="9"
-                       Foreground="#8191A5" LetterSpacing="1"/>
+      <!-- Persistent movie header: never switches styles between modes. -->
+      <Border x:Name="LegacyLibraryHeader"
+              AutomationProperties.AutomationId="Lapis.Library.ManagementHeader"
+              Grid.Row="0" IsVisible="True" Height="76" Padding="28,8"
+              Background="#EA111C29" BorderBrush="#304154" BorderThickness="0,0,0,1">
+        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="28">
+          <Button Classes="shell-brand" Click="GoBigPicture_Click"
+                  AutomationProperties.AutomationId="Lapis.Library.Home"
+                  AutomationProperties.Name="LAPIS，返回電影庫首頁"
+                  ToolTip.Tip="返回 Big Picture 電影庫">
+            <StackPanel Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
+              <TextBlock Text="LAPIS" FontSize="23" FontWeight="Bold"
+                         LetterSpacing="3" VerticalAlignment="Center"/>
+              <TextBlock Text="◈" FontSize="16" Foreground="#9DDDEE"
+                         VerticalAlignment="Center"/>
+            </StackPanel>
+          </Button>
+          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="5"
+                      VerticalAlignment="Center">
+            <Button Classes="shell-tab" Classes.selected="{Binding IsAllCategory}"
+                    Content="首頁" Click="ShellAll_Click"/>
+            <Button Classes="shell-tab" Classes.selected="{Binding IsRecentlyAddedCategory}"
+                    Content="最近加入" Click="ShellRecent_Click"/>
+            <Button Classes="shell-tab" Classes.selected="{Binding IsBluRayCategory}"
+                    Content="Blu-ray" Click="ShellBluRay_Click"/>
+            <Button Classes="shell-tab" Classes.selected="{Binding IsVideoCategory}"
+                    Content="本機影片" Click="ShellVideos_Click"/>
           </StackPanel>
-          <TextBlock Grid.Column="1" Text="Cinema Library" FontSize="15"
-                     FontWeight="Medium" HorizontalAlignment="Center"
-                     VerticalAlignment="Center" Foreground="{StaticResource LibraryText}"/>
           <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8"
                       VerticalAlignment="Center">
-            <Button Classes="subtle-action" Content="匯入影片"
-                    Click="ImportFiles_Click"/>
-            <Button Classes="accent-action" Content="＋ 匯入 Blu-ray"
-                    Click="ImportDisc_Click"/>
+            <Button Classes="shell-import" Content="＋ 新增媒體"
+                    AutomationProperties.AutomationId="Lapis.Library.Add"
+                    AutomationProperties.Name="新增影片或 Blu-ray"
+                    ToolTip.Tip="新增收藏，不會立即播放">
+              <Button.Flyout>
+                <MenuFlyout Placement="Bottom">
+                  <MenuItem Header="匯入影片檔案…" Click="ImportFiles_Click"/>
+                  <MenuItem Header="匯入完整 Blu-ray 資料夾…" Click="ImportDisc_Click"/>
+                </MenuFlyout>
+              </Button.Flyout>
+            </Button>
+            <Button x:Name="ShellManageButton" Classes="shell-tab"
+                    Content="管理收藏" Click="ToggleManagement_Click"
+                    AutomationProperties.AutomationId="Lapis.Library.Manage"
+                    AutomationProperties.Name="切換管理收藏與 Big Picture 首頁"/>
           </StackPanel>
         </Grid>
       </Border>
@@ -203,7 +267,7 @@
                     Content="◷   最近加入" Click="ShowRecentlyAdded_Click"/>
             <Border Height="1" Background="{StaticResource LibraryBorder}" Margin="6,19,6,16"/>
             <TextBlock Text="匯入" Classes="sidebar-section" Margin="11,0,0,10"/>
-            <TextBlock Text="使用右上角按鈕或拖曳影片、BDMV 資料夾匯入。"
+            <TextBlock Text="使用頂端「＋ 新增媒體」，或拖曳影片、BDMV 資料夾匯入。"
                        Foreground="{StaticResource LibrarySubtext}"
                        Margin="11,0" FontSize="11" TextWrapping="Wrap"/>
             <Border Height="1" Background="{StaticResource LibraryBorder}" Margin="6,20,6,10"/>
@@ -224,7 +288,11 @@
         <Grid Grid.Column="1" Margin="32,30,32,16"
               RowDefinitions="Auto,Auto,*,Auto" RowSpacing="18">
           <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="16">
-            <StackPanel Spacing="6">
+            <StackPanel Spacing="7">
+              <Button Classes="shell-tab" Content="← 返回電影庫首頁"
+                      Click="GoBigPicture_Click" HorizontalAlignment="Left"
+                      AutomationProperties.AutomationId="Lapis.Library.ManagementBack"
+                      AutomationProperties.Name="返回 Big Picture 電影庫首頁"/>
               <TextBlock x:Name="LibraryCurrentHeading" Text="{Binding CurrentFilterLabel}" FontSize="34"
                          FontWeight="SemiBold" Foreground="{StaticResource LibraryText}"/>
               <TextBlock Text="{Binding ResultText}" FontSize="12"
@@ -263,11 +331,11 @@
               <StackPanel Spacing="11" HorizontalAlignment="Center">
                 <TextBlock Text="收藏庫目前沒有影片" FontSize="20"
                            FontWeight="Medium" HorizontalAlignment="Center"/>
-                <TextBlock Text="把影片、Blu-ray 根目錄或 BDMV 資料夾拖到視窗，或使用右上角匯入按鈕。"
+                <TextBlock Text="把影片或完整 Blu-ray 資料夾拖入視窗，或使用頂端「＋ 新增媒體」。"
                            Foreground="#A7B3C0" TextWrapping="Wrap"
                            HorizontalAlignment="Center" TextAlignment="Center"/>
-                <Button Content="＋ 匯入 Blu-ray" Classes="accent-action"
-                        Click="ImportDisc_Click" HorizontalAlignment="Center"
+                <Button Content="＋ 匯入第一部影片" Classes="accent-action"
+                        Click="ImportFiles_Click" HorizontalAlignment="Center"
                         Margin="0,12,0,0"/>
               </StackPanel>
             </Border>
@@ -425,7 +493,7 @@
         </Grid>
       </Grid>
       <views:BigPictureLibraryView x:Name="BigPictureLibrary"
-                                   Grid.RowSpan="2" ZIndex="30"/>
+                                   Grid.Row="1" ZIndex="30"/>
 
       <!-- Non-interactive drag preview over the entire library surface.
            Do not overlay NativeControlHost; drop only indexes the catalog. -->

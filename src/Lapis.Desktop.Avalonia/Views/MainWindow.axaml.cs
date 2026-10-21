@@ -28,6 +28,7 @@ public sealed partial class MainWindow : Window
     private readonly BigPictureLibraryView _bigPicture;
     private readonly Border _legacyLibraryHeader;
     private readonly Grid _legacyLibraryBody;
+    private readonly Button _shellManageButton;
     private WatchChromeWindow? _watchChrome;
     private readonly TextSubtitleSourceCatalog _subtitleSources = TextSubtitleSourceCatalog.Default;
     // Invalidated when the Watch screen closes or a new request supersedes it.
@@ -72,6 +73,8 @@ public sealed partial class MainWindow : Window
             ?? throw new InvalidOperationException("Missing library management header.");
         _legacyLibraryBody = this.FindControl<Grid>("LegacyLibraryBody")
             ?? throw new InvalidOperationException("Missing library management body.");
+        _shellManageButton = this.FindControl<Button>("ShellManageButton")
+            ?? throw new InvalidOperationException("Missing shared management button.");
         _videoSurface = this.FindControl<WindowsVideoSurface>("VideoSurface")
             ?? throw new InvalidOperationException("Missing D3D11 surface host.");
         _gridSurface = this.FindControl<ScrollViewer>("LibraryGridSurface")
@@ -349,15 +352,49 @@ public sealed partial class MainWindow : Window
 
     private void ShowLibraryManagement(bool show)
     {
+        if (show) _bigPicture.CloseDetails();
         _bigPicture.IsVisible = !show;
-        _legacyLibraryHeader.IsVisible = show;
+        _legacyLibraryHeader.IsVisible = true; // Keep the same physical header mounted.
         _legacyLibraryBody.IsVisible = show;
+        _shellManageButton.Content = show ? "← 返回首頁" : "管理收藏";
+        if (show) _shellManageButton.Classes.Add("selected");
+        else _shellManageButton.Classes.Remove("selected");
         if (show)
             Dispatcher.UIThread.Post(() => UpdateNavigationMarker(initial: true),
                 DispatcherPriority.Loaded);
         else
-            Dispatcher.UIThread.Post(() => LibraryMotion.Enter(_bigPicture),
-                DispatcherPriority.Loaded);
+            Dispatcher.UIThread.Post(() =>
+            {
+                LibraryMotion.Enter(_bigPicture);
+                _bigPicture.RestoreMovieFocus();
+            }, DispatcherPriority.Loaded);
+    }
+
+    private void GoBigPicture_Click(object? sender, RoutedEventArgs args)
+    {
+        _bigPicture.CloseDetails();
+        ShowLibraryManagement(false);
+        _bigPicture.ResetScroll();
+    }
+
+    private void ToggleManagement_Click(object? sender, RoutedEventArgs args) =>
+        ShowLibraryManagement(_bigPicture.IsVisible);
+
+    private void ShellAll_Click(object? sender, RoutedEventArgs args) =>
+        ShellNavigate(_library.ShowAll);
+    private void ShellRecent_Click(object? sender, RoutedEventArgs args) =>
+        ShellNavigate(_library.ShowRecentlyAdded);
+    private void ShellBluRay_Click(object? sender, RoutedEventArgs args) =>
+        ShellNavigate(_library.ShowDiscs);
+    private void ShellVideos_Click(object? sender, RoutedEventArgs args) =>
+        ShellNavigate(_library.ShowVideos);
+
+    private void ShellNavigate(Action navigate)
+    {
+        _bigPicture.CloseDetails();
+        navigate();
+        ShowLibraryManagement(false);
+        _bigPicture.ResetScroll();
     }
 
     private async Task ImportFromBigPictureAsync()
@@ -586,8 +623,9 @@ public sealed partial class MainWindow : Window
             SizeToContent = SizeToContent.Height,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             CanResize = false,
-            RequestedThemeVariant = ThemeVariant.Light,
-            Background = global::Avalonia.Media.Brushes.White
+            RequestedThemeVariant = ThemeVariant.Dark,
+            Background = new global::Avalonia.Media.SolidColorBrush(
+                global::Avalonia.Media.Color.Parse("#111C29"))
         };
         var cancel = new Button
         {
@@ -626,7 +664,7 @@ public sealed partial class MainWindow : Window
                     Text = content,
                     TextWrapping = global::Avalonia.Media.TextWrapping.Wrap,
                     FontSize = 13,
-                    Foreground = global::Avalonia.Media.Brushes.Black
+                    Foreground = global::Avalonia.Media.Brushes.White
                 },
                 buttons
             }

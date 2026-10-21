@@ -34,6 +34,15 @@ public sealed class WindowsDesktopJourneys
         Assert.NotNull(play);
         session.Snapshot("01-library");
         Assert.NotNull(session.WaitFor(main, "Lapis.Library.Manage"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.Home"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.Add"));
+
+        // A poster/info action opens a cinematic detail surface; it is not an
+        // accidental immediate player launch.
+        session.Click(session.WaitFor(main, "Lapis.Library.FeaturedDetails"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.DetailPlay"));
+        session.Click(session.WaitFor(main, "Lapis.Library.DetailClose"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.PlayFeatured"));
 
         // UIA Invoke activates the real product Button, not the ViewModel.
         session.Click(session.WaitFor(main, "Lapis.Library.Manage"));
@@ -41,8 +50,16 @@ public sealed class WindowsDesktopJourneys
         // a real focused/interactive management navigation button instead.
         session.WaitFor(main, "Lapis.Library.ManagementAll");
         session.Snapshot("02-management");
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.Home"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.Add"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.ManagementBack"));
         Assert.Null(main.FindFirstDescendant(cf => cf.ByAutomationId(
             "Lapis.Library.PlayFeatured")));
+
+        session.Click(session.WaitFor(main, "Lapis.Library.ManagementBack"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.PlayFeatured"));
+        session.Click(session.WaitFor(main, "Lapis.Library.Manage"));
+        session.WaitFor(main, "Lapis.Library.ManagementAll");
 
         main.Focus();
         Keyboard.Press(VirtualKeyShort.ESCAPE);
