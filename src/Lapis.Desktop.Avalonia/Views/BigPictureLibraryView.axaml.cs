@@ -213,10 +213,10 @@ public sealed partial class BigPictureLibraryView : UserControl
                 {
                     if (_detailsOverlay.IsVisible)
                     {
-                        var action = _detailsResume.IsVisible
+                        var targetButton = _detailsResume.IsVisible
                             ? _detailsResume : _detailsPlay;
-                        if (action.IsEnabled)
-                            action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                        if (targetButton.IsEnabled)
+                            targetButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     }
                     else if (!_detailsOverlay.IsVisible && Library?.FeaturedCard is { } card)
                         OpenDetails(card, null);
