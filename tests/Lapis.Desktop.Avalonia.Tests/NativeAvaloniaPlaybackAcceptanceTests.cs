@@ -147,6 +147,89 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
                 Assert.True(controls!.IsVisible);
                 chrome.NotifyPointerActivity();
                 Assert.True(controls.IsVisible);
+
+                window.Activate();
+                await WaitUntilAsync(
+                    () => window.IsActive,
+                    TimeSpan.FromSeconds(2), cancel.Token);
+                var timeline = chrome.FindControl<Slider>("WatchTimeline");
+                var backSeek = chrome.FindControl<Button>("WatchBackSeek");
+                var forwardSeek = chrome.FindControl<Button>("WatchForwardSeek");
+                Assert.NotNull(timeline);
+                Assert.NotNull(backSeek);
+                Assert.NotNull(forwardSeek);
+                var beforeBackClick = host.Snapshot.Epoch;
+                await ClickControlAsync(
+                    window, chrome, backSeek!, 0.5, TimeSpan.FromMilliseconds(80),
+                    cancel.Token);
+                await WaitUntilAsync(
+                    () => host.Snapshot.Epoch.Value > beforeBackClick.Value,
+                    TimeSpan.FromSeconds(5), cancel.Token);
+
+                await WaitUntilAsync(
+                    () => overlayPlayer.CanSeek,
+                    TimeSpan.FromSeconds(5), cancel.Token);
+                var beforeForwardClick = host.Snapshot.Epoch;
+                await ClickControlAsync(
+                    window, chrome, forwardSeek!, 0.5, TimeSpan.FromMilliseconds(80),
+                    cancel.Token);
+                try
+                {
+                    await WaitUntilAsync(
+                        () => host.Snapshot.Epoch.Value > beforeForwardClick.Value,
+                        TimeSpan.FromSeconds(5), cancel.Token);
+                }
+                catch (TimeoutException exception)
+                {
+                    throw new TimeoutException(
+                        $"Forward click did not advance playback. " +
+                        $"before={beforeForwardClick.Value} " +
+                        $"after={host.Snapshot.Epoch.Value} " +
+                        $"position={host.Snapshot.Position.ToTimeSpan()} " +
+                        $"transport={host.Snapshot.Transport} " +
+                        $"canSeek={overlayPlayer.CanSeek} " +
+                        $"status={overlayPlayer.StatusText}",
+                        exception);
+                }
+
+                await WaitUntilAsync(
+                    () => overlayPlayer.CanSeek,
+                    TimeSpan.FromSeconds(5), cancel.Token);
+                await ClickControlAsync(
+                    window, chrome, forwardSeek!, 0.5, TimeSpan.FromMilliseconds(700),
+                    cancel.Token);
+                Assert.Equal(TransportState.Playing, host.Snapshot.Transport);
+
+                await WaitUntilAsync(
+                    () => overlayPlayer.CanSeek,
+                    TimeSpan.FromSeconds(5), cancel.Token);
+                var beforeTimelineClick = host.Snapshot.Epoch;
+                await ClickControlAsync(
+                    window, chrome, timeline!, 0.65, TimeSpan.FromMilliseconds(80),
+                    cancel.Token);
+                await WaitUntilAsync(
+                    () => host.Snapshot.Epoch.Value > beforeTimelineClick.Value,
+                    TimeSpan.FromSeconds(5), cancel.Token);
+
+                var otherWindow = new Window { Width = 100, Height = 100 };
+                try
+                {
+                    otherWindow.Show();
+                    otherWindow.Activate();
+                    await WaitUntilAsync(
+                        () => otherWindow.IsActive && !IsTopmost(
+                            chrome.TryGetPlatformHandle()?.Handle ?? 0),
+                        TimeSpan.FromSeconds(2), cancel.Token);
+                }
+                finally
+                {
+                    otherWindow.Close();
+                }
+                window.Activate();
+                await WaitUntilAsync(
+                    () => window.IsActive && IsTopmost(
+                        chrome.TryGetPlatformHandle()?.Handle ?? 0),
+                    TimeSpan.FromSeconds(2), cancel.Token);
             }
             finally
             {
@@ -297,6 +380,43 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
         }
     }
 
+    private static async Task ClickControlAsync(
+        Window owner, Window overlay, Control control, double horizontalFraction,
+        TimeSpan hold, CancellationToken cancellationToken)
+    {
+        var ownerHandle = owner.TryGetPlatformHandle()?.Handle ?? 0;
+        Assert.NotEqual(nint.Zero, ownerHandle);
+        owner.Activate();
+        await WaitUntilAsync(
+            () => owner.IsActive &&
+                (GetWindowLongPtr(
+                    overlay.TryGetPlatformHandle()?.Handle ?? 0, -20)
+                    .ToInt64() & 0x00000008) != 0,
+            TimeSpan.FromSeconds(2), cancellationToken);
+
+        var point = control.PointToScreen(new Point(
+            control.Bounds.Width * horizontalFraction,
+            control.Bounds.Height / 2));
+        var overlayHandle = overlay.TryGetPlatformHandle()?.Handle ?? 0;
+        Assert.True((GetWindowLongPtr(overlayHandle, -20).ToInt64() & 0x00000008) != 0,
+            $"The watch overlay must be topmost while its owner is active " +
+            $"(ownerActive={owner.IsActive}, exStyle=0x{GetWindowLongPtr(overlayHandle, -20):X}).");
+        Assert.True(SetCursorPos((int)point.X, (int)point.Y));
+        var hit = WindowFromPoint(new NativePoint((int)point.X, (int)point.Y));
+        Assert.NotEqual(nint.Zero, hit);
+        var expectedRoot = overlayHandle;
+        var hitRoot = GetAncestor(hit, 2);
+        Assert.True(hitRoot == expectedRoot,
+            $"Mouse target did not resolve to the overlay. " +
+            $"point=({point.X},{point.Y}) control={control.Name} " +
+            $"overlay=0x{expectedRoot:X} hit=0x{hit:X} root=0x{hitRoot:X} " +
+            $"overlayRect={WindowRectText(expectedRoot)}");
+        MouseEvent(MouseLeftDown, 0, 0, 0, 0);
+        await Task.Delay(hold, cancellationToken);
+        MouseEvent(MouseLeftUp, 0, 0, 0, 0);
+        await Task.Delay(100, cancellationToken);
+    }
+
     private sealed class AcceptancePlaybackService(DesktopPlaybackHost host)
         : IPlayerPlaybackService, ITemporaryFastForwardPlaybackService
     {
@@ -336,6 +456,32 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsWindow(nint handle);
 
+    private const uint MouseLeftDown = 0x0002;
+    private const uint MouseLeftUp = 0x0004;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetCursorPos(int x, int y);
+
+    [DllImport("user32.dll", EntryPoint = "mouse_event")]
+    private static extern void MouseEvent(
+        uint flags, uint dx, uint dy, uint data, nuint extraInfo);
+
+    [DllImport("user32.dll")]
+    private static extern nint WindowFromPoint(NativePoint point);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern nint GetWindowLongPtr(nint handle, int index);
+
+    private static string WindowRectText(nint handle) =>
+        GetWindowRect(handle, out var rect)
+            ? $"({rect.Left},{rect.Top},{rect.Right},{rect.Bottom})"
+            : "unavailable";
+
+    private static bool IsTopmost(nint handle) =>
+        handle != 0 &&
+        (GetWindowLongPtr(handle, -20).ToInt64() & 0x00000008) != 0;
+
     [StructLayout(LayoutKind.Sequential)]
     private struct NativeRect
     {
@@ -343,6 +489,13 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
         public int Top;
         public int Right;
         public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private readonly struct NativePoint(int x, int y)
+    {
+        public readonly int X = x;
+        public readonly int Y = y;
     }
 
     private static int ClientWidth(nint handle) =>
@@ -354,6 +507,10 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetClientRect(nint handle, out NativeRect rect);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(nint handle, out NativeRect rect);
 
     [DllImport("user32.dll")]
     private static extern nint GetParent(nint handle);

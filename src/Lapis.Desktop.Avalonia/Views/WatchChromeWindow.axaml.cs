@@ -61,6 +61,7 @@ public sealed partial class WatchChromeWindow : Window
     private bool _backSeekPressed;
     private bool _forwardSeekPressed;
     private bool _fastForwardActive;
+    private bool _topmostSyncFailureReported;
     private int _seekPressGeneration;
     private CancellationTokenSource? _fastForwardDelay;
     private Task<bool>? _fastForwardStartTask;
@@ -128,8 +129,18 @@ public sealed partial class WatchChromeWindow : Window
         _clock.Tick += ClockTick;
         _clock.Start();
         Closed += (_, _) => DisposeOverlay();
+        if (OperatingSystem.IsWindows())
+        {
+            _owner.Activated += OwnerActivated;
+            _owner.Deactivated += OwnerDeactivated;
+            Opened += (_, _) => SetOverlayTopmost(ShouldOverlayBeTopmost());
+        }
         SyncBounds();
         Show(owner);
+        if (OperatingSystem.IsWindows())
+            Dispatcher.UIThread.Post(
+                () => SetOverlayTopmost(ShouldOverlayBeTopmost()),
+                DispatcherPriority.Background);
     }
 
     public void SetSubtitleTrack(ITextSubtitleTrack track)
@@ -267,6 +278,7 @@ public sealed partial class WatchChromeWindow : Window
     private void ClockTick(object? sender, EventArgs args)
     {
         if (_disposed || !_owner.IsVisible) return;
+        SyncOverlayTopmost();
         SyncBounds();
 
         // A native Seek advances the epoch and retires the subtitle worker.
@@ -318,6 +330,84 @@ public sealed partial class WatchChromeWindow : Window
         var size = _owner.ClientSize;
         if (size.Width > 0 && Math.Abs(Width - size.Width) > 1) Width = size.Width;
         if (size.Height > 0 && Math.Abs(Height - size.Height) > 1) Height = size.Height;
+    }
+
+    private void OwnerActivated(object? sender, EventArgs args) =>
+        QueueOverlayZOrderSync();
+
+    private void OwnerDeactivated(object? sender, EventArgs args) =>
+        QueueOverlayZOrderSync();
+
+    private void QueueOverlayZOrderSync() =>
+        Dispatcher.UIThread.Post(
+            () => SetOverlayTopmost(ShouldOverlayBeTopmost()),
+            DispatcherPriority.Background);
+
+    private void SetOverlayTopmost(bool topmost)
+    {
+        if (_disposed) return;
+        Topmost = topmost;
+        if (!OperatingSystem.IsWindows() ||
+            TryGetPlatformHandle()?.Handle is not { } handle ||
+            handle == 0)
+            return;
+
+        var insertAfter = topmost ? HwndTopmost : HwndNotTopmost;
+        if (!SetWindowPos(handle, insertAfter, 0, 0, 0, 0,
+                SwpNoMove | SwpNoSize | SwpNoActivate))
+        {
+            ReportTopmostSyncFailure(new Win32Exception(
+                Marshal.GetLastWin32Error(),
+                "Could not synchronize the watch overlay z-order with its owner."));
+            return;
+        }
+
+        var isTopmost = (GetWindowLongPtr(handle, GwlExStyle).ToInt64() &
+            WsExTopmost) != 0;
+        if (isTopmost != topmost)
+        {
+            ReportTopmostSyncFailure(new InvalidOperationException(
+                "The watch overlay did not adopt the requested z-order."));
+            return;
+        }
+        _topmostSyncFailureReported = false;
+    }
+
+    private void SyncOverlayTopmost()
+    {
+        if (_disposed) return;
+        if (!OperatingSystem.IsWindows() ||
+            TryGetPlatformHandle()?.Handle is not { } handle ||
+            handle == 0)
+            return;
+
+        var isTopmost = (GetWindowLongPtr(handle, GwlExStyle).ToInt64() &
+            WsExTopmost) != 0;
+        var shouldBeTopmost = ShouldOverlayBeTopmost();
+        if (isTopmost != shouldBeTopmost)
+            SetOverlayTopmost(shouldBeTopmost);
+    }
+
+    private void ReportTopmostSyncFailure(Exception exception)
+    {
+        if (_topmostSyncFailureReported) return;
+        _topmostSyncFailureReported = true;
+        System.Diagnostics.Trace.TraceError(
+            "Lapis watch overlay z-order synchronization failed: {0}",
+            exception);
+    }
+
+    private bool ShouldOverlayBeTopmost() =>
+        _owner.IsActive || IsOwnerForeground();
+
+    private bool IsOwnerForeground()
+    {
+        var owner = _owner.TryGetPlatformHandle()?.Handle ?? 0;
+        var foreground = GetForegroundWindow();
+        if (owner == 0 || foreground == 0) return false;
+        var ownerRoot = GetAncestor(owner, GaRootOwner);
+        return ownerRoot != 0 &&
+            ownerRoot == GetAncestor(foreground, GaRootOwner);
     }
 
     private void SetChromeVisible(bool visible)
@@ -595,6 +685,11 @@ public sealed partial class WatchChromeWindow : Window
         _subtitlePicker.SelectionChanged -= SubtitlePickerChanged;
         _clock.Stop();
         _clock.Tick -= ClockTick;
+        if (OperatingSystem.IsWindows())
+        {
+            _owner.Activated -= OwnerActivated;
+            _owner.Deactivated -= OwnerDeactivated;
+        }
         _player.PropertyChanged -= PlayerChanged;
         KeyDown -= OnOverlayKeyDown;
         _player.CancelScrub();
@@ -611,6 +706,30 @@ public sealed partial class WatchChromeWindow : Window
         public int X;
         public int Y;
     }
+
+    private static readonly nint HwndTopmost = new(-1);
+    private static readonly nint HwndNotTopmost = new(-2);
+    private const int GwlExStyle = -20;
+    private const uint GaRootOwner = 3;
+    private const long WsExTopmost = 0x00000008;
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpNoActivate = 0x0010;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(
+        nint handle, nint insertAfter, int x, int y, int width, int height,
+        uint flags);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+    private static extern nint GetWindowLongPtr(nint handle, int index);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern nint GetAncestor(nint handle, uint flags);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
