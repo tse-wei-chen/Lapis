@@ -148,6 +148,57 @@
           </StackPanel>
         </Border>
 
+        <!-- User-curated, independent of playback progress and imports. -->
+        <StackPanel Spacing="12" IsVisible="{Binding HasFavorites}">
+          <Grid ColumnDefinitions="*,Auto">
+            <TextBlock Text="我的最愛" FontSize="25" FontWeight="SemiBold"
+                       AutomationProperties.AutomationId="Lapis.Library.FavoritesHeading"/>
+            <Button Grid.Column="1" Classes="bp-secondary"
+                    Content="查看全部 ★" Click="Favorites_Click"
+                    AutomationProperties.AutomationId="Lapis.Library.ViewFavorites"/>
+          </Grid>
+          <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                        VerticalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{Binding FavoriteItems}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <StackPanel Orientation="Horizontal"/>
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Button Classes="bp-tile" Width="230" Height="194"
+                          Margin="0,0,14,4" CommandParameter="{Binding}"
+                          Click="TilePlay_Click" GotFocus="TileGotFocus"
+                          PointerEntered="TilePointerEntered"
+                          AutomationProperties.Name="{Binding Title}">
+                    <Grid RowDefinitions="145,*">
+                      <Border Background="#243449" CornerRadius="8"
+                              ClipToBounds="True">
+                        <Grid>
+                          <Image Source="{Binding Poster}" Stretch="Uniform"/>
+                          <TextBlock Text="{Binding PlaceholderGlyph}" FontSize="64"
+                                     Foreground="#647B93"
+                                     IsVisible="{Binding ShowPlaceholder}"
+                                     HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                          <Border Background="#E6122538" HorizontalAlignment="Right"
+                                  VerticalAlignment="Top" CornerRadius="5"
+                                  Padding="8,3" Margin="8">
+                            <TextBlock Text="★" FontSize="16" Foreground="#FFE1A4"/>
+                          </Border>
+                        </Grid>
+                      </Border>
+                      <TextBlock Grid.Row="1" Text="{Binding Title}" Margin="9,6"
+                                 FontSize="14" TextTrimming="CharacterEllipsis"
+                                 Foreground="#F0F5FA" VerticalAlignment="Center"/>
+                    </Grid>
+                  </Button>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </StackPanel>
+
         <!-- Resumable local files, sorted by the last viewing session. -->
         <StackPanel Spacing="12" IsVisible="{Binding HasContinueWatching}">
           <TextBlock Text="繼續觀看" FontSize="25" FontWeight="SemiBold"
@@ -438,6 +489,11 @@
             <TextBlock Text="資訊來自本機電影庫，沒有擅自下載外部電影資料。"
                        TextWrapping="Wrap" FontSize="12"
                        Foreground="#8FA5B8" MaxWidth="490"/>
+            <Button Classes="bp-secondary" Content="{Binding FeaturedCard.FavoriteActionLabel}"
+                    HorizontalAlignment="Left"
+                    Click="DetailsFavorite_Click"
+                    AutomationProperties.AutomationId="Lapis.Library.DetailFavorite"
+                    AutomationProperties.Name="{Binding FeaturedCard.FavoriteActionLabel}"/>
             <!-- Sidecar artwork refresh works without restarting Lapis or playback. -->
             <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,5,0,0">
               <Button Classes="bp-secondary" Content="⟳  重新掃描封面"

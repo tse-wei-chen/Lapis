@@ -18,6 +18,7 @@ public sealed class LibraryCardViewModel : INotifyPropertyChanged, IDisposable
     private Bitmap? _poster;
     private WatchProgress? _watchProgress;
     private WatchProgress? _watchHistory;
+    private bool _favorite;
     private bool _started;
     private bool _posterLoading;
     private string _posterRefreshStatus = "";
@@ -43,6 +44,16 @@ public sealed class LibraryCardViewModel : INotifyPropertyChanged, IDisposable
     public string PosterRefreshStatus => _posterRefreshStatus;
     public string PlaceholderGlyph => IsDisc ? "◈" : "▶";
     public string PlaceholderCaption => IsDisc ? "BLU-RAY" : "LOCAL VIDEO";
+    public bool IsFavorite => _favorite;
+    public string FavoriteActionLabel => _favorite ? "★  移出我的最愛" : "☆  加入我的最愛";
+
+    internal void SetFavorite(bool favorite)
+    {
+        if (_favorite == favorite) return;
+        _favorite = favorite;
+        Notify(nameof(IsFavorite));
+        Notify(nameof(FavoriteActionLabel));
+    }
     public bool CanResume => !IsDisc && IsAvailable && _watchProgress?.IsResumable == true;
     public double ResumePositionSeconds => CanResume ? _watchProgress!.PositionSeconds : 0;
     public string PlayActionLabel => CanResume ? "▶  繼續播放" : "▶  開始播放";

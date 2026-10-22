@@ -7,7 +7,7 @@ using Lapis.Library;
 namespace Lapis.Desktop.Avalonia.ViewModels;
 
 public enum LibraryDisplayMode { Grid, List }
-public enum LibraryCategory { All, BluRay, Videos, RecentlyAdded, History }
+public enum LibraryCategory { All, BluRay, Videos, RecentlyAdded, History, Favorites }
 public enum LibrarySortMode { RecentlyAdded, TitleAscending, TitleDescending }
 
 public sealed record LibrarySortChoice(LibrarySortMode Mode, string Label);
@@ -23,6 +23,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
     private readonly Dictionary<Guid, LibraryCardViewModel> _cards = [];
     private readonly Dictionary<Guid, WatchProgress> _watchProgress = [];
     private readonly Dictionary<Guid, WatchProgress> _watchHistory = [];
+    private readonly Dictionary<Guid, FavoriteEntry> _favorites = [];
     private IReadOnlyList<MediaLibraryItem> _items = [];
     private bool _disposed;
     private string _searchText = "";
@@ -38,6 +39,8 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
     public ObservableCollection<LibraryCardViewModel> RecentItems { get; } = [];
     public ObservableCollection<LibraryCardViewModel> ContinueWatchingItems { get; } = [];
     public ObservableCollection<LibraryCardViewModel> RecentlyWatchedItems { get; } = [];
+    public ObservableCollection<LibraryCardViewModel> FavoriteItems { get; } = [];
+    public bool HasFavorites => FavoriteItems.Count != 0;
     public bool HasRecentlyWatched => RecentlyWatchedItems.Count != 0;
     public bool HasContinueWatching => ContinueWatchingItems.Count != 0;
 
@@ -84,6 +87,26 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         ApplyFilter();
     }
 
+    public void LoadFavorites(IEnumerable<FavoriteEntry> entries)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        _favorites.Clear();
+        foreach (var item in entries.Where(item => item.IsValid))
+            _favorites[item.ItemId] = item;
+        ApplyFilter();
+    }
+
+    public void SetFavorite(Guid itemId, bool favorite)
+    {
+        if (favorite)
+            _favorites.TryAdd(itemId, new FavoriteEntry(itemId, DateTimeOffset.UtcNow));
+        else
+            _favorites.Remove(itemId);
+
+        if (_category == LibraryCategory.Favorites) ApplyFilter();
+        else UpdateWatchShelf();
+    }
+
     private void UpdateWatchShelf()
     {
         foreach (var card in _cards.Values)
@@ -92,7 +115,18 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
             card.SetWatchProgress(progress);
             _watchHistory.TryGetValue(card.Item.Id, out var history);
             card.SetWatchHistory(history);
+            card.SetFavorite(_favorites.ContainsKey(card.Item.Id));
         }
+        var favorites = _cards.Values
+            .Where(card => card.IsFavorite &&
+                _category == LibraryCategory.All &&
+                string.IsNullOrWhiteSpace(_searchText))
+            .OrderByDescending(card => _favorites[card.Item.Id].AddedAtUtc)
+            .Take(8)
+            .ToArray();
+        ReconcileItems(FavoriteItems, favorites);
+        Notify(nameof(HasFavorites));
+
         var recentlyWatched = _cards.Values
             .Where(card => card.HasWatchHistory && card.IsAvailable &&
                 _category == LibraryCategory.All &&
@@ -192,6 +226,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
     public bool IsVideoCategory => _category == LibraryCategory.Videos;
     public bool IsRecentlyAddedCategory => _category == LibraryCategory.RecentlyAdded;
     public bool IsHistoryCategory => _category == LibraryCategory.History;
+    public bool IsFavoritesCategory => _category == LibraryCategory.Favorites;
     public bool ShowRecentShelf => HasItems && _category == LibraryCategory.All &&
         string.IsNullOrWhiteSpace(_searchText);
     public bool IsRecentlyAddedSort => SelectedSort.Mode == LibrarySortMode.RecentlyAdded;
@@ -207,6 +242,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         LibraryCategory.Videos => "本機影片",
         LibraryCategory.RecentlyAdded => "最近加入",
         LibraryCategory.History => "觀看紀錄",
+        LibraryCategory.Favorites => "我的最愛",
         _ => "所有收藏"
     };
 
@@ -311,6 +347,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
     }
 
     public void ShowHistory() => SetCategory(LibraryCategory.History);
+    public void ShowFavorites() => SetCategory(LibraryCategory.Favorites);
 
     public void ShowGrid() => DisplayMode = LibraryDisplayMode.Grid;
     public void ShowList() => DisplayMode = LibraryDisplayMode.List;
@@ -325,6 +362,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         Notify(nameof(IsVideoCategory));
         Notify(nameof(IsRecentlyAddedCategory));
         Notify(nameof(IsHistoryCategory));
+        Notify(nameof(IsFavoritesCategory));
         Notify(nameof(Category));
         ApplyFilter();
     }
@@ -338,13 +376,18 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
              (_category == LibraryCategory.BluRay && item.IsDisc) ||
              (_category == LibraryCategory.Videos && !item.IsDisc) ||
              (_category == LibraryCategory.History &&
-              _watchHistory.ContainsKey(item.Id) && !item.IsDisc)) &&
+              _watchHistory.ContainsKey(item.Id) && !item.IsDisc) ||
+             (_category == LibraryCategory.Favorites &&
+              _favorites.ContainsKey(item.Id))) &&
             (needle.Length == 0 ||
              item.Title.Contains(needle, StringComparison.OrdinalIgnoreCase) ||
              item.SourcePath.Contains(needle, StringComparison.OrdinalIgnoreCase)));
 
         if (_category == LibraryCategory.History)
             filtered = filtered.OrderByDescending(item => _watchHistory[item.Id].UpdatedAtUtc)
+                .ThenBy(item => item.Id);
+        else if (_category == LibraryCategory.Favorites)
+            filtered = filtered.OrderByDescending(item => _favorites[item.Id].AddedAtUtc)
                 .ThenBy(item => item.Id);
         else
             filtered = SelectedSort.Mode switch
@@ -419,6 +462,8 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         _featuredCard = null;
         ContinueWatchingItems.Clear();
         RecentlyWatchedItems.Clear();
+        FavoriteItems.Clear();
+        _favorites.Clear();
         _watchProgress.Clear();
         _watchHistory.Clear();
     }

@@ -25,6 +25,7 @@ public sealed partial class BigPictureLibraryView : UserControl
     public event Action<LibraryCardViewModel>? PlayRequested;
     public event Action<LibraryCardViewModel>? ResumeRequested;
     public event Action<LibraryCardViewModel>? ForgetHistoryRequested;
+    public event Action<LibraryCardViewModel>? ToggleFavoriteRequested;
     public event Action? ImportRequested;
     public event Action? ImportDiscRequested;
     public event Action? ManageRequested;
@@ -100,6 +101,15 @@ public sealed partial class BigPictureLibraryView : UserControl
         Library?.FeaturedCard?.RefreshPoster();
     }
 
+    private void DetailsFavorite_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Library?.FeaturedCard is not { } card) return;
+        // Removing the final pinned movie hides it from this category; leave
+        // the detail sheet before the selected card disappears.
+        if (Library.IsFavoritesCategory && card.IsFavorite) CloseDetails();
+        ToggleFavoriteRequested?.Invoke(card);
+    }
+
     private void DetailsForget_Click(object? sender, RoutedEventArgs e)
     {
         if (Library?.FeaturedCard is not { HasWatchHistory: true } card) return;
@@ -128,6 +138,8 @@ public sealed partial class BigPictureLibraryView : UserControl
         Navigate(() => Library?.ShowVideos());
     private void History_Click(object? sender, RoutedEventArgs e) =>
         Navigate(() => Library?.ShowHistory());
+    private void Favorites_Click(object? sender, RoutedEventArgs e) =>
+        Navigate(() => Library?.ShowFavorites());
 
     private void Navigate(Action navigate)
     {
@@ -199,7 +211,7 @@ public sealed partial class BigPictureLibraryView : UserControl
     [
         LibraryCategory.All, LibraryCategory.RecentlyAdded,
         LibraryCategory.BluRay, LibraryCategory.Videos,
-        LibraryCategory.History
+        LibraryCategory.History, LibraryCategory.Favorites
     ];
 
     /// <summary>
@@ -284,6 +296,7 @@ public sealed partial class BigPictureLibraryView : UserControl
                 case LibraryCategory.BluRay: view.ShowDiscs(); break;
                 case LibraryCategory.Videos: view.ShowVideos(); break;
                 case LibraryCategory.History: view.ShowHistory(); break;
+                case LibraryCategory.Favorites: view.ShowFavorites(); break;
             }
         });
         RestoreMovieFocus();

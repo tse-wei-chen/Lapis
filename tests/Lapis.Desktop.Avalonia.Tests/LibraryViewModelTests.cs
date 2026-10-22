@@ -231,6 +231,50 @@ public sealed class LibraryViewModelTests
     }
 
     [Fact]
+    public async Task FavoritesPersistAsCuratedCategoryAndHomeShelfWithoutPlayingMovies()
+    {
+        using var view = new LibraryViewModel(new FakeLibrary());
+        await view.LoadAsync();
+        await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, "First.mp4"));
+        await view.ImportAsync(new MediaLocator(MediaLocatorKind.Directory, "BDMV"));
+        await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, "Second.mkv"));
+
+        var cards = view.VisibleItems.ToDictionary(x => x.Title);
+        var first = cards["First"];
+        var disc = cards["Blu-ray"];
+        var now = DateTimeOffset.UtcNow;
+        view.LoadFavorites([
+            new FavoriteEntry(first.Item.Id, now.AddDays(-1)),
+            new FavoriteEntry(disc.Item.Id, now)
+        ]);
+        Assert.True(view.HasFavorites);
+        Assert.Equal(2, view.FavoriteItems.Count);
+        Assert.True(first.IsFavorite);
+        Assert.True(disc.IsFavorite);
+        Assert.False(cards["Second"].IsFavorite);
+        Assert.Equal("★  移出我的最愛", disc.FavoriteActionLabel);
+        Assert.Same(disc, view.FavoriteItems[0]); // Recently pinned first.
+
+        view.ShowFavorites();
+        Assert.True(view.IsFavoritesCategory);
+        Assert.Equal("我的最愛", view.CurrentFilterLabel);
+        Assert.Equal(new[] { "Blu-ray", "First" },
+            view.VisibleItems.Select(x => x.Title));
+        Assert.False(view.HasFavorites); // Shelf belongs to the All home only.
+
+        view.SearchText = "First";
+        Assert.Same(first, Assert.Single(view.VisibleItems));
+        view.SearchText = "";
+        view.SetFavorite(disc.Item.Id, false);
+        Assert.Same(first, Assert.Single(view.VisibleItems));
+        Assert.False(disc.IsFavorite);
+        view.ShowAll();
+        Assert.True(view.HasFavorites);
+        Assert.Same(first, Assert.Single(view.FavoriteItems));
+        Assert.Equal(3, view.VisibleItems.Count); // Media was never removed.
+    }
+
+    [Fact]
     public async Task SidebarNavigationMaintainsExactlyOneActiveTarget()
     {
         using var view = new LibraryViewModel(new FakeLibrary());
