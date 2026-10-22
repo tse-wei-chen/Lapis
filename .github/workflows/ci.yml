@@ -1,5 +1,11 @@
 name: ci
 
+# A new push supersedes an earlier run on the same PR/ref. Avoid paying for
+# multiple 15-minute FFmpeg builds after a rapid succession of fixes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [develop, master]
@@ -85,12 +91,17 @@ jobs:
       VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}\\.vcpkg-cache,readwrite
     steps:
       - uses: actions/checkout@v7
+      # A v1 cache can be "hit" but contain archives with obsolete ABI hashes.
+      # Use a rolling v2 key: old archives can be read as a starting point,
+      # and a rebuilt FFmpeg archive can be saved under a NEW immutable key.
       - name: Restore vcpkg binary cache
         id: vcpkg-cache
         uses: actions/cache/restore@v6
         with:
           path: .vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('native/MediaRuntime/vcpkg.json', 'native/MediaRuntime/vcpkg-triplets/*.cmake') }}
+          key: vcpkg-v2-${{ runner.os }}-${{ hashFiles('native/MediaRuntime/vcpkg.json', 'native/MediaRuntime/vcpkg-triplets/*.cmake') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            vcpkg-v2-${{ runner.os }}-${{ hashFiles('native/MediaRuntime/vcpkg.json', 'native/MediaRuntime/vcpkg-triplets/*.cmake') }}-
       - name: Prepare vcpkg baseline
         shell: pwsh
         run: |
@@ -101,6 +112,13 @@ jobs:
           # Fetching the commit without checking it out is insufficient.
           git -C $vcpkgRoot -c advice.detachedHead=false checkout --detach a5f736224e85b32e25a8ffc52562333180396642
           "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Measure cached vcpkg archives
+        id: vcpkg-before
+        shell: pwsh
+        run: |
+          $archives = @(Get-ChildItem .vcpkg-cache -Recurse -File -Filter '*.zip' -ErrorAction SilentlyContinue)
+          "count=$($archives.Count)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Configure
         shell: pwsh
         run: |
@@ -108,12 +126,25 @@ jobs:
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
             "-DVCPKG_OVERLAY_TRIPLETS=${{ github.workspace }}/native/MediaRuntime/vcpkg-triplets" `
             "-DVCPKG_TARGET_TRIPLET=x64-windows-release"
+      - name: Detect new vcpkg binary archives
+        id: vcpkg-after
+        shell: pwsh
+        run: |
+          $archives = @(Get-ChildItem .vcpkg-cache -Recurse -File -Filter '*.zip' -ErrorAction SilentlyContinue)
+          $before = [int]'${{ steps.vcpkg-before.outputs.count }}'
+          $changed = $archives.Count -gt $before
+          Write-Host "vcpkg archive count: $before -> $($archives.Count); cache updated: $changed"
+          "changed=$($changed.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      # Cache keys are immutable. Save only when vcpkg created additional
+      # ABI-addressed package archives, instead of freezing an obsolete hit
+      # forever or uploading the same 20+ MiB cache on every CI run.
       - name: Save vcpkg binary cache
-        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        if: steps.vcpkg-after.outputs.changed == 'true'
         uses: actions/cache/save@v6
         with:
           path: .vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('native/MediaRuntime/vcpkg.json', 'native/MediaRuntime/vcpkg-triplets/*.cmake') }}
+          key: vcpkg-v2-${{ runner.os }}-${{ hashFiles('native/MediaRuntime/vcpkg.json', 'native/MediaRuntime/vcpkg-triplets/*.cmake') }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Build
         run: cmake --build build/native --config Release
       - name: Test
