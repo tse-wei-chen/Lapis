@@ -556,10 +556,29 @@
                       IsVisible="{Binding FeaturedCard.HasWatchHistory}"
                       AutomationProperties.AutomationId="Lapis.Library.DetailForget"
                       AutomationProperties.Name="移除此電影的觀看紀錄與續播位置"/>
+              <Button x:Name="BigPictureDetailsRemove" Classes="bp-secondary"
+                      Content="從收藏庫移除…" Click="DetailsRemove_Click"
+                      AutomationProperties.AutomationId="Lapis.Library.DetailRemove"
+                      AutomationProperties.Name="從收藏庫移除此電影但不刪除原始檔案"/>
               <Button Classes="bp-secondary" Content="返回收藏庫"
                       Click="DetailsClose_Click"
                       AutomationProperties.AutomationId="Lapis.Library.DetailClose"
                       AutomationProperties.Name="關閉電影詳細資訊"/>
+            </StackPanel>
+            <StackPanel x:Name="BigPictureRemoveConfirmation" IsVisible="False"
+                        Spacing="9" Margin="0,4,0,0">
+              <TextBlock Text="確定從 Lapis 收藏庫移除這部電影？硬碟上的影片或 BDMV 資料夾不會刪除；最愛和觀看紀錄也會清理。"
+                         FontSize="13" Foreground="#EFC5B2"
+                         TextWrapping="Wrap" MaxWidth="495"/>
+              <StackPanel Orientation="Horizontal" Spacing="12">
+                <Button x:Name="BigPictureRemoveCancel" Classes="bp-secondary"
+                        Content="取消移除" Click="DetailsRemoveCancel_Click"
+                        AutomationProperties.AutomationId="Lapis.Library.RemoveCancel"/>
+                <Button Classes="bp-secondary" Content="確認移出收藏庫"
+                        Click="DetailsRemoveConfirm_Click"
+                        AutomationProperties.AutomationId="Lapis.Library.RemoveConfirm"
+                        AutomationProperties.Name="確認移除收藏項目，但保留硬碟上的媒體檔案"/>
+              </StackPanel>
             </StackPanel>
           </StackPanel>
           <Border Grid.Column="1" Width="328" Height="328" CornerRadius="12"

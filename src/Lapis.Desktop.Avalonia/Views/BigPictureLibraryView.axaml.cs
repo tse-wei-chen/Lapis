@@ -22,6 +22,9 @@ public sealed partial class BigPictureLibraryView : UserControl
     private readonly Button _detailsResume;
     private readonly Button _detailsRepair;
     private readonly Button _renameButton;
+    private readonly Button _removeButton;
+    private readonly Button _removeCancel;
+    private readonly StackPanel _removeConfirmation;
     private readonly StackPanel _renameRow;
     private readonly TextBox _renameInput;
     private readonly TextBlock _renameError;
@@ -33,6 +36,7 @@ public sealed partial class BigPictureLibraryView : UserControl
     public event Action<LibraryCardViewModel>? ToggleFavoriteRequested;
     public event Action<LibraryCardViewModel>? RepairSourceRequested;
     public event Action<LibraryCardViewModel, string>? RenameTitleRequested;
+    public event Action<LibraryCardViewModel>? RemoveFromLibraryRequested;
     public event Action? ImportRequested;
     public event Action? ImportDiscRequested;
     public event Action? ManageRequested;
@@ -60,6 +64,12 @@ public sealed partial class BigPictureLibraryView : UserControl
             ?? throw new InvalidOperationException("Missing title editor.");
         _renameError = this.FindControl<TextBlock>("BigPictureRenameError")
             ?? throw new InvalidOperationException("Missing title validation label.");
+        _removeButton = this.FindControl<Button>("BigPictureDetailsRemove")
+            ?? throw new InvalidOperationException("Missing remove-from-library action.");
+        _removeCancel = this.FindControl<Button>("BigPictureRemoveCancel")
+            ?? throw new InvalidOperationException("Missing remove confirmation cancel.");
+        _removeConfirmation = this.FindControl<StackPanel>("BigPictureRemoveConfirmation")
+            ?? throw new InvalidOperationException("Missing remove confirmation.");
         // Tunnel before Button/ScrollViewer swallow navigation arrows.
         AddHandler(InputElement.KeyDownEvent, BigPictureKeyDown,
             RoutingStrategies.Tunnel, handledEventsToo: true);
@@ -78,6 +88,7 @@ public sealed partial class BigPictureLibraryView : UserControl
         if (!_detailsOverlay.IsVisible) return;
         _detailsOverlay.IsVisible = false;
         CancelRenameEditor();
+        _removeConfirmation.IsVisible = false;
         if (IsVisible) _focusedTile?.Focus();
     }
 
@@ -86,6 +97,7 @@ public sealed partial class BigPictureLibraryView : UserControl
         if (tile is not null) _focusedTile = tile;
         Library?.SelectFeatured(card);
         CancelRenameEditor();
+        _removeConfirmation.IsVisible = false;
         card.RefreshSourceAvailability();
         _detailsOverlay.IsVisible = true;
         if (card.NeedsSourceRepair) _detailsRepair.Focus();
@@ -101,6 +113,27 @@ public sealed partial class BigPictureLibraryView : UserControl
 
     private void DetailsClose_Click(object? sender, RoutedEventArgs e) =>
         CloseDetails();
+
+    private void DetailsRemove_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Library?.FeaturedCard is null) return;
+        CancelRenameEditor();
+        _removeConfirmation.IsVisible = true;
+        _removeCancel.Focus(); // Gamepad/keyboard Back and Cancel are safe defaults.
+    }
+
+    private void DetailsRemoveCancel_Click(object? sender, RoutedEventArgs e)
+    {
+        _removeConfirmation.IsVisible = false;
+        _removeButton.Focus();
+    }
+
+    private void DetailsRemoveConfirm_Click(object? sender, RoutedEventArgs e)
+    {
+        if (!_removeConfirmation.IsVisible || Library?.FeaturedCard is not { } card) return;
+        CloseDetails();
+        RemoveFromLibraryRequested?.Invoke(card);
+    }
 
     private void DetailsRename_Click(object? sender, RoutedEventArgs e)
     {
@@ -310,8 +343,9 @@ public sealed partial class BigPictureLibraryView : UserControl
                 {
                     if (_detailsOverlay.IsVisible)
                     {
-                        var targetButton = _detailsResume.IsVisible
-                            ? _detailsResume : _detailsPlay;
+                        var targetButton = _removeConfirmation.IsVisible
+                            ? _removeCancel
+                            : _detailsResume.IsVisible ? _detailsResume : _detailsPlay;
                         if (targetButton.IsEnabled)
                             targetButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     }
@@ -326,7 +360,10 @@ public sealed partial class BigPictureLibraryView : UserControl
             case GamepadAction.Back:
                 if (_detailsOverlay.IsVisible)
                 {
-                    CloseDetails();
+                    if (_removeConfirmation.IsVisible)
+                        DetailsRemoveCancel_Click(null, new RoutedEventArgs());
+                    else
+                        CloseDetails();
                     break;
                 }
                 Navigate(() =>

@@ -122,6 +122,17 @@ attached to the same media. Search, title sorting and the home display update
 after saving. Titles are limited to 160 characters and cannot include control
 characters; cancel leaves the library unchanged.
 
+## Remove a movie from the local catalog
+
+In the movie detail sheet, select **從收藏庫移除…** and explicitly confirm.
+Cancel returns to the movie without changing anything. Confirm removes only the
+catalog entry and its associated local favorites, watch-history and resume
+bookmarks. **Lapis never deletes, modifies, decrypts or moves the original
+video file or Blu-ray folder.** The secondary management screen's Remove action
+uses the same cleanup logic. If a sidecar cleanup fails after catalog removal,
+Lapis reports the partial failure instead of pretending that all private
+metadata was erased.
+
 ## Repository layout
 
 ```text
