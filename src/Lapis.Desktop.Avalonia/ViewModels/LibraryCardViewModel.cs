@@ -17,6 +17,7 @@ public sealed class LibraryCardViewModel : INotifyPropertyChanged, IDisposable
     private readonly CancellationTokenSource _lifetime = new();
     private Bitmap? _poster;
     private WatchProgress? _watchProgress;
+    private WatchProgress? _watchHistory;
     private bool _started;
     private bool _disposed;
 
@@ -44,6 +45,25 @@ public sealed class LibraryCardViewModel : INotifyPropertyChanged, IDisposable
     public double ProgressPercent => CanResume
         ? 100 * _watchProgress!.PositionSeconds / _watchProgress.DurationSeconds : 0;
     public DateTimeOffset LastWatchedUtc => _watchProgress?.UpdatedAtUtc ?? DateTimeOffset.MinValue;
+
+    public bool HasWatchHistory => !IsDisc && _watchHistory?.IsHistoryEligible == true;
+    public bool IsWatched => HasWatchHistory && _watchHistory!.IsCompleted;
+    public string HistoryLabel => !HasWatchHistory ? "" :
+        IsWatched ? "✓ 已看完" : $"觀看至 {FormatPosition(_watchHistory!.PositionSeconds)}";
+    public string LastWatchedLabel => !HasWatchHistory ? "" :
+        $"最近觀看：{_watchHistory!.UpdatedAtUtc.ToLocalTime():yyyy/MM/dd HH:mm}";
+    public DateTimeOffset HistoryUpdatedAtUtc => _watchHistory?.UpdatedAtUtc ?? DateTimeOffset.MinValue;
+
+    internal void SetWatchHistory(WatchProgress? history)
+    {
+        if (Equals(_watchHistory, history)) return;
+        _watchHistory = history;
+        Notify(nameof(HasWatchHistory));
+        Notify(nameof(IsWatched));
+        Notify(nameof(HistoryLabel));
+        Notify(nameof(LastWatchedLabel));
+        Notify(nameof(HistoryUpdatedAtUtc));
+    }
 
     internal void SetWatchProgress(WatchProgress? progress)
     {

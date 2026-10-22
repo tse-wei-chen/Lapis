@@ -191,7 +191,57 @@
           </ScrollViewer>
         </StackPanel>
 
-        <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding HasItems}">
+        <!-- A separate activity shelf: completed films remain visible, but
+             cannot masquerade as resumable playback bookmarks. -->
+        <StackPanel Spacing="12" IsVisible="{Binding HasRecentlyWatched}">
+          <Grid ColumnDefinitions="*,Auto">
+            <TextBlock Text="最近觀看" FontSize="25" FontWeight="SemiBold"
+                       AutomationProperties.AutomationId="Lapis.Library.HistoryHeading"/>
+            <Button Grid.Column="1" Classes="bp-secondary"
+                    Content="查看觀看紀錄 →" Click="History_Click"
+                    AutomationProperties.AutomationId="Lapis.Library.ViewHistory"/>
+          </Grid>
+          <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                        VerticalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{Binding RecentlyWatchedItems}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <StackPanel Orientation="Horizontal"/>
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Button Classes="bp-tile" Width="230" Height="194"
+                          Margin="0,0,14,4" CommandParameter="{Binding}"
+                          Click="TilePlay_Click" GotFocus="TileGotFocus"
+                          PointerEntered="TilePointerEntered"
+                          AutomationProperties.Name="{Binding Title}">
+                    <Grid RowDefinitions="145,*">
+                      <Border Background="#243449" CornerRadius="8" ClipToBounds="True">
+                        <Grid>
+                          <Image Source="{Binding Poster}" Stretch="Uniform"/>
+                          <TextBlock Text="L" FontSize="64" Foreground="#647B93"
+                                     IsVisible="{Binding ShowPlaceholder}"
+                                     HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                          <Border Background="#D1122538" HorizontalAlignment="Right"
+                                  VerticalAlignment="Top" CornerRadius="5" Padding="9,4" Margin="8">
+                            <TextBlock Text="{Binding HistoryLabel}"
+                                       Foreground="#E1F5FF" FontSize="11"/>
+                          </Border>
+                        </Grid>
+                      </Border>
+                      <TextBlock Grid.Row="1" Text="{Binding Title}" Margin="9,6"
+                                 FontSize="14" TextTrimming="CharacterEllipsis"
+                                 Foreground="#F0F5FA" VerticalAlignment="Center"/>
+                    </Grid>
+                  </Button>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </StackPanel>
+
+        <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding ShowRecentShelf}">
           <StackPanel>
             <TextBlock Text="最近加入" FontSize="25" FontWeight="SemiBold"/>
             <TextBlock Text="接續探索你的電影收藏" Foreground="#95A8BB"
@@ -202,7 +252,7 @@
         </Grid>
 
         <ScrollViewer x:Name="BigPictureRecentStrip"
-                      IsVisible="{Binding HasItems}"
+                      IsVisible="{Binding ShowRecentShelf}"
                       HorizontalScrollBarVisibility="Auto"
                       VerticalScrollBarVisibility="Disabled">
           <ItemsControl ItemsSource="{Binding RecentItems}">
@@ -368,6 +418,12 @@
               <TextBlock Text="{Binding FeaturedCard.ImportedAtText}"
                          FontSize="13" Foreground="#D9E8F3"/>
             </StackPanel>
+            <TextBlock Text="{Binding FeaturedCard.LastWatchedLabel}"
+                       IsVisible="{Binding FeaturedCard.HasWatchHistory}"
+                       Foreground="#A8BDCE" FontSize="13"/>
+            <TextBlock Text="{Binding FeaturedCard.HistoryLabel}"
+                       IsVisible="{Binding FeaturedCard.HasWatchHistory}"
+                       Foreground="#9DDDEE" FontSize="14"/>
             <TextBlock Text="{Binding FeaturedCard.ProgressLabel}"
                        IsVisible="{Binding FeaturedCard.CanResume}"
                        Foreground="#B7E7FA" FontSize="14"/>
@@ -385,6 +441,11 @@
                       IsEnabled="{Binding FeaturedCard.IsAvailable}"
                       AutomationProperties.AutomationId="Lapis.Library.DetailPlay"
                       AutomationProperties.Name="播放目前選取的電影"/>
+              <Button Classes="bp-secondary" Content="移除觀看紀錄"
+                      Click="DetailsForget_Click"
+                      IsVisible="{Binding FeaturedCard.HasWatchHistory}"
+                      AutomationProperties.AutomationId="Lapis.Library.DetailForget"
+                      AutomationProperties.Name="移除此電影的觀看紀錄與續播位置"/>
               <Button Classes="bp-secondary" Content="返回收藏庫"
                       Click="DetailsClose_Click"
                       AutomationProperties.AutomationId="Lapis.Library.DetailClose"

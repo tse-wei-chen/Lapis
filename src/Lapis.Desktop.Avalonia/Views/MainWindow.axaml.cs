@@ -47,6 +47,7 @@ public sealed partial class MainWindow : Window
     private readonly Button _navBluRay;
     private readonly Button _navVideos;
     private readonly Button _navRecent;
+    private readonly Button _navHistory;
     private readonly TextBlock _currentHeading;
     private readonly PlayerViewModel _player;
     private readonly LibraryViewModel _library;
@@ -100,6 +101,8 @@ public sealed partial class MainWindow : Window
             ?? throw new InvalidOperationException("Missing Videos nav item.");
         _navRecent = this.FindControl<Button>("NavigationRecent")
             ?? throw new InvalidOperationException("Missing Recently Added nav item.");
+        _navHistory = this.FindControl<Button>("NavigationHistory")
+            ?? throw new InvalidOperationException("Missing Watch History nav item.");
         _currentHeading = this.FindControl<TextBlock>("LibraryCurrentHeading")
             ?? throw new InvalidOperationException("Missing library heading.");
 
@@ -124,6 +127,7 @@ public sealed partial class MainWindow : Window
 
         _bigPicture.PlayRequested += card => _ = PlayLibraryItemAsync(card, resume: false);
         _bigPicture.ResumeRequested += card => _ = PlayLibraryItemAsync(card, resume: true);
+        _bigPicture.ForgetHistoryRequested += card => _ = ForgetHistoryAsync(card);
         _bigPicture.ImportRequested += () => _ = ImportFromBigPictureAsync();
         _bigPicture.ImportDiscRequested += () => _ = ImportDiscCoreAsync();
         _bigPicture.ManageRequested += () => ShowLibraryManagement(true);
@@ -140,6 +144,7 @@ public sealed partial class MainWindow : Window
                 try
                 {
                     _library.LoadWatchProgress(await _watchProgressStore.LoadAsync());
+                    _library.LoadWatchHistory(await _watchProgressStore.LoadHistoryAsync());
                 }
                 catch (Exception exception)
                 {
@@ -390,6 +395,10 @@ public sealed partial class MainWindow : Window
     private void GoBigPicture_Click(object? sender, RoutedEventArgs args)
     {
         _bigPicture.CloseDetails();
+        // Home means the full cinema catalog, not merely closing Management.
+        // History can become empty immediately after forgetting its last film.
+        _library.ShowAll();
+        _library.SearchText = "";
         ShowLibraryManagement(false);
         _bigPicture.ResetScroll();
     }
@@ -405,6 +414,8 @@ public sealed partial class MainWindow : Window
         ShellNavigate(_library.ShowDiscs);
     private void ShellVideos_Click(object? sender, RoutedEventArgs args) =>
         ShellNavigate(_library.ShowVideos);
+    private void ShellHistory_Click(object? sender, RoutedEventArgs args) =>
+        ShellNavigate(_library.ShowHistory);
 
     private void ShellNavigate(Action navigate)
     {
@@ -484,6 +495,8 @@ public sealed partial class MainWindow : Window
         NavigateLibrary(_library.ShowVideos);
     private void ShowRecentlyAdded_Click(object? sender, RoutedEventArgs args) =>
         NavigateLibrary(_library.ShowRecentlyAdded);
+    private void ShowHistory_Click(object? sender, RoutedEventArgs args) =>
+        NavigateLibrary(_library.ShowHistory);
 
     private void NavigateLibrary(Action navigate)
     {
@@ -510,6 +523,7 @@ public sealed partial class MainWindow : Window
             LibraryCategory.BluRay => _navBluRay,
             LibraryCategory.Videos => _navVideos,
             LibraryCategory.RecentlyAdded => _navRecent,
+            LibraryCategory.History => _navHistory,
             _ => _navAll
         };
         var origin = global::Avalonia.VisualExtensions.TranslatePoint(
@@ -831,6 +845,19 @@ public sealed partial class MainWindow : Window
         RestoreLibraryView();
     }
 
+    private async Task ForgetHistoryAsync(LibraryCardViewModel card)
+    {
+        try
+        {
+            await _watchProgressStore.ForgetAsync(card.Item.Id);
+            _library.ForgetWatchHistory(card.Item.Id);
+        }
+        catch (Exception exception)
+        {
+            _library.ReportError($"無法移除觀看紀錄：{exception.Message}");
+        }
+    }
+
     private async void WatchProgressTick(object? sender, EventArgs args) =>
         await SaveWatchProgressAsync();
 
@@ -852,7 +879,11 @@ public sealed partial class MainWindow : Window
         try
         {
             await _watchProgressStore.SaveAsync(progress);
-            if (!_closeStarted) _library.UpdateWatchProgress(progress);
+            if (!_closeStarted && progress.IsHistoryEligible)
+            {
+                _library.UpdateWatchProgress(progress);
+                _library.UpdateWatchHistory(progress);
+            }
         }
         catch (Exception exception)
         {
