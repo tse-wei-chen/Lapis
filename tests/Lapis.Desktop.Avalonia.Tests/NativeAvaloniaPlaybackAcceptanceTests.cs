@@ -116,40 +116,41 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
             // Create the real owned transparent Avalonia top-level above the
             // live D3D11 child. A XAML-only/headless test cannot prove HWND
             // layering even at a basic smoke-test level.
-            await using (var overlayPlayer = new PlayerViewModel(
-                new NativePlayerPlaybackService(() => surface.OutputHandle)))
+            await using var overlayPlayer = new PlayerViewModel(
+                new AcceptancePlaybackService(host));
+            await overlayPlayer.OpenAsync(
+                new Lapis.Contracts.Media.MediaLocator(
+                    Lapis.Contracts.Media.MediaLocatorKind.File, media));
+            var chrome = new WatchChromeWindow(window, overlayPlayer, [],
+                () => Task.CompletedTask, () => { });
+            try
             {
-                var chrome = new WatchChromeWindow(window, overlayPlayer, [],
-                    () => Task.CompletedTask, () => { });
-                try
-                {
-                    var overlayHwnd = chrome.TryGetPlatformHandle()?.Handle ?? 0;
-                    Assert.True(chrome.IsVisible);
-                    Assert.NotEqual(nint.Zero, overlayHwnd);
-                    Assert.NotEqual(windowHwnd, overlayHwnd);
-                    Assert.NotEqual(output, overlayHwnd);
-                    Assert.True(IsWindow(overlayHwnd));
-                    Assert.True(IsWindow(output));
-                    chrome.SetSubtitleTrack(SidecarSubtitleTrack.Parse(
-                        "1\n00:00:00,000 --> 00:00:02,000\n字幕測試\n"));
-                    await Task.Delay(180, cancel.Token);
-                    Assert.True(IsWindow(output));
-                    var subtitle = chrome.FindControl<TextBlock>("WatchSubtitleText");
-                    var subtitleHost = chrome.FindControl<Border>("WatchSubtitleHost");
-                    Assert.NotNull(subtitle);
-                    Assert.NotNull(subtitleHost);
-                    Assert.Equal("字幕測試", subtitle!.Text);
-                    Assert.True(subtitleHost!.IsVisible);
-                    var controls = chrome.FindControl<Border>("WatchControls");
-                    Assert.NotNull(controls);
-                    Assert.True(controls!.IsVisible);
-                    chrome.NotifyPointerActivity();
-                    Assert.True(controls.IsVisible);
-                }
-                finally
-                {
-                    chrome.Close();
-                }
+                var overlayHwnd = chrome.TryGetPlatformHandle()?.Handle ?? 0;
+                Assert.True(chrome.IsVisible);
+                Assert.NotEqual(nint.Zero, overlayHwnd);
+                Assert.NotEqual(windowHwnd, overlayHwnd);
+                Assert.NotEqual(output, overlayHwnd);
+                Assert.True(IsWindow(overlayHwnd));
+                Assert.True(IsWindow(output));
+                chrome.SetSubtitleTrack(SidecarSubtitleTrack.Parse(
+                    "1\n00:00:00,000 --> 00:00:02,000\n字幕測試\n"));
+                await Task.Delay(180, cancel.Token);
+                Assert.True(IsWindow(output));
+                var subtitle = chrome.FindControl<TextBlock>("WatchSubtitleText");
+                var subtitleHost = chrome.FindControl<Border>("WatchSubtitleHost");
+                Assert.NotNull(subtitle);
+                Assert.NotNull(subtitleHost);
+                Assert.Equal("字幕測試", subtitle!.Text);
+                Assert.True(subtitleHost!.IsVisible);
+                var controls = chrome.FindControl<Border>("WatchControls");
+                Assert.NotNull(controls);
+                Assert.True(controls!.IsVisible);
+                chrome.NotifyPointerActivity();
+                Assert.True(controls.IsVisible);
+            }
+            finally
+            {
+                chrome.Close();
             }
             await WaitUntilAsync(
                 () => runtime.CaptureDiagnostics().Events.Any(e => e.Kind == 3),
@@ -200,38 +201,66 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
                       ClientWidth(output) > 320 &&
                       ClientHeight(output) > 200,
                 TimeSpan.FromSeconds(4), cancel.Token);
-            await host.SeekAsync(TimeSpan.FromMilliseconds(250), cancel.Token);
+            await overlayPlayer.SeekToAsync(TimeSpan.FromMilliseconds(250));
             Assert.True(host.Snapshot.Epoch.Value > initialEpoch.Value);
             Assert.Equal(TransportState.Playing, host.Snapshot.Transport);
 
-            foreach (var position in new[]
-                     {
-                         TimeSpan.FromMilliseconds(750),
-                         TimeSpan.FromSeconds(2)
-                     })
+            var duration = host.Snapshot.Duration?.ToTimeSpan() ?? TimeSpan.Zero;
+            if (duration > TimeSpan.FromMinutes(1))
+                Assert.True(duration >= TimeSpan.FromHours(2));
+            var seekPositions = duration > TimeSpan.FromMinutes(1)
+                ? new[]
+                {
+                    TimeSpan.FromMilliseconds(750),
+                    TimeSpan.FromMinutes(10),
+                    TimeSpan.FromTicks(duration.Ticks / 2),
+                    duration - TimeSpan.FromSeconds(10)
+                }
+                : new[]
+                {
+                    TimeSpan.FromMilliseconds(750),
+                    TimeSpan.FromSeconds(2)
+                };
+            foreach (var position in seekPositions)
             {
-                await host.SeekAsync(position, cancel.Token)
-                    .WaitAsync(TimeSpan.FromSeconds(5), cancel.Token);
+                overlayPlayer.BeginScrub();
+                overlayPlayer.SeekPositionSeconds = position.TotalSeconds;
+                await overlayPlayer.CommitScrubAsync();
                 Assert.Equal(TransportState.Playing, host.Snapshot.Transport);
+                Assert.InRange(
+                    Math.Abs((host.Snapshot.Position.ToTimeSpan() - position).TotalSeconds),
+                    0, 2);
             }
 
-            await host.SetTemporaryFastForwardAsync(
-                    true, host.Snapshot, cancel.Token)
-                .WaitAsync(TimeSpan.FromSeconds(5), cancel.Token);
-            await host.SetTemporaryFastForwardAsync(
-                    false, host.Snapshot, cancel.Token)
-                .WaitAsync(TimeSpan.FromSeconds(5), cancel.Token);
+            var beforeForward = host.Snapshot.Epoch;
+            overlayPlayer.ForwardCommand.Execute(null);
+            await WaitUntilAsync(
+                () => host.Snapshot.Epoch.Value > beforeForward.Value,
+                TimeSpan.FromSeconds(5), cancel.Token);
+            await WaitUntilAsync(
+                () => overlayPlayer.CanSeek,
+                TimeSpan.FromSeconds(5), cancel.Token);
+            var beforeBackward = host.Snapshot.Epoch;
+            overlayPlayer.BackCommand.Execute(null);
+            await WaitUntilAsync(
+                () => host.Snapshot.Epoch.Value > beforeBackward.Value,
+                TimeSpan.FromSeconds(5), cancel.Token);
+            Assert.True(await overlayPlayer.SetTemporaryFastForwardAsync(true));
+            Assert.True(await overlayPlayer.SetTemporaryFastForwardAsync(false));
             Assert.Equal(TransportState.Playing, host.Snapshot.Transport);
 
-            await WaitUntilAsync(() => host.Snapshot.Transport is
-                TransportState.Ended or TransportState.Faulted,
-                TimeSpan.FromSeconds(15), cancel.Token);
-            Assert.Equal(TransportState.Ended, host.Snapshot.Transport);
+            if (duration <= TimeSpan.FromMinutes(1))
+            {
+                await WaitUntilAsync(() => host.Snapshot.Transport is
+                    TransportState.Ended or TransportState.Faulted,
+                    TimeSpan.FromSeconds(15), cancel.Token);
+                Assert.Equal(TransportState.Ended, host.Snapshot.Transport);
 
-            var afterEof = host.Snapshot.Epoch;
-            await host.OpenAndPlayAsync(media, output, cancel.Token);
-            Assert.True(host.Snapshot.Epoch.Value > afterEof.Value);
-            Assert.Equal(TransportState.Playing, host.Snapshot.Transport);
+                var afterEof = host.Snapshot.Epoch;
+                await host.OpenAndPlayAsync(media, output, cancel.Token);
+                Assert.True(host.Snapshot.Epoch.Value > afterEof.Value);
+                Assert.Equal(TransportState.Playing, host.Snapshot.Transport);
+            }
 
             await host.CloseMediaAsync(cancel.Token);
             Assert.Equal(TransportState.Closed, host.Snapshot.Transport);
@@ -266,6 +295,41 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
                     "Avalonia Native HWND/GPU lifecycle did not reach expected state.");
             await Task.Delay(25, cancellationToken);
         }
+    }
+
+    private sealed class AcceptancePlaybackService(DesktopPlaybackHost host)
+        : IPlayerPlaybackService, ITemporaryFastForwardPlaybackService
+    {
+        public PlaybackSnapshot Snapshot => host.Snapshot;
+
+        public Task OpenAsync(
+            Lapis.Contracts.Media.MediaLocator locator,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task ToggleAsync(CancellationToken cancellationToken) =>
+            host.TogglePlayPauseAsync(cancellationToken);
+
+        public Task SeekAsync(TimeSpan position, CancellationToken cancellationToken) =>
+            host.SeekAsync(position, cancellationToken);
+
+        public Task CloseAsync(CancellationToken cancellationToken) =>
+            host.CloseMediaAsync(cancellationToken);
+
+        public IAsyncEnumerable<PlaybackSnapshot> ObserveSnapshotsAsync(
+            CancellationToken cancellationToken) =>
+            host.ObserveSnapshotsAsync(cancellationToken);
+
+        public Task<bool> SupportsTemporaryFastForwardAsync(
+            PlaybackSnapshot expected, CancellationToken cancellationToken) =>
+            host.SupportsTemporaryFastForwardAsync(expected, cancellationToken);
+
+        public Task SetTemporaryFastForwardAsync(
+            bool enabled, PlaybackSnapshot expected,
+            CancellationToken cancellationToken) =>
+            host.SetTemporaryFastForwardAsync(
+                enabled, expected, cancellationToken);
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     [DllImport("user32.dll")]
