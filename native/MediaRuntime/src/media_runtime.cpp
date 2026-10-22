@@ -3,18 +3,11 @@
 #include "core/diagnostic_events.hpp"
 #include "navigation/chapter_seek.hpp"
 #include "execution/playback_execution.hpp"
-#include "process/ffmpeg/ffmpeg_audio_frame_converter.hpp"
-#include "process/ffmpeg/ffmpeg_video_frame_converter.hpp"
 #include "session/playback_media_session.hpp"
 #include "session/async_text_subtitle_timeline.hpp"
 #include "source/media_source.hpp"
-#include "video/video_presenter.hpp"
 #include "video/video_output_surface.hpp"
-
-#if defined(_WIN32)
-#include "audio/wasapi/wasapi_shared_audio_output_provider.hpp"
-#include "video/d3d11/d3d11_video_presenter.hpp"
-#endif
+#include "platform/playback_execution_factory.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -32,24 +25,6 @@
 struct lapis_runtime final {};
 
 namespace {
-
-#if !defined(_WIN32)
-class HeadlessVideoPresenter final : public lapis::media::IVideoPresenter {
-public:
-    [[nodiscard]] lapis::media::VideoPresenterBeginStatus begin(
-        lapis::media::PlaybackEpoch) override {
-        return lapis::media::VideoPresenterBeginStatus::Ready;
-    }
-
-    [[nodiscard]] lapis::media::VideoPresentStatus present(
-        const lapis::media::VideoFrame&,
-        const lapis::media::VideoPresentContext&) override {
-        return lapis::media::VideoPresentStatus::Presented;
-    }
-
-    void end() noexcept override {}
-};
-#endif
 
 struct RuntimePlaybackPipeline final {
     std::shared_ptr<lapis::media::PlaybackMediaSession> media;
@@ -224,46 +199,6 @@ lapis_result map_execution_error(
     return LAPIS_E_INTERNAL;
 }
 
-std::unique_ptr<lapis::media::PlaybackExecution> create_execution(
-    lapis::media::PlaybackMediaSession& media,
-    std::shared_ptr<lapis::media::DiagnosticEventJournal> journal) {
-    auto video_processor =
-        std::make_unique<lapis::media::ffmpeg::FfmpegVideoFrameConverter>();
-    #if defined(_WIN32)
-    auto presenter = std::make_unique<lapis::media::d3d11::D3D11VideoPresenter>();
-    #else
-    auto presenter = std::make_unique<HeadlessVideoPresenter>();
-    #endif
-
-#if defined(_WIN32)
-    auto audio_provider = std::make_unique<
-        lapis::media::wasapi::WasapiSharedAudioOutputProvider>();
-    lapis::media::AudioFrameProcessorFactory audio_processor_factory =
-        [](const lapis::media::AudioFormat& target_format)
-            -> std::unique_ptr<lapis::media::IAudioFrameProcessor> {
-            return std::make_unique<
-                lapis::media::ffmpeg::FfmpegAudioFrameConverter>(
-                target_format);
-        };
-
-    return std::make_unique<lapis::media::PlaybackExecution>(
-        media,
-        std::move(video_processor),
-        std::move(presenter),
-        std::move(audio_provider),
-        std::move(audio_processor_factory),
-        lapis::media::PlaybackExecutionConfig{},
-        std::move(journal));
-#else
-    return std::make_unique<lapis::media::PlaybackExecution>(
-        media,
-        std::move(video_processor),
-        std::move(presenter),
-        lapis::media::PlaybackExecutionConfig{},
-        std::move(journal));
-#endif
-}
-
 std::shared_ptr<RuntimePlaybackPipeline> create_pipeline(
     std::shared_ptr<lapis::media::PlaybackMediaSession> media,
     std::shared_ptr<lapis::media::DiagnosticEventJournal> journal,
@@ -271,7 +206,8 @@ std::shared_ptr<RuntimePlaybackPipeline> create_pipeline(
     auto pipeline = std::make_shared<RuntimePlaybackPipeline>();
     pipeline->subtitle_source = std::move(subtitle_source);
     pipeline->media = std::move(media);
-    pipeline->execution = create_execution(*pipeline->media, std::move(journal));
+    pipeline->execution = lapis::media::platform::create_execution(
+        *pipeline->media, std::move(journal));
     return pipeline;
 }
 

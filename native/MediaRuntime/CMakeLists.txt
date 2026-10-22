@@ -1,7 +1,15 @@
 cmake_minimum_required(VERSION 3.25)
 project(LapisMediaRuntime VERSION 0.15.0 LANGUAGES C CXX)
 
-find_package(FFMPEG REQUIRED)
+# Windows uses the pinned vcpkg FFmpeg config. Linux CI uses distro FFmpeg
+# development packages, whose discovery metadata is provided via pkg-config.
+# Accept either provider without leaking package-manager choices into the Core.
+find_package(FFMPEG QUIET)
+if(NOT FFMPEG_FOUND)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(FFMPEG REQUIRED
+        libavcodec libavformat libavutil libswresample libswscale)
+endif()
 find_package(Threads REQUIRED)
 
 # Optional adapter. Use vcpkg manifest feature "bluray" when enabling:
@@ -61,15 +69,6 @@ if(LAPIS_ENABLE_LIBBLURAY)
         PRIVATE LAPIS_ENABLE_LIBBLURAY=1)
 endif()
 
-if(WIN32)
-    target_sources(Lapis.MediaRuntime.Core PRIVATE
-        src/audio/wasapi/wasapi_format.cpp
-        src/audio/wasapi/wasapi_shared_audio_output.cpp
-        src/audio/wasapi/wasapi_shared_audio_output_provider.cpp
-        src/video/d3d11/d3d11_video_presenter.cpp
-    )
-endif()
-
 target_compile_features(Lapis.MediaRuntime.Core PUBLIC cxx_std_20)
 set_target_properties(Lapis.MediaRuntime.Core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(Lapis.MediaRuntime.Core
@@ -82,10 +81,34 @@ target_link_libraries(Lapis.MediaRuntime.Core
     PUBLIC Threads::Threads
     PRIVATE ${FFMPEG_LIBRARIES}
 )
-if(WIN32)
-    target_link_libraries(Lapis.MediaRuntime.Core PRIVATE ole32 d3d11 dxgi d3dcompiler user32)
-endif()
 lapis_enable_strict_warnings(Lapis.MediaRuntime.Core)
+
+# The portable core never links Win32 graphics or audio adapters. This
+# platform composition target is the sole place that selects an output
+# implementation, and is independently replaceable by Linux Vulkan/PipeWire.
+add_library(Lapis.MediaRuntime.Platform STATIC
+    src/platform/playback_execution_factory.cpp
+)
+if(WIN32)
+    target_sources(Lapis.MediaRuntime.Platform PRIVATE
+        src/audio/wasapi/wasapi_format.cpp
+        src/audio/wasapi/wasapi_shared_audio_output.cpp
+        src/audio/wasapi/wasapi_shared_audio_output_provider.cpp
+        src/video/d3d11/d3d11_video_presenter.cpp
+    )
+endif()
+target_compile_features(Lapis.MediaRuntime.Platform PUBLIC cxx_std_20)
+set_target_properties(Lapis.MediaRuntime.Platform PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(Lapis.MediaRuntime.Platform
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(Lapis.MediaRuntime.Platform SYSTEM PRIVATE
+    ${FFMPEG_INCLUDE_DIRS})
+target_link_libraries(Lapis.MediaRuntime.Platform PUBLIC Lapis.MediaRuntime.Core)
+if(WIN32)
+    target_link_libraries(Lapis.MediaRuntime.Platform
+        PUBLIC ole32 d3d11 dxgi d3dcompiler user32)
+endif()
+lapis_enable_strict_warnings(Lapis.MediaRuntime.Platform)
 
 add_library(Lapis.MediaRuntime SHARED
     src/media_runtime.cpp
@@ -103,7 +126,7 @@ target_include_directories(Lapis.MediaRuntime
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
-target_link_libraries(Lapis.MediaRuntime PRIVATE Lapis.MediaRuntime.Core)
+target_link_libraries(Lapis.MediaRuntime PRIVATE Lapis.MediaRuntime.Platform)
 lapis_enable_strict_warnings(Lapis.MediaRuntime)
 
 # Windows-only reproducible playback acceptance runner. The runner links through
@@ -512,7 +535,7 @@ if(BUILD_TESTING)
         )
         target_link_libraries(
             Lapis.MediaRuntime.D3D11RecoveryInjectionTests PRIVATE
-                Lapis.MediaRuntime.Core user32
+                Lapis.MediaRuntime.Platform user32
         )
         lapis_enable_strict_warnings(
             Lapis.MediaRuntime.D3D11RecoveryInjectionTests
@@ -532,7 +555,7 @@ if(BUILD_TESTING)
             Lapis.MediaRuntime.D3D11PresenterTests PRIVATE cxx_std_20
         )
         target_link_libraries(
-            Lapis.MediaRuntime.D3D11PresenterTests PRIVATE Lapis.MediaRuntime.Core user32
+            Lapis.MediaRuntime.D3D11PresenterTests PRIVATE Lapis.MediaRuntime.Platform user32
         )
         lapis_enable_strict_warnings(Lapis.MediaRuntime.D3D11PresenterTests)
         add_test(
@@ -576,7 +599,7 @@ if(BUILD_TESTING)
         )
         target_link_libraries(
             Lapis.MediaRuntime.WasapiFormatTests
-            PRIVATE Lapis.MediaRuntime.Core
+            PRIVATE Lapis.MediaRuntime.Platform
         )
         lapis_enable_strict_warnings(Lapis.MediaRuntime.WasapiFormatTests)
         add_test(
@@ -694,4 +717,17 @@ if(BUILD_TESTING)
     target_link_libraries(Lapis.MediaRuntime.AudioOutputContractTests PRIVATE Lapis.MediaRuntime.Core)
     lapis_enable_strict_warnings(Lapis.MediaRuntime.AudioOutputContractTests)
     add_test(NAME audio_output_contract COMMAND Lapis.MediaRuntime.AudioOutputContractTests)
+
+    if(NOT WIN32)
+        # Headless is a test-only baseline, not a Linux desktop presenter.
+        add_executable(Lapis.MediaRuntime.HeadlessPlatformTests
+            tests/linux_headless_platform.cpp)
+        target_compile_features(Lapis.MediaRuntime.HeadlessPlatformTests
+            PRIVATE cxx_std_20)
+        target_link_libraries(Lapis.MediaRuntime.HeadlessPlatformTests
+            PRIVATE Lapis.MediaRuntime.Platform)
+        lapis_enable_strict_warnings(Lapis.MediaRuntime.HeadlessPlatformTests)
+        add_test(NAME linux_headless_platform_boundary
+            COMMAND Lapis.MediaRuntime.HeadlessPlatformTests)
+    endif()
 endif()

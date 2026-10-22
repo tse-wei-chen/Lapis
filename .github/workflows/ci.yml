@@ -18,6 +18,7 @@ jobs:
     outputs:
       managed: ${{ steps.filter.outputs.managed }}
       native: ${{ steps.filter.outputs.native }}
+      linux: ${{ steps.filter.outputs.linux }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -31,10 +32,12 @@ jobs:
         run: |
           managed=false
           native=false
+          linux=false
 
           if [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then
             managed=true
             native=true
+            linux=true
           else
             git diff --name-only "$BASE_SHA" "$HEAD_SHA" > changed-files.txt
             cat changed-files.txt
@@ -44,12 +47,14 @@ jobs:
                 .github/workflows/ci.yml)
                   managed=true
                   native=true
+                  linux=true
                   ;;
                 native/*)
-                  # Native changes also run managed architecture tests, which
-                  # enforce the FFmpeg/native adapter boundary.
+                  # Portable Core must build and pass on Linux for every
+                  # native change, in addition to Windows D3D11 acceptance.
                   managed=true
                   native=true
+                  linux=true
                   ;;
                 src/Lapis.Application/*|tests/Lapis.Application.Tests/*|src/Lapis.Desktop.Avalonia/*|tests/Lapis.Desktop.E2E/*|tests/Lapis.Desktop.Avalonia.Tests/NativeAvaloniaPlaybackAcceptanceTests.cs)
                   # Playback actor/transport changes and desktop UI changes
@@ -67,6 +72,7 @@ jobs:
 
           echo "managed=$managed" >> "$GITHUB_OUTPUT"
           echo "native=$native" >> "$GITHUB_OUTPUT"
+          echo "linux=$linux" >> "$GITHUB_OUTPUT"
 
   managed:
     needs: changes
@@ -83,6 +89,31 @@ jobs:
         run: dotnet build Lapis.slnx -c Release --no-restore
       - name: Test
         run: dotnet test Lapis.slnx -c Release --no-build --logger "trx;LogFileName=managed.trx"
+
+  linux_headless:
+    needs: changes
+    if: needs.changes.outputs.linux == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install distribution FFmpeg development dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libavcodec-dev libavformat-dev libavutil-dev \
+            libswresample-dev libswscale-dev
+      - name: Configure portable Native runtime without Win32 adapters
+        run: |
+          cmake -S native/MediaRuntime -B build/linux-headless \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DLAPIS_ENABLE_LIBBLURAY=OFF
+      - name: Build portable Core, C ABI and all Linux tests
+        run: cmake --build build/linux-headless --parallel 2
+      - name: Run actual Linux CTest suite
+        run: |
+          ctest --test-dir build/linux-headless \
+            --output-on-failure --parallel 2 --timeout 90
 
   native:
     needs: changes

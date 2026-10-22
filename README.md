@@ -36,6 +36,16 @@ cmake --build build/native --config Release
 ctest --test-dir build/native -C Release --output-on-failure
 ```
 
+## Linux native headless validation
+
+The portable C++20 Core, C ABI, FFmpeg decode pipeline and execution tests
+are built and exercised on Ubuntu 24.04 in the `linux_headless` CI job.
+This uses system FFmpeg development packages (via pkg-config), not the
+Windows vcpkg binary cache. D3D11/WASAPI live in the separate Platform
+composition target; Linux currently has an explicitly **headless, silent**
+backend. **This is not Linux desktop video or audio playback support.**
+See [Linux headless CI and platform-boundary notes](docs/architecture/linux-headless-ci.md).
+
 ## Desktop player (Windows)
 
 Build the native runtime and managed solution, then launch the **Avalonia** product UI:

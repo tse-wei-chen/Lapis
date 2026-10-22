@@ -69,6 +69,16 @@ public:
     std::vector<SubtitleStreamInfo> subtitles;
 };
 
+namespace {
+
+[[nodiscard]] MediaOpenInfo open_failure(MediaOpenError error) noexcept {
+    MediaOpenInfo result{};
+    result.error = error;
+    return result;
+}
+
+} // namespace
+
 PlaybackMediaSession::PlaybackMediaSession()
     : impl_(std::make_unique<Impl>()) {}
 
@@ -96,18 +106,17 @@ MediaOpenInfo PlaybackMediaSession::open(const MediaLocator& locator) {
 
     auto source_result = impl_->sources.open(locator);
     if (!source_result.ok()) {
-        return {
+        return open_failure(
             source_result.error == SourceError::UnsupportedLocator
                 ? MediaOpenError::UnsupportedSource
-                : MediaOpenError::SourceOpenFailed
-        };
+                : MediaOpenError::SourceOpenFailed);
     }
 
     impl_->source = std::move(source_result.session);
     auto demuxer = std::make_unique<ffmpeg::FfmpegDemuxer>();
     if (!demuxer->open(*impl_->source->stream, impl_->source->demux_hint)) {
         impl_->reset();
-        return {MediaOpenError::DemuxFailed};
+        return open_failure(MediaOpenError::DemuxFailed);
     }
 
     GraphBuilder graph_builder;
@@ -137,7 +146,7 @@ MediaOpenInfo PlaybackMediaSession::open(const MediaLocator& locator) {
         auto decoder = std::make_unique<ffmpeg::FfmpegVideoDecoder>();
         if (!decoder->open(*video_stream)) {
             impl_->reset();
-            return {MediaOpenError::DecoderFailed};
+            return open_failure(MediaOpenError::DecoderFailed);
         }
 
         graph_builder
@@ -160,7 +169,7 @@ MediaOpenInfo PlaybackMediaSession::open(const MediaLocator& locator) {
         auto decoder = std::make_unique<ffmpeg::FfmpegAudioDecoder>();
         if (!decoder->open(*audio_stream)) {
             impl_->reset();
-            return {MediaOpenError::DecoderFailed};
+            return open_failure(MediaOpenError::DecoderFailed);
         }
 
         graph_builder
