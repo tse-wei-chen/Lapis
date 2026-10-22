@@ -96,12 +96,12 @@ int main() {
         VideoOutputSurfaceApplyStatus::Ready);
     CHECK(presenter->begin(PlaybackEpoch{1}) ==
         VideoPresenterBeginStatus::Ready);
-    CHECK(presenter->present(VideoFrame{}, VideoPresentContext{}) ==
+    CHECK(presenter->present(VideoFrame{}, VideoPresentContext{PlaybackEpoch{1}}) ==
         VideoPresentStatus::UnsupportedSurface);
 
     VideoFrame frame{};
     frame.surface = std::make_shared<TestBgraSurface>();
-    CHECK(presenter->present(frame, VideoPresentContext{}) ==
+    CHECK(presenter->present(frame, VideoPresentContext{PlaybackEpoch{1}}) ==
         VideoPresentStatus::Presented);
 
     // Read actual pixels back from the virtual X server. Merely returning
@@ -134,7 +134,7 @@ int main() {
     error = xcb_request_check(conn, configure);
     CHECK(error == nullptr);
     xcb_flush(conn);
-    CHECK(presenter->present(frame, VideoPresentContext{}) ==
+    CHECK(presenter->present(frame, VideoPresentContext{PlaybackEpoch{1}}) ==
         VideoPresentStatus::Presented);
     image = xcb_get_image_reply(conn,
         xcb_get_image(conn, XCB_IMAGE_FORMAT_Z_PIXMAP,
@@ -149,7 +149,7 @@ int main() {
         {VideoOutputSurfaceKind::None, 0}) ==
         VideoOutputSurfaceApplyStatus::Ready);
     presenter->end();
-    CHECK(presenter->present(frame, VideoPresentContext{}) ==
+    CHECK(presenter->present(frame, VideoPresentContext{PlaybackEpoch{1}}) ==
         VideoPresentStatus::Presented); // Detached; intentionally headless.
     presenter.reset();
     xcb_destroy_window(conn, id);
