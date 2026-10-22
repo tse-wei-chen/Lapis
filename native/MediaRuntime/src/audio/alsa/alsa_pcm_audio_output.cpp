@@ -5,10 +5,13 @@
 #endif
 
 #include "audio/audio_format_validation.hpp"
+#include "audio/alsa/alsa_playout_estimate.hpp"
+#include "core/monotonic_time.hpp"
 
 #include <alsa/asoundlib.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cerrno>
 #include <cstdint>
@@ -73,6 +76,9 @@ public:
                 : AudioOutputOpenStatus::DeviceLost;
         }
         paused_ = false;
+        has_accepted_media_ = false;
+        accepted_media_end_ = {};
+        clear_position_cache(true);
         return AudioOutputOpenStatus::Ready;
     }
 
@@ -86,7 +92,10 @@ public:
 
         const auto available = snd_pcm_avail_update(pcm_);
         if (available == -EAGAIN) return {AudioOutputStatus::Backpressure, 0};
-        if (available < 0) return {AudioOutputStatus::DeviceLost, 0};
+        if (available < 0) {
+            clear_position_cache(true);
+            return {AudioOutputStatus::DeviceLost, 0};
+        }
         if (available == 0) return {AudioOutputStatus::Backpressure, 0};
 
         const auto remaining = frame.buffer->sample_frame_count() - first;
@@ -100,8 +109,19 @@ public:
         const auto written = snd_pcm_writei(pcm_, slice->data, count);
         if (written == -EAGAIN || written == 0)
             return {AudioOutputStatus::Backpressure, 0};
-        if (written < 0)
+        if (written < 0) {
+            clear_position_cache(true);
             return {AudioOutputStatus::DeviceLost, 0};
+        }
+        // ALSA has taken ownership of this exact prefix. Keep the canonical
+        // media end rather than equating a device-sample counter with PTS.
+        accepted_media_end_ = accepted_media_end(
+            frame.timestamp,
+            static_cast<std::uint64_t>(first) +
+                static_cast<std::uint64_t>(written),
+            frame.buffer->format().sample_rate);
+        has_accepted_media_ = true;
+        refresh_position_cache();
         return {AudioOutputStatus::Accepted,
             static_cast<std::uint32_t>(written)};
     }
@@ -112,7 +132,11 @@ public:
             if (pcm_ == nullptr) return AudioOutputWaitStatus::DeviceLost;
             // Never block generation shutdown behind an ALSA device wait.
             const auto result = snd_pcm_wait(pcm_, 20);
-            if (result < 0) return AudioOutputWaitStatus::DeviceLost;
+            if (result < 0) {
+                clear_position_cache(true);
+                return AudioOutputWaitStatus::DeviceLost;
+            }
+            refresh_position_cache();
             if (result > 0) return AudioOutputWaitStatus::Ready;
         }
         return AudioOutputWaitStatus::Stopped;
@@ -124,7 +148,11 @@ public:
             if (pcm_ == nullptr) return AudioOutputWaitStatus::DeviceLost;
             snd_pcm_sframes_t pending{};
             const auto result = snd_pcm_delay(pcm_, &pending);
-            if (result < 0) return AudioOutputWaitStatus::DeviceLost;
+            if (result < 0) {
+                clear_position_cache(true);
+                return AudioOutputWaitStatus::DeviceLost;
+            }
+            refresh_position_cache_with_delay(pending);
             if (pending <= 0) return AudioOutputWaitStatus::Ready;
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
@@ -137,6 +165,8 @@ public:
         // Never pretend to pause if a PCM plugin cannot preserve its buffer.
         if (snd_pcm_pause(pcm_, 1) < 0) return AudioOutputControlStatus::Faulted;
         paused_ = true;
+        // No extrapolation is valid while the PCM device is paused.
+        clear_position_cache(false);
         return AudioOutputControlStatus::Ready;
     }
 
@@ -145,6 +175,7 @@ public:
         if (!paused_) return AudioOutputControlStatus::Ready;
         if (snd_pcm_pause(pcm_, 0) < 0) return AudioOutputControlStatus::DeviceLost;
         paused_ = false;
+        refresh_position_cache();
         return AudioOutputControlStatus::Ready;
     }
 
@@ -153,13 +184,24 @@ public:
         (void)snd_pcm_drop(pcm_);
         (void)snd_pcm_prepare(pcm_);
         paused_ = false;
+        has_accepted_media_ = false;
+        accepted_media_end_ = {};
+        clear_position_cache(true);
     }
 
     [[nodiscard]] AudioOutputPosition position() const noexcept {
-        // Do not pretend ALSA submission time is a hardware playout clock.
-        // A future timestamp-correlated ALSA/PipeWire clock adapter will
-        // explicitly publish HardwareClock when verified.
-        return {};
+        for (;;) {
+            const auto first = position_sequence_.load(std::memory_order_acquire);
+            if ((first & 1U) != 0) continue;
+            const AudioOutputPosition result{
+                MediaTime{presented_until_ns_.load(std::memory_order_relaxed)},
+                MonotonicTime{sampled_at_ns_.load(std::memory_order_relaxed)},
+                revision_.load(std::memory_order_relaxed),
+                position_source_.load(std::memory_order_relaxed)
+            };
+            if (first == position_sequence_.load(std::memory_order_acquire))
+                return result;
+        }
     }
 
     void close() noexcept {
@@ -169,12 +211,65 @@ public:
             pcm_ = nullptr;
         }
         paused_ = false;
+        has_accepted_media_ = false;
+        accepted_media_end_ = {};
+        clear_position_cache(true);
     }
 
 private:
+    // Only called on the audio render worker. The output clock reader runs
+    // concurrently, but sees exclusively the atomic published snapshot.
+    void refresh_position_cache() noexcept {
+        if (pcm_ == nullptr || !has_accepted_media_ || paused_) return;
+        snd_pcm_sframes_t pending{};
+        if (snd_pcm_delay(pcm_, &pending) < 0) {
+            clear_position_cache(false);
+            return;
+        }
+        refresh_position_cache_with_delay(pending);
+    }
+
+    void refresh_position_cache_with_delay(snd_pcm_sframes_t pending) noexcept {
+        if (!has_accepted_media_ || pending < 0 || paused_) {
+            clear_position_cache(false);
+            return;
+        }
+        // This is a QUEUE-DEPTH estimate at the time of the ALSA sample;
+        // snd_pcm_delay is not a verified hardware timestamp. Never mark it
+        // HardwareClock and thereby trigger false PlaybackClock rebases.
+        const auto estimate = estimate_playout_position(
+            accepted_media_end_, static_cast<std::uint64_t>(pending), 48'000);
+        position_sequence_.fetch_add(1, std::memory_order_acq_rel);
+        presented_until_ns_.store(estimate.nanoseconds, std::memory_order_relaxed);
+        sampled_at_ns_.store(SteadyClockSource::now().nanoseconds,
+            std::memory_order_relaxed);
+        position_source_.store(AudioOutputPositionSource::Estimated,
+            std::memory_order_relaxed);
+        position_sequence_.fetch_add(1, std::memory_order_release);
+    }
+
+    void clear_position_cache(bool advance_revision) noexcept {
+        position_sequence_.fetch_add(1, std::memory_order_acq_rel);
+        presented_until_ns_.store(0, std::memory_order_relaxed);
+        sampled_at_ns_.store(0, std::memory_order_relaxed);
+        position_source_.store(AudioOutputPositionSource::Unavailable,
+            std::memory_order_relaxed);
+        if (advance_revision)
+            revision_.fetch_add(1, std::memory_order_relaxed);
+        position_sequence_.fetch_add(1, std::memory_order_release);
+    }
+
     std::string device_;
     snd_pcm_t* pcm_{};
     bool paused_{};
+    bool has_accepted_media_{};
+    MediaTime accepted_media_end_{};
+    mutable std::atomic<std::uint64_t> position_sequence_{};
+    std::atomic<std::int64_t> presented_until_ns_{};
+    std::atomic<std::uint64_t> sampled_at_ns_{};
+    std::atomic<std::uint64_t> revision_{};
+    std::atomic<AudioOutputPositionSource> position_source_{
+        AudioOutputPositionSource::Unavailable};
 };
 
 AlsaPcmAudioOutput::AlsaPcmAudioOutput(std::string device_name)

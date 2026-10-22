@@ -110,7 +110,19 @@ The Linux CI includes `alsa_null_pcm_audio_output` which exercises the real
 libasound `null` PCM plugin, including format negotiation, actual accepted
 samples, drain, reset, close, reopen and cancellation. This proves API/adapter
 integration but **does not prove audible playback on a hardware endpoint**.
-Device clock observations deliberately remain `Unavailable` until a
-timestamp-correlated hardware or PipeWire clock can be validated. On Linux
-installing PipeWire's ALSA adapter may route the system `default` PCM to
-PipeWire, but this change is **not** the native PipeWire API integration.
+ALSA now publishes a thread-safe **Estimated** output position after real
+PCM prefixes have been accepted. The estimate combines the canonical media
+timestamp of the accepted prefix with `snd_pcm_delay` (queued sample frames)
+and the local steady-clock sampling instant. It is invalidated on close,
+open, reset, unrecoverable PCM errors and device pauses; revisions prevent
+cached samples from crossing generations. Saturating conversions protect
+malformed/overflowing timestamps, and Linux CTest verifies the estimated
+timeline, partial-prefix accounting and reset/close invalidation.
+
+This is **not a hardware timestamp**: the native clock-discipline service
+correctly ignores `Estimated` observations rather than rebasing the main
+playback clock from a potentially inaccurate ALSA plugin latency. True
+hardware-correlated ALSA/PipeWire timestamps, jitter validation and Steam
+Deck sound-card testing remain future milestones. On Linux, installing
+PipeWire's ALSA adapter may route the system `default` PCM through PipeWire,
+but that is **not** native PipeWire API integration.
