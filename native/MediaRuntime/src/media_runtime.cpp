@@ -131,6 +131,9 @@ std::optional<lapis::media::VideoOutputSurfaceDescriptor> to_core_output_surface
         case LAPIS_VIDEO_OUTPUT_SURFACE_WIN32_WINDOW:
             descriptor.kind = VideoOutputSurfaceKind::Win32Window;
             break;
+        case LAPIS_VIDEO_OUTPUT_SURFACE_X11_WINDOW:
+            descriptor.kind = VideoOutputSurfaceKind::X11Window;
+            break;
         default:
             return std::nullopt;
     }

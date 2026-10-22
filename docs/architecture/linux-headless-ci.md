@@ -15,19 +15,23 @@ speaker output, GPU interop, or Steam Deck compatibility.
 - `Lapis.MediaRuntime.Platform`: platform composition root, implemented in
   `src/platform/playback_execution_factory.cpp`. It chooses the existing
   D3D11 presenter + WASAPI sink **on Windows**.
-- Non-Windows builds choose an explicitly **headless** presenter and no audio
-  device sink. This is useful for testing native logic and the C ABI, but
-  **does not display video or play sound**.
+- Linux builds now choose an XCB **X11/XWayland CPU fallback presenter**.
+  Without an explicitly bound host-owned X11 Window XID, it remains headless;
+  a real X11 window receives BGRA video pixels. Linux still has **no audio
+  device sink** and is not an end-to-end desktop player. Other non-Windows
+  platforms currently remain headless.
 - `Lapis.MediaRuntime`: same public C ABI entry points on both builds;
   `media_runtime.cpp` delegates platform selection to the factory.
 - The Windows Avalonia client still targets `net10.0-windows`, hosts an HWND,
   and uses XInput. This PR does not claim a Linux desktop app.
 
-The separate Platform target is the future insertion point for Vulkan
-presentation, PipeWire/ALSA audio output, and a Linux window-surface descriptor.
-The existing Win32-only C ABI output surface is not misrepresented as X11 or
-Wayland; extending it is an explicit follow-up change. Since Lapis has not
-shipped, that change can be breaking without compatibility wrappers.
+The Platform target now accepts an explicit `X11Window` surface descriptor
+(a 32-bit XID carried in the existing pointer-width C ABI handle). The XCB
+presenter owns a separate render-thread connection and **never owns the host
+window**; detach releases the borrowed XID before acknowledging the call.
+It uses the existing FFmpeg BGRA CPU fallback and reads back actual pixels
+under Xvfb in CI. This is **not Vulkan or native Wayland**. Those require
+separate presenters, and PipeWire/ALSA audio remains outstanding.
 
 ## Reproduce the Ubuntu CI job
 
@@ -64,14 +68,18 @@ runs its separate Native D3D11/WASAPI and actual desktop UI E2E acceptance,
 alongside Managed tests. Linux deliberately does not execute Win32-specific
 D3D11/HWND/WASAPI tests.
 
-The `linux_headless_platform_boundary` test asserts that an unattached
-headless presenter is usable and that a Win32 surface is **rejected**, rather
-than presenting an empty Linux viewport as a successful GPU output.
+The `linux_headless_platform_boundary` test asserts that unbound Linux
+sessions remain headless and Win32 HWNDs are rejected. The new
+`x11_real_window_pixel_readback` test uses `xvfb-run` to create an actual
+server-side X11 window, submit BGRA frames, read pixel colors back from
+the X server, resize with aspect-preserving black bars and detach. A no-op
+headless presenter cannot pass that test.
 
 ## Still required for Linux / Steam Deck playback
 
-1. Introduce a genuine Linux video surface and Vulkan presenter, with X11
-   baseline and Wayland / Gamescope separately verified.
+1. Replace/augment the real X11 CPU fallback with a **Vulkan presenter**,
+   then validate native Wayland / Gamescope separately. A Vulkan GPU path is
+   not yet implemented.
 2. Implement PipeWire audio output and ALSA fallback behind the audio provider.
 3. Decouple the Avalonia desktop host from HWND, Windows overlays and XInput.
 4. Validate GPU device recovery, controller focus, suspend/resume, audio clocks,

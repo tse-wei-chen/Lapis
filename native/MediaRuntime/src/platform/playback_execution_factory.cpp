@@ -9,6 +9,8 @@
 #include "audio/wasapi/wasapi_shared_audio_output_provider.hpp"
 #include "process/ffmpeg/ffmpeg_audio_frame_converter.hpp"
 #include "video/d3d11/d3d11_video_presenter.hpp"
+#elif defined(__linux__)
+#include "video/x11/xcb_software_video_presenter.hpp"
 #endif
 
 #include <memory>
@@ -17,8 +19,8 @@
 namespace lapis::media::platform {
 namespace {
 
-#if !defined(_WIN32)
-// Explicit non-rendering baseline for Linux and macOS native CI.
+#if !defined(_WIN32) && !defined(__linux__)
+// Explicit non-rendering fallback on platforms without an output adapter.
 // Never advertise this as a desktop video output implementation.
 class HeadlessVideoPresenter final : public IVideoPresenter {
 public:
@@ -40,6 +42,9 @@ public:
 std::unique_ptr<IVideoPresenter> create_video_presenter() {
 #if defined(_WIN32)
     return std::make_unique<d3d11::D3D11VideoPresenter>();
+#elif defined(__linux__)
+    // X11/XWayland CPU fallback. No DISPLAY or unbound = headless.
+    return std::make_unique<x11::XcbSoftwareVideoPresenter>();
 #else
     return std::make_unique<HeadlessVideoPresenter>();
 #endif
@@ -66,7 +71,8 @@ std::unique_ptr<PlaybackExecution> create_execution(
         std::move(audio_provider), std::move(audio_processor_factory),
         PlaybackExecutionConfig{}, std::move(journal));
 #else
-    // There is no real Linux/macOS audio sink yet; the platform is headless.
+    // Linux X11 can present video when bound, but has no audio sink yet;
+    // macOS remains headless.
     return std::make_unique<PlaybackExecution>(
         media, std::move(video_processor), std::move(presenter),
         PlaybackExecutionConfig{}, std::move(journal));

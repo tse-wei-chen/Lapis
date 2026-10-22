@@ -6,7 +6,8 @@ namespace lapis::media {
 
 enum class VideoOutputSurfaceKind : std::uint8_t {
     None,
-    Win32Window
+    Win32Window,
+    X11Window
 };
 
 struct VideoOutputSurfaceDescriptor final {
@@ -25,6 +26,10 @@ struct VideoOutputSurfaceDescriptor final {
             return surface.native_handle == 0;
         case VideoOutputSurfaceKind::Win32Window:
             return surface.native_handle != 0;
+        case VideoOutputSurfaceKind::X11Window:
+            // X11 Window is a 32-bit server-side XID, not a pointer.
+            return surface.native_handle != 0 &&
+                surface.native_handle <= UINT32_MAX;
     }
 
     return false;

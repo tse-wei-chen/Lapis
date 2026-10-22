@@ -9,7 +9,8 @@ int main() {
     auto presenter = platform::create_video_presenter();
     if (!presenter) return 1;
 
-    // Headless is never a replacement for a real Vulkan/X11/Wayland backend.
+    // Unbound render remains headless; Win32 must be rejected on Linux.
+    // The X11 output path is exercised in a separate Xvfb pixel test.
     if (presenter->set_output_surface({VideoOutputSurfaceKind::None, 0})
         != VideoOutputSurfaceApplyStatus::Ready) return 2;
     if (presenter->set_output_surface({VideoOutputSurfaceKind::Win32Window, 1})
