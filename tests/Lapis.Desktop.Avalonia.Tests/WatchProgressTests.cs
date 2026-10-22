@@ -96,11 +96,11 @@ public sealed class WatchProgressTests
                 UpdatedAtUtc = now.AddSeconds(10)
             };
 
-            Assert.True(await store.TrySaveAsync(first));
-            Assert.True(await store.TrySaveAsync(finished));
+            Assert.True(await store.SaveAsync(first));
+            Assert.True(await store.SaveAsync(finished));
             var persisted = await File.ReadAllBytesAsync(path);
-            Assert.False(await store.TrySaveAsync(delayed));
-            Assert.False(await store.TrySaveAsync(finished)); // No same-timestamp overwrite.
+            Assert.False(await store.SaveAsync(delayed));
+            Assert.False(await store.SaveAsync(finished)); // No same-timestamp overwrite.
             Assert.Equal(persisted, await File.ReadAllBytesAsync(path));
 
             var reloaded = new JsonWatchProgressStore(path);
@@ -113,7 +113,7 @@ public sealed class WatchProgressTests
                 PositionSeconds = 72,
                 UpdatedAtUtc = now.AddMinutes(1)
             };
-            Assert.True(await reloaded.TrySaveAsync(replay));
+            Assert.True(await reloaded.SaveAsync(replay));
             Assert.Equal(replay, Assert.Single(await store.LoadAsync()));
             Assert.Equal(replay, Assert.Single(await store.LoadHistoryAsync()));
         }
@@ -153,27 +153,24 @@ public sealed class WatchProgressTests
     }
 
     [Fact]
-    public async Task LegacyVersionOneSidecarLoadsAndUpgradesWithoutDiscardingBookmarks()
+    public async Task ObsoletePreReleaseJournalVersionIsRejectedWithoutMutation()
     {
         var folder = Path.Combine(Path.GetTempPath(),
-            "lapis-history-" + Guid.NewGuid().ToString("N"));
+            "lapis-obsolete-watch-" + Guid.NewGuid().ToString("N"));
         var path = Path.Combine(folder, "progress.json");
         Directory.CreateDirectory(folder);
         try
         {
-            var first = new WatchProgress(Guid.NewGuid(), 80, 240, DateTimeOffset.UtcNow);
-            var original = System.Text.Json.JsonSerializer.Serialize(
-                new { version = 1, items = new[] { first } });
-            await File.WriteAllTextAsync(path, original);
+            var existing = new WatchProgress(Guid.NewGuid(), 80, 240, DateTimeOffset.UtcNow);
+            var obsolete = System.Text.Json.JsonSerializer.Serialize(
+                new { version = 1, items = new[] { existing } });
+            await File.WriteAllTextAsync(path, obsolete);
             var store = new JsonWatchProgressStore(path);
-            Assert.Equal(first, Assert.Single(await store.LoadAsync()));
-            Assert.Equal(first, Assert.Single(await store.LoadHistoryAsync()));
-
-            var second = new WatchProgress(Guid.NewGuid(), 75, 220, DateTimeOffset.UtcNow);
-            await store.SaveAsync(second);
-            Assert.Equal(2, (await store.LoadAsync()).Count);
-            Assert.Equal(2, (await store.LoadHistoryAsync()).Count);
-            Assert.Contains("\"version\": 2", await File.ReadAllTextAsync(path));
+            await Assert.ThrowsAsync<InvalidDataException>(() => store.LoadAsync());
+            await Assert.ThrowsAsync<InvalidDataException>(() => store.LoadHistoryAsync());
+            await Assert.ThrowsAsync<InvalidDataException>(() => store.SaveAsync(
+                existing with { UpdatedAtUtc = existing.UpdatedAtUtc.AddMinutes(1) }));
+            Assert.Equal(obsolete, await File.ReadAllTextAsync(path));
         }
         finally
         {

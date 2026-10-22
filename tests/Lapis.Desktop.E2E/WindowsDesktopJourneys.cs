@@ -297,14 +297,14 @@ internal sealed class DesktopSession : IDisposable
     public async Task SeedFinishedWatchAsync()
     {
         var item = Assert.Single(await new JsonMediaLibrary(_catalogPath).ListAsync());
-        await new JsonWatchProgressStore(_catalogPath + ".watch.v1.json").SaveAsync(
+        await new JsonWatchProgressStore(_catalogPath + ".watch.v2.json").SaveAsync(
             new WatchProgress(item.Id, 239, 240, DateTimeOffset.UtcNow));
     }
 
     public async Task SeedWatchBookmarkAsync()
     {
         var item = Assert.Single(await new JsonMediaLibrary(_catalogPath).ListAsync());
-        await new JsonWatchProgressStore(_catalogPath + ".watch.v1.json").SaveAsync(
+        await new JsonWatchProgressStore(_catalogPath + ".watch.v2.json").SaveAsync(
             new WatchProgress(item.Id, 70, 240, DateTimeOffset.UtcNow));
     }
 
@@ -366,7 +366,7 @@ internal sealed class DesktopSession : IDisposable
         {
             try
             {
-                var entries = new JsonWatchProgressStore(_catalogPath + ".watch.v1.json")
+                var entries = new JsonWatchProgressStore(_catalogPath + ".watch.v2.json")
                     .LoadHistoryAsync().GetAwaiter().GetResult();
                 return entries.Count == count ? new object() : null;
             }

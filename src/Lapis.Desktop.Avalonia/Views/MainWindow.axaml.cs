@@ -125,7 +125,7 @@ public sealed partial class MainWindow : Window
             libraryFile = e2eCatalog;
         _library = new LibraryViewModel(new JsonMediaLibrary(libraryFile));
         // Same parent path means E2E fixtures get a private bookmark journal.
-        _watchProgressStore = new JsonWatchProgressStore(libraryFile + ".watch.v1.json");
+        _watchProgressStore = new JsonWatchProgressStore(libraryFile + ".watch.v2.json");
         _favoriteStore = new JsonFavoriteStore(libraryFile + ".favorites.v1.json");
         _player = new PlayerViewModel(
             new NativePlayerPlaybackService(() => _videoSurface.OutputHandle));
@@ -1041,11 +1041,8 @@ public sealed partial class MainWindow : Window
         {
             // The timer and the final close save can overlap. Apply only
             // observations accepted by the journal's monotonic time guard.
-            if (await _watchProgressStore.TrySaveAsync(progress) && !_closeStarted)
-            {
-                _library.UpdateWatchProgress(progress);
-                _library.UpdateWatchHistory(progress);
-            }
+            if (await _watchProgressStore.SaveAsync(progress) && !_closeStarted)
+                _library.ApplyWatchSnapshot(progress);
         }
         catch (Exception exception)
         {

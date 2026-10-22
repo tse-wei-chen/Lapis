@@ -112,7 +112,7 @@ public sealed class MediaLibraryTests
         var library = new JsonMediaLibrary(catalogPath);
         var original = await library.ImportAsync(new MediaLocator(MediaLocatorKind.File, oldPath));
         var favorite = new JsonFavoriteStore(catalogPath + ".favorites.v1.json");
-        var history = new JsonWatchProgressStore(catalogPath + ".watch.v1.json");
+        var history = new JsonWatchProgressStore(catalogPath + ".watch.v2.json");
         await favorite.SetAsync(original.Id, true);
         var watch = new WatchProgress(original.Id, 75, 240, DateTimeOffset.UtcNow);
         await history.SaveAsync(watch);

@@ -171,13 +171,67 @@ public sealed class LibraryViewModelTests
             view.ShowAll();
             Assert.True(view.HasContinueWatching);
 
-            view.UpdateWatchProgress(progress with { PositionSeconds = 239 });
+            view.ApplyWatchSnapshot(progress with
+            {
+                PositionSeconds = 239,
+                UpdatedAtUtc = progress.UpdatedAtUtc.AddSeconds(1)
+            });
             Assert.Empty(view.ContinueWatchingItems);
             Assert.False(card.CanResume);
         }
         finally
         {
             File.Delete(file);
+        }
+    }
+
+    [Fact]
+    public async Task OutOfOrderUiContinuationsCannotRewindHistoryOrResume()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "lapis-ui-order-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var file = Path.Combine(root, "film.mp4");
+            File.WriteAllText(file, "fixture");
+            using var view = new LibraryViewModel(new JsonMediaLibrary(
+                Path.Combine(root, "catalog.json")));
+            await view.LoadAsync();
+            await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, file));
+            var card = Assert.Single(view.VisibleItems);
+            var initial = new WatchProgress(card.Item.Id, 80, 240, DateTimeOffset.UtcNow);
+            var complete = initial with
+            {
+                PositionSeconds = 239,
+                UpdatedAtUtc = initial.UpdatedAtUtc.AddSeconds(10)
+            };
+
+            // A newer completion is accepted first.
+            view.ApplyWatchSnapshot(complete);
+            Assert.False(card.CanResume);
+            Assert.True(card.IsWatched);
+
+            // An old continuation running *after* it must not resurrect Resume.
+            view.ApplyWatchSnapshot(initial);
+            Assert.False(card.CanResume);
+            Assert.True(card.IsWatched);
+            Assert.Same(card, Assert.Single(view.RecentlyWatchedItems));
+
+            var fresh = initial with
+            {
+                PositionSeconds = 95,
+                UpdatedAtUtc = initial.UpdatedAtUtc.AddMinutes(1)
+            };
+            view.ApplyWatchSnapshot(fresh);
+            Assert.True(card.CanResume);
+            Assert.False(card.IsWatched);
+            view.ApplyWatchSnapshot(complete);
+            Assert.True(card.CanResume);
+            Assert.Equal(95, card.ResumePositionSeconds);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
         }
     }
 
