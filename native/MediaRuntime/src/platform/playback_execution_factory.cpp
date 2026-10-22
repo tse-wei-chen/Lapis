@@ -10,6 +10,8 @@
 #include "process/ffmpeg/ffmpeg_audio_frame_converter.hpp"
 #include "video/d3d11/d3d11_video_presenter.hpp"
 #elif defined(__linux__)
+#include "audio/alsa/alsa_pcm_audio_output.hpp"
+#include "process/ffmpeg/ffmpeg_audio_frame_converter.hpp"
 #include "video/x11/xcb_software_video_presenter.hpp"
 #endif
 
@@ -70,9 +72,22 @@ std::unique_ptr<PlaybackExecution> create_execution(
         media, std::move(video_processor), std::move(presenter),
         std::move(audio_provider), std::move(audio_processor_factory),
         PlaybackExecutionConfig{}, std::move(journal));
+#elif defined(__linux__)
+    // Linux ALSA PCM can route through pipewire-alsa when installed. Format
+    // conversion remains in the portable FFmpeg processing adapter.
+    auto audio_provider = std::make_unique<
+        alsa::AlsaPcmAudioOutputProvider>();
+    AudioFrameProcessorFactory audio_processor_factory =
+        [](const AudioFormat& target_format)
+            -> std::unique_ptr<IAudioFrameProcessor> {
+            return std::make_unique<
+                ffmpeg::FfmpegAudioFrameConverter>(target_format);
+        };
+    return std::make_unique<PlaybackExecution>(
+        media, std::move(video_processor), std::move(presenter),
+        std::move(audio_provider), std::move(audio_processor_factory),
+        PlaybackExecutionConfig{}, std::move(journal));
 #else
-    // Linux X11 can present video when bound, but has no audio sink yet;
-    // macOS remains headless.
     return std::make_unique<PlaybackExecution>(
         media, std::move(video_processor), std::move(presenter),
         PlaybackExecutionConfig{}, std::move(journal));

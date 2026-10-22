@@ -101,7 +101,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             pkg-config libavcodec-dev libavformat-dev libavutil-dev \
-            libswresample-dev libswscale-dev libxcb1-dev xvfb xauth
+            libswresample-dev libswscale-dev libxcb1-dev libasound2-dev xvfb xauth
       - name: Configure portable Native runtime without Win32 adapters
         run: |
           cmake -S native/MediaRuntime -B build/linux-headless \

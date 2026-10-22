@@ -97,12 +97,15 @@ if(WIN32)
         src/video/d3d11/d3d11_video_presenter.cpp
     )
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # X11/XWayland CPU fallback; independent of Vulkan/Wayland and the Core.
+    # Platform-only dependencies: portable Core must never link XCB or ALSA.
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(XCB REQUIRED IMPORTED_TARGET xcb)
+    pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa)
     target_sources(Lapis.MediaRuntime.Platform PRIVATE
-        src/video/x11/xcb_software_video_presenter.cpp)
-    target_link_libraries(Lapis.MediaRuntime.Platform PRIVATE PkgConfig::XCB)
+        src/video/x11/xcb_software_video_presenter.cpp
+        src/audio/alsa/alsa_pcm_audio_output.cpp)
+    target_link_libraries(Lapis.MediaRuntime.Platform PRIVATE
+        PkgConfig::XCB PkgConfig::ALSA)
 endif()
 target_compile_features(Lapis.MediaRuntime.Platform PUBLIC cxx_std_20)
 set_target_properties(Lapis.MediaRuntime.Platform PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -747,6 +750,20 @@ if(BUILD_TESTING)
             lapis_enable_strict_warnings(Lapis.MediaRuntime.X11PresenterTests)
             add_test(NAME x11_real_window_pixel_readback
                 COMMAND Lapis.MediaRuntime.X11PresenterTests)
+
+            # ALSA 'null' is a real plugin PCM device, not an IAudioOutput
+            # mock. No physical sound server is required in GitHub CI.
+            add_executable(Lapis.MediaRuntime.AlsaPcmOutputTests
+                tests/alsa_pcm_output.cpp)
+            target_compile_features(Lapis.MediaRuntime.AlsaPcmOutputTests
+                PRIVATE cxx_std_20)
+            target_link_libraries(Lapis.MediaRuntime.AlsaPcmOutputTests
+                PRIVATE Lapis.MediaRuntime.Platform)
+            lapis_enable_strict_warnings(Lapis.MediaRuntime.AlsaPcmOutputTests)
+            add_test(NAME alsa_null_pcm_audio_output
+                COMMAND Lapis.MediaRuntime.AlsaPcmOutputTests)
+            set_tests_properties(alsa_null_pcm_audio_output PROPERTIES
+                ENVIRONMENT "LAPIS_ALSA_PCM=null")
         endif()
     endif()
 endif()
