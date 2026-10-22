@@ -204,6 +204,25 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
             Assert.True(host.Snapshot.Epoch.Value > initialEpoch.Value);
             Assert.Equal(TransportState.Playing, host.Snapshot.Transport);
 
+            foreach (var position in new[]
+                     {
+                         TimeSpan.FromMilliseconds(750),
+                         TimeSpan.FromSeconds(2)
+                     })
+            {
+                await host.SeekAsync(position, cancel.Token)
+                    .WaitAsync(TimeSpan.FromSeconds(5), cancel.Token);
+                Assert.Equal(TransportState.Playing, host.Snapshot.Transport);
+            }
+
+            await host.SetTemporaryFastForwardAsync(
+                    true, host.Snapshot, cancel.Token)
+                .WaitAsync(TimeSpan.FromSeconds(5), cancel.Token);
+            await host.SetTemporaryFastForwardAsync(
+                    false, host.Snapshot, cancel.Token)
+                .WaitAsync(TimeSpan.FromSeconds(5), cancel.Token);
+            Assert.Equal(TransportState.Playing, host.Snapshot.Transport);
+
             await WaitUntilAsync(() => host.Snapshot.Transport is
                 TransportState.Ended or TransportState.Faulted,
                 TimeSpan.FromSeconds(15), cancel.Token);
