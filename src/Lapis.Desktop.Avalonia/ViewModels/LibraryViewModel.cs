@@ -54,14 +54,6 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         UpdateWatchShelf();
     }
 
-    public void UpdateWatchProgress(WatchProgress progress)
-    {
-        ArgumentNullException.ThrowIfNull(progress);
-        if (progress.IsResumable) _watchProgress[progress.ItemId] = progress;
-        else _watchProgress.Remove(progress.ItemId);
-        UpdateWatchShelf();
-    }
-
     public void LoadWatchHistory(IEnumerable<WatchProgress> snapshots)
     {
         ArgumentNullException.ThrowIfNull(snapshots);
@@ -71,11 +63,22 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         ApplyFilter();
     }
 
-    public void UpdateWatchHistory(WatchProgress snapshot)
+    /// <summary>
+    /// Apply a persisted snapshot as one logical update. Async disk writes may
+    /// finish in a different order from their UI continuations, so a late,
+    /// older callback must not rewind either the resume shelf or history.
+    /// </summary>
+    public void ApplyWatchSnapshot(WatchProgress snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         if (!snapshot.IsHistoryEligible) return;
+        if (_watchHistory.TryGetValue(snapshot.ItemId, out var previous) &&
+            previous.UpdatedAtUtc >= snapshot.UpdatedAtUtc)
+            return;
+
         _watchHistory[snapshot.ItemId] = snapshot;
+        if (snapshot.IsResumable) _watchProgress[snapshot.ItemId] = snapshot;
+        else _watchProgress.Remove(snapshot.ItemId);
         if (_category == LibraryCategory.History) ApplyFilter();
         else UpdateWatchShelf();
     }

@@ -21,7 +21,11 @@ public sealed class WatchProgressTests
             // Reload from disk, not the in-memory journal.
             var reloaded = new JsonWatchProgressStore(path);
             Assert.Equal(saved, Assert.Single(await reloaded.LoadAsync()));
-            await reloaded.SaveAsync(saved with { PositionSeconds = 239 });
+            await reloaded.SaveAsync(saved with
+            {
+                PositionSeconds = 239,
+                UpdatedAtUtc = saved.UpdatedAtUtc.AddSeconds(1)
+            });
             Assert.Empty(await new JsonWatchProgressStore(path).LoadAsync());
 
             // Ineligible short clips and unstarted sessions stay out of the shelf.
@@ -70,27 +74,103 @@ public sealed class WatchProgressTests
     }
 
     [Fact]
-    public async Task LegacyVersionOneSidecarLoadsAndUpgradesWithoutDiscardingBookmarks()
+    public async Task LateSaveCannotResurrectResumeAfterNewerCompletion()
     {
         var folder = Path.Combine(Path.GetTempPath(),
-            "lapis-history-" + Guid.NewGuid().ToString("N"));
+            "lapis-stale-watch-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(folder, "progress.json");
+        try
+        {
+            var store = new JsonWatchProgressStore(path);
+            var id = Guid.NewGuid();
+            var now = DateTimeOffset.UtcNow;
+            var first = new WatchProgress(id, 82, 240, now);
+            var finished = first with
+            {
+                PositionSeconds = 239,
+                UpdatedAtUtc = now.AddSeconds(20)
+            };
+            var delayed = first with
+            {
+                PositionSeconds = 109,
+                UpdatedAtUtc = now.AddSeconds(10)
+            };
+
+            Assert.True(await store.SaveAsync(first));
+            Assert.True(await store.SaveAsync(finished));
+            var persisted = await File.ReadAllBytesAsync(path);
+            Assert.False(await store.SaveAsync(delayed));
+            Assert.False(await store.SaveAsync(finished)); // No same-timestamp overwrite.
+            Assert.Equal(persisted, await File.ReadAllBytesAsync(path));
+
+            var reloaded = new JsonWatchProgressStore(path);
+            Assert.Empty(await reloaded.LoadAsync());
+            Assert.Equal(finished, Assert.Single(await reloaded.LoadHistoryAsync()));
+
+            // A genuinely later viewing session can create a new resume entry.
+            var replay = first with
+            {
+                PositionSeconds = 72,
+                UpdatedAtUtc = now.AddMinutes(1)
+            };
+            Assert.True(await reloaded.SaveAsync(replay));
+            Assert.Equal(replay, Assert.Single(await store.LoadAsync()));
+            Assert.Equal(replay, Assert.Single(await store.LoadHistoryAsync()));
+        }
+        finally
+        {
+            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ConcurrentOutOfOrderMovieSnapshotsCannotMoveHistoryBackwards()
+    {
+        var folder = Path.Combine(Path.GetTempPath(),
+            "lapis-concurrent-watch-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(folder, "progress.json");
+        try
+        {
+            var store = new JsonWatchProgressStore(path);
+            var id = Guid.NewGuid();
+            var now = DateTimeOffset.UtcNow;
+            var samples = Enumerable.Range(0, 18)
+                .Select(i => new WatchProgress(id, 30 + i * 10, 240,
+                    now.AddSeconds(i)))
+                .ToArray();
+
+            // Gate serializes write transactions; an older request winning the
+            // race must not undo a newer one that committed already.
+            await Task.WhenAll(samples.Reverse().Select(item => store.SaveAsync(item)));
+            var latest = Assert.Single(await store.LoadHistoryAsync());
+            Assert.Equal(samples[^1], latest);
+            Assert.Equal(samples[^1], Assert.Single(await store.LoadAsync()));
+        }
+        finally
+        {
+            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ObsoletePreReleaseJournalVersionIsRejectedWithoutMutation()
+    {
+        var folder = Path.Combine(Path.GetTempPath(),
+            "lapis-obsolete-watch-" + Guid.NewGuid().ToString("N"));
         var path = Path.Combine(folder, "progress.json");
         Directory.CreateDirectory(folder);
         try
         {
-            var first = new WatchProgress(Guid.NewGuid(), 80, 240, DateTimeOffset.UtcNow);
-            var original = System.Text.Json.JsonSerializer.Serialize(
-                new { version = 1, items = new[] { first } });
-            await File.WriteAllTextAsync(path, original);
+            var existing = new WatchProgress(Guid.NewGuid(), 80, 240, DateTimeOffset.UtcNow);
+            var obsolete = System.Text.Json.JsonSerializer.Serialize(
+                new { version = 1, items = new[] { existing } });
+            await File.WriteAllTextAsync(path, obsolete);
             var store = new JsonWatchProgressStore(path);
-            Assert.Equal(first, Assert.Single(await store.LoadAsync()));
-            Assert.Equal(first, Assert.Single(await store.LoadHistoryAsync()));
-
-            var second = new WatchProgress(Guid.NewGuid(), 75, 220, DateTimeOffset.UtcNow);
-            await store.SaveAsync(second);
-            Assert.Equal(2, (await store.LoadAsync()).Count);
-            Assert.Equal(2, (await store.LoadHistoryAsync()).Count);
-            Assert.Contains("\"version\": 2", await File.ReadAllTextAsync(path));
+            await Assert.ThrowsAsync<InvalidDataException>(() => store.LoadAsync());
+            await Assert.ThrowsAsync<InvalidDataException>(() => store.LoadHistoryAsync());
+            await Assert.ThrowsAsync<InvalidDataException>(() => store.SaveAsync(
+                existing with { UpdatedAtUtc = existing.UpdatedAtUtc.AddMinutes(1) }));
+            Assert.Equal(obsolete, await File.ReadAllTextAsync(path));
         }
         finally
         {

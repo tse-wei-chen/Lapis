@@ -27,8 +27,8 @@ public sealed record WatchProgress(
 }
 
 /// <summary>
-/// Local single-process journal. A v1 sidecar with bookmarks only is read
-/// without data loss, then upgraded to v2 on the next successful write.
+/// Local single-process v2 journal. Pre-release legacy formats are not
+/// supported. Unknown versions fail closed rather than being overwritten.
 /// Completed movies stay in History while disappearing from resumable Items.
 /// The catalog and Native actor never depend on this format.
 /// </summary>
@@ -59,16 +59,29 @@ public sealed class JsonWatchProgressStore(string path)
         finally { _gate.Release(); }
     }
 
-    public async Task SaveAsync(WatchProgress progress,
+    /// <summary>
+    /// Write an eligible observation only if it is newer than the stored
+    /// observation for the same movie. A delayed timer callback must not
+    /// resurrect an earlier resume position after completion or rewind
+    /// a newer seek. The result tells UI callers if the snapshot was
+    /// actually persisted, preventing stale in-memory shelf updates.
+    /// </summary>
+    public async Task<bool> SaveAsync(WatchProgress progress,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(progress);
         // A glance or failed playback must not destroy a previous bookmark.
-        if (!progress.IsHistoryEligible) return;
+        if (!progress.IsHistoryEligible) return false;
         await _gate.WaitAsync(cancellationToken);
         try
         {
             var state = await ReadAsync(cancellationToken);
+            // Look at history, not bookmarks: a completed movie deliberately
+            // has no resume bookmark, but still has a latest timestamp.
+            var existing = state.History.Find(item => item.ItemId == progress.ItemId);
+            if (existing is not null && existing.UpdatedAtUtc >= progress.UpdatedAtUtc)
+                return false;
+
             state.Bookmarks.RemoveAll(item => item.ItemId == progress.ItemId);
             if (progress.IsResumable)
                 state.Bookmarks.Add(progress);
@@ -77,6 +90,7 @@ public sealed class JsonWatchProgressStore(string path)
             state.History.Add(progress);
             TrimHistory(state.History);
             await WriteAsync(state, cancellationToken);
+            return true;
         }
         finally { _gate.Release(); }
     }
@@ -108,14 +122,12 @@ public sealed class JsonWatchProgressStore(string path)
             await using var stream = new FileStream(_path, FileMode.Open, FileAccess.Read,
                 FileShare.Read, 4096, useAsync: true);
             var payload = await JsonSerializer.DeserializeAsync<Envelope>(stream, Options, ct);
-            if (payload is null || payload.Version is not (1 or 2) ||
-                payload.Items is null || (payload.Version == 2 && payload.History is null))
+            if (payload is null || payload.Version != Version ||
+                payload.Items is null || payload.History is null)
                 throw new InvalidDataException("觀影紀錄資料版本不相容；沒有覆寫原始資料。");
 
             var bookmarks = Normalize(payload.Items.Where(item => item?.IsResumable == true));
-            var history = Normalize((payload.Version == 1
-                    ? payload.Items
-                    : payload.History!)
+            var history = Normalize(payload.History
                 .Where(item => item?.IsHistoryEligible == true));
             TrimHistory(history);
             return new State(bookmarks, history);
@@ -165,5 +177,5 @@ public sealed class JsonWatchProgressStore(string path)
 
     private sealed record State(List<WatchProgress> Bookmarks, List<WatchProgress> History);
     private sealed record Envelope(int Version, List<WatchProgress> Items,
-        List<WatchProgress>? History = null);
+        List<WatchProgress> History);
 }

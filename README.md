@@ -133,6 +133,22 @@ uses the same cleanup logic. If a sidecar cleanup fails after catalog removal,
 Lapis reports the partial failure instead of pretending that all private
 metadata was erased.
 
+## Durable playback snapshots
+
+Lapis saves each eligible watch snapshot to the atomic **v2** local journal
+(`catalog.v1.json.watch.v2.json`). Playback timer callbacks and final close
+saves can race: the journal compares `UpdatedAtUtc` while holding its write
+gate, rejecting observations older than or equal to the latest persisted one.
+The single `SaveAsync` API reports whether a snapshot was accepted. Only
+accepted saves are applied to the in-memory Continue Watching and History
+shelves, where the same timestamp guard prevents late UI continuations from
+rewinding state. A genuinely later viewing session can resume normally.
+
+Lapis has **not released yet**: the unreleased v1 watch format is intentionally
+unsupported, with no migration or API compatibility shim. Incompatible files
+fail closed without overwriting them. Original video and Blu-ray media, and
+the Native playback ABI, are unchanged.
+
 ## Repository layout
 
 ```text
