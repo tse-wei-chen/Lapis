@@ -17,9 +17,10 @@ speaker output, GPU interop, or Steam Deck compatibility.
   D3D11 presenter + WASAPI sink **on Windows**.
 - Linux builds now choose an XCB **X11/XWayland CPU fallback presenter**.
   Without an explicitly bound host-owned X11 Window XID, it remains headless;
-  a real X11 window receives BGRA video pixels. Linux still has **no audio
-  device sink** and is not an end-to-end desktop player. Other non-Windows
-  platforms currently remain headless.
+  a real X11 window receives BGRA video pixels. Linux now also has an **ALSA
+  PCM output adapter** that can use PipeWire's ALSA compatibility plugin when
+  installed. Full desktop hosting/Steam Deck acceptance remains outstanding.
+  Other non-Windows platforms currently remain headless.
 - `Lapis.MediaRuntime`: same public C ABI entry points on both builds;
   `media_runtime.cpp` delegates platform selection to the factory.
 - The Windows Avalonia client still targets `net10.0-windows`, hosts an HWND,
@@ -31,7 +32,9 @@ presenter owns a separate render-thread connection and **never owns the host
 window**; detach releases the borrowed XID before acknowledging the call.
 It uses the existing FFmpeg BGRA CPU fallback and reads back actual pixels
 under Xvfb in CI. This is **not Vulkan or native Wayland**. Those require
-separate presenters, and PipeWire/ALSA audio remains outstanding.
+separate presenters. A native PipeWire sink and a hardware-correlated playback clock
+remain outstanding; ALSA playback is available using an explicit F32 48kHz
+stereo target with no invented device timing.
 
 ## Reproduce the Ubuntu CI job
 
@@ -43,14 +46,14 @@ sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
     build-essential cmake pkg-config \
     libavcodec-dev libavformat-dev libavutil-dev \
-    libswresample-dev libswscale-dev
+    libswresample-dev libswscale-dev libxcb1-dev libasound2-dev xvfb xauth
 
 cmake -S native/MediaRuntime -B build/linux-headless \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_TESTING=ON \
     -DLAPIS_ENABLE_LIBBLURAY=OFF
 cmake --build build/linux-headless --parallel 2
-ctest --test-dir build/linux-headless --output-on-failure \
+xvfb-run -a ctest --test-dir build/linux-headless --output-on-failure \
     --parallel 2 --timeout 90
 ```
 
@@ -80,7 +83,9 @@ headless presenter cannot pass that test.
 1. Replace/augment the real X11 CPU fallback with a **Vulkan presenter**,
    then validate native Wayland / Gamescope separately. A Vulkan GPU path is
    not yet implemented.
-2. Implement PipeWire audio output and ALSA fallback behind the audio provider.
+2. Implement a **native PipeWire** audio output (ALSA is now the real fallback),
+   device clock correlation, and sample-buffer-safe pause support for PCM
+   plugins without native pause capability.
 3. Decouple the Avalonia desktop host from HWND, Windows overlays and XInput.
 4. Validate GPU device recovery, controller focus, suspend/resume, audio clocks,
    HDR pipeline and deployment permissions on **real Steam Deck hardware**.
@@ -88,3 +93,24 @@ headless presenter cannot pass that test.
 
 Do not report Linux/SteamOS as a supported playback target until real
 audio/video output and end-to-end tests pass there.
+
+## ALSA PCM integration (new)
+
+The Linux Platform composition root now enables the existing audio
+Decode → FFmpeg Convert → AudioRenderWorker pipeline via
+`AlsaPcmAudioOutputProvider`. The provider resolves the ALSA PCM `default`
+endpoint (or optional `LAPIS_ALSA_PCM` override), verifies **F32 48 kHz
+stereo/interleaved**, then uses real `snd_pcm_writei` partial-prefix writes,
+bounded stop-aware waits, drain, reset and reopen. A PCM device without pause
+support explicitly reports an error instead of pretending that it preserves
+queued audio. Source files under `Lapis.MediaRuntime.Core` do not import ALSA
+headers or link the library.
+
+The Linux CI includes `alsa_null_pcm_audio_output` which exercises the real
+libasound `null` PCM plugin, including format negotiation, actual accepted
+samples, drain, reset, close, reopen and cancellation. This proves API/adapter
+integration but **does not prove audible playback on a hardware endpoint**.
+Device clock observations deliberately remain `Unavailable` until a
+timestamp-correlated hardware or PipeWire clock can be validated. On Linux
+installing PipeWire's ALSA adapter may route the system `default` PCM to
+PipeWire, but this change is **not** the native PipeWire API integration.
