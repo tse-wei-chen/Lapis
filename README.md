@@ -112,6 +112,16 @@ valid entry at a different source or duplicating another movie's catalog
 location is rejected. Relinking does not establish that two different video
 files contain identical content; the user must select the original movie.
 
+## Customize movie titles
+
+Open a film in the cinema library, choose **編輯片名**, enter a custom title,
+and save. Lapis updates the title in the local catalog atomically; the actual
+video file or Blu-ray folder is never renamed or moved. Existing movie IDs,
+favorites, watch history, resume bookmarks and local cover sidecars remain
+attached to the same media. Search, title sorting and the home display update
+after saving. Titles are limited to 160 characters and cannot include control
+characters; cancel leaves the library unchanged.
+
 ## Repository layout
 
 ```text

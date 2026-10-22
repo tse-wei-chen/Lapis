@@ -21,6 +21,10 @@ public sealed partial class BigPictureLibraryView : UserControl
     private readonly Button _detailsPlay;
     private readonly Button _detailsResume;
     private readonly Button _detailsRepair;
+    private readonly Button _renameButton;
+    private readonly StackPanel _renameRow;
+    private readonly TextBox _renameInput;
+    private readonly TextBlock _renameError;
     private Button? _focusedTile;
 
     public event Action<LibraryCardViewModel>? PlayRequested;
@@ -28,6 +32,7 @@ public sealed partial class BigPictureLibraryView : UserControl
     public event Action<LibraryCardViewModel>? ForgetHistoryRequested;
     public event Action<LibraryCardViewModel>? ToggleFavoriteRequested;
     public event Action<LibraryCardViewModel>? RepairSourceRequested;
+    public event Action<LibraryCardViewModel, string>? RenameTitleRequested;
     public event Action? ImportRequested;
     public event Action? ImportDiscRequested;
     public event Action? ManageRequested;
@@ -47,6 +52,14 @@ public sealed partial class BigPictureLibraryView : UserControl
             ?? throw new InvalidOperationException("Missing film detail resume action.");
         _detailsRepair = this.FindControl<Button>("BigPictureDetailsRepair")
             ?? throw new InvalidOperationException("Missing source repair action.");
+        _renameButton = this.FindControl<Button>("BigPictureDetailsRename")
+            ?? throw new InvalidOperationException("Missing edit-title action.");
+        _renameRow = this.FindControl<StackPanel>("BigPictureRenameEditor")
+            ?? throw new InvalidOperationException("Missing edit-title row.");
+        _renameInput = this.FindControl<TextBox>("BigPictureRenameInput")
+            ?? throw new InvalidOperationException("Missing title editor.");
+        _renameError = this.FindControl<TextBlock>("BigPictureRenameError")
+            ?? throw new InvalidOperationException("Missing title validation label.");
         // Tunnel before Button/ScrollViewer swallow navigation arrows.
         AddHandler(InputElement.KeyDownEvent, BigPictureKeyDown,
             RoutingStrategies.Tunnel, handledEventsToo: true);
@@ -64,6 +77,7 @@ public sealed partial class BigPictureLibraryView : UserControl
     {
         if (!_detailsOverlay.IsVisible) return;
         _detailsOverlay.IsVisible = false;
+        CancelRenameEditor();
         if (IsVisible) _focusedTile?.Focus();
     }
 
@@ -71,6 +85,7 @@ public sealed partial class BigPictureLibraryView : UserControl
     {
         if (tile is not null) _focusedTile = tile;
         Library?.SelectFeatured(card);
+        CancelRenameEditor();
         card.RefreshSourceAvailability();
         _detailsOverlay.IsVisible = true;
         if (card.NeedsSourceRepair) _detailsRepair.Focus();
@@ -86,6 +101,46 @@ public sealed partial class BigPictureLibraryView : UserControl
 
     private void DetailsClose_Click(object? sender, RoutedEventArgs e) =>
         CloseDetails();
+
+    private void DetailsRename_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Library?.FeaturedCard is not { } card) return;
+        _renameInput.Text = card.Title;
+        _renameError.IsVisible = false;
+        _renameRow.IsVisible = true;
+        _renameButton.IsVisible = false;
+        _renameInput.Focus();
+        _renameInput.SelectAll();
+    }
+
+    private void DetailsRenameCancel_Click(object? sender, RoutedEventArgs e)
+    {
+        CancelRenameEditor();
+        _detailsPlay.Focus();
+    }
+
+    private void CancelRenameEditor()
+    {
+        _renameRow.IsVisible = false;
+        _renameButton.IsVisible = true;
+        _renameError.IsVisible = false;
+        _renameInput.Text = "";
+    }
+
+    private void DetailsRenameSave_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Library?.FeaturedCard is not { } card) return;
+        var title = (_renameInput.Text ?? "").Trim();
+        if (title.Length is 0 or > 160 || title.Any(char.IsControl))
+        {
+            _renameError.Text = "片名需介於 1–160 字元，不能包含換行或控制字元。";
+            _renameError.IsVisible = true;
+            return;
+        }
+
+        CloseDetails();
+        RenameTitleRequested?.Invoke(card, title);
+    }
 
     private void DetailsPlay_Click(object? sender, RoutedEventArgs e)
     {

@@ -316,6 +316,50 @@ public sealed class LibraryViewModelTests
     }
 
     [Fact]
+    public async Task RenameTitleRefreshesSearchSortAndRetainsFavoriteAndBookmark()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "lapis-title-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var first = Path.Combine(folder, "zebra.2026.mkv");
+            var second = Path.Combine(folder, "alpha.mp4");
+            File.WriteAllText(first, "media");
+            File.WriteAllText(second, "media");
+            var catalogPath = Path.Combine(folder, "catalog.json");
+            using var view = new LibraryViewModel(new JsonMediaLibrary(catalogPath));
+            await view.LoadAsync();
+            await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, first));
+            await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, second));
+            var card = Assert.Single(view.VisibleItems.Where(x => x.Title == "zebra.2026"));
+            var id = card.Item.Id;
+            var now = DateTimeOffset.UtcNow;
+            view.LoadFavorites([new FavoriteEntry(id, now)]);
+            view.LoadWatchProgress([new WatchProgress(id, 70, 240, now)]);
+            Assert.True(card.IsFavorite);
+            Assert.True(card.CanResume);
+
+            await view.RenameAsync(card.Item, "A Favorite Movie");
+            var renamed = Assert.Single(view.VisibleItems.Where(x => x.Title == "A Favorite Movie"));
+            Assert.Equal(id, renamed.Item.Id);
+            Assert.True(renamed.IsFavorite);
+            Assert.True(renamed.CanResume);
+            view.SelectedSort = LibraryViewModel.SortChoices[1];
+            Assert.Equal(new[] { "A Favorite Movie", "alpha" },
+                view.VisibleItems.Select(x => x.Title));
+            view.SearchText = "Favorite";
+            Assert.Same(renamed, Assert.Single(view.VisibleItems));
+            view.ShowFavorites();
+            Assert.Same(renamed, Assert.Single(view.VisibleItems));
+            Assert.Equal("A Favorite Movie",
+                (await new JsonMediaLibrary(catalogPath).ListAsync())
+                .Single(x => x.Id == id).Title);
+            Assert.True(File.Exists(first));
+        }
+        finally { Directory.Delete(folder, recursive: true); }
+    }
+
+    [Fact]
     public async Task SidebarNavigationMaintainsExactlyOneActiveTarget()
     {
         using var view = new LibraryViewModel(new FakeLibrary());

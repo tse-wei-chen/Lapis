@@ -184,6 +184,50 @@ public sealed class MediaLibraryTests
         Assert.Equal(repaired, Assert.Single(await library.ListAsync()));
     }
 
+    [Fact]
+    public async Task RenameMovieChangesOnlyDisplayMetadataAndSurvivesReload()
+    {
+        using var test = new TestFiles();
+        var file = Path.Combine(test.Root, "Movie.2026.1080p.mkv");
+        File.WriteAllText(file, "original media remains");
+        var catalogPath = Path.Combine(test.Root, "catalog.json");
+        var catalog = new JsonMediaLibrary(catalogPath);
+        var movie = await catalog.ImportAsync(new MediaLocator(MediaLocatorKind.File, file));
+
+        var edited = await catalog.RenameAsync(movie.Id, "  My Cinema Title  ");
+        Assert.Equal("My Cinema Title", edited.Title);
+        Assert.Equal(movie.Id, edited.Id);
+        Assert.Equal(movie.SourcePath, edited.SourcePath);
+        Assert.Equal(movie.Kind, edited.Kind);
+        Assert.Equal(movie.ImportedAtUtc, edited.ImportedAtUtc);
+        Assert.True(File.Exists(file));
+
+        var reloaded = Assert.Single(await new JsonMediaLibrary(catalogPath).ListAsync());
+        Assert.Equal(edited, reloaded);
+        var idempotent = await catalog.RenameAsync(movie.Id, "My Cinema Title");
+        Assert.Equal(edited, idempotent);
+    }
+
+    [Fact]
+    public async Task RenameValidatesTitleAndNeverClobbersExistingCatalog()
+    {
+        using var test = new TestFiles();
+        var file = Path.Combine(test.Root, "Movie.mp4");
+        File.WriteAllText(file, "fixture");
+        var catalogPath = Path.Combine(test.Root, "catalog.json");
+        var catalog = new JsonMediaLibrary(catalogPath);
+        var movie = await catalog.ImportAsync(new MediaLocator(MediaLocatorKind.File, file));
+        var originalBytes = await File.ReadAllBytesAsync(catalogPath);
+
+        foreach (var title in new[] { "", " \t ", "newline\nnot allowed",
+                     new string('x', 161), "bad\u0001control" })
+            await Assert.ThrowsAsync<ArgumentException>(() => catalog.RenameAsync(movie.Id, title));
+        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            catalog.RenameAsync(Guid.NewGuid(), "Missing movie"));
+        Assert.Equal(originalBytes, await File.ReadAllBytesAsync(catalogPath));
+        Assert.Equal(movie, Assert.Single(await catalog.ListAsync()));
+    }
+
     private sealed class TestFiles : IDisposable
     {
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "lapis-library-" + Guid.NewGuid());
