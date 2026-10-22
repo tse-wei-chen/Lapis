@@ -51,9 +51,10 @@ jobs:
                   managed=true
                   native=true
                   ;;
-                src/Lapis.Desktop.Avalonia/*|tests/Lapis.Desktop.E2E/*|tests/Lapis.Desktop.Avalonia.Tests/NativeAvaloniaPlaybackAcceptanceTests.cs)
-                  # UI changes always exercise the actual Lapis.exe via Win32
-                  # UI Automation AND the native D3D11 playback acceptance.
+                src/Lapis.Application/*|tests/Lapis.Application.Tests/*|src/Lapis.Desktop.Avalonia/*|tests/Lapis.Desktop.E2E/*|tests/Lapis.Desktop.Avalonia.Tests/NativeAvaloniaPlaybackAcceptanceTests.cs)
+                  # Playback actor/transport changes and desktop UI changes
+                  # must exercise the real Windows player, including native
+                  # D3D11 HWND acceptance and actual desktop UI automation.
                   managed=true
                   native=true
                   ;;
