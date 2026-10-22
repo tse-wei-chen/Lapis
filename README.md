@@ -65,6 +65,27 @@ dependency builds do not inherit a non-ASCII workspace path. Standard file
 playback builds are not overwritten. Manual `dotnet publish` can select the variant
 via `-p:LapisNativeRuntimeDir=<absolute native Release path>`. It opens on a cinema **library home**; users import local videos or an entire BDMV disc root without copying bytes, then select a library card to enter a distinct Watch page with Play/Pause, Stop and seek. A disc sidebar previews MPLS filenames without claiming supported playlist selection or BD-J navigation. The renderer still uses a D3D11 child HWND hosted by Avalonia NativeControlHost: no transparent Avalonia subtitle or BD-J overlay is supported yet. BDMV requires the separate opt-in libbluray Native build; HDR, AI subtitles, packaging and real-disc hardware acceptance remain future milestones. Real Avalonia GPU acceptance and native Win32 soak tests cover HWND lifecycle regression. See [Avalonia desktop development notes](docs/development/avalonia-desktop.md) and [desktop-host notes](docs/development/desktop-host.md).
 
+## Local movie artwork (offline)
+
+Lapis never guesses titles or downloads third-party posters automatically. To show
+a cover for a local video, place an image alongside the media file; for example:
+
+```text
+Movies/
+  Example.mkv
+  Example.poster.jpg   # preferred
+  Example.jpg          # also supported
+```
+
+Supported local formats are JPEG and PNG, with a maximum source size of 16 MiB.
+The lookup is case-insensitive, supports `<title>.poster`, `<title>.cover`,
+and `<title>` names, and also allows a generic `poster.jpg`, `cover.jpg`,
+or `folder.png` when the folder contains only one movie. This deliberately
+avoids assigning the same poster to several unrelated titles in a flat folder.
+Blu-ray artwork continues to be read from `BDMV/META/DL` using the disc's
+bundled large JPEG. Images are discovered and decoded in bounded background
+workers; no artwork is required for playback.
+
 ## Repository layout
 
 ```text

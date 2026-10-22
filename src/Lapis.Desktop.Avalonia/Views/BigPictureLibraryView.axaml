@@ -118,10 +118,15 @@
                 <Grid>
                   <Image Source="{Binding FeaturedCard.Poster}"
                          Stretch="Uniform"/>
-                  <TextBlock Text="L" FontSize="92" FontWeight="Light"
+                  <TextBlock Text="{Binding FeaturedCard.PlaceholderGlyph}" FontSize="92" FontWeight="Light"
                              HorizontalAlignment="Center" VerticalAlignment="Center"
                              Foreground="#506A81"
                              IsVisible="{Binding FeaturedCard.ShowPlaceholder}"/>
+                  <TextBlock Text="{Binding FeaturedCard.PlaceholderCaption}"
+                             IsVisible="{Binding FeaturedCard.ShowPlaceholder}"
+                             FontSize="12" LetterSpacing="2" Foreground="#8DA5BD"
+                             HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                             Margin="0,0,0,26"/>
                 </Grid>
               </Border>
             </Grid>
@@ -167,7 +172,7 @@
                               ClipToBounds="True">
                         <Grid>
                           <Image Source="{Binding Poster}" Stretch="Uniform"/>
-                          <TextBlock Text="L" FontSize="64"
+                          <TextBlock Text="{Binding PlaceholderGlyph}" FontSize="64"
                                      IsVisible="{Binding ShowPlaceholder}"
                                      Foreground="#647B93"
                                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -220,7 +225,7 @@
                       <Border Background="#243449" CornerRadius="8" ClipToBounds="True">
                         <Grid>
                           <Image Source="{Binding Poster}" Stretch="Uniform"/>
-                          <TextBlock Text="L" FontSize="64" Foreground="#647B93"
+                          <TextBlock Text="{Binding PlaceholderGlyph}" FontSize="64" Foreground="#647B93"
                                      IsVisible="{Binding ShowPlaceholder}"
                                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
                           <Border Background="#D1122538" HorizontalAlignment="Right"
@@ -281,7 +286,7 @@
                             Background="#243449" CornerRadius="8">
                       <Grid>
                         <Image Source="{Binding Poster}" Stretch="Uniform"/>
-                        <TextBlock Text="L" IsVisible="{Binding ShowPlaceholder}"
+                        <TextBlock Text="{Binding PlaceholderGlyph}" IsVisible="{Binding ShowPlaceholder}"
                                    FontSize="64" Foreground="#647B93"
                                    HorizontalAlignment="Center"
                                    VerticalAlignment="Center"/>
@@ -355,7 +360,7 @@
                           ClipToBounds="True">
                     <Grid>
                       <Image Source="{Binding Poster}" Stretch="Uniform"/>
-                      <TextBlock Text="L" FontSize="52"
+                      <TextBlock Text="{Binding PlaceholderGlyph}" FontSize="52"
                                  IsVisible="{Binding ShowPlaceholder}"
                                  HorizontalAlignment="Center"
                                  VerticalAlignment="Center" Foreground="#617992"/>
@@ -421,6 +426,9 @@
             <TextBlock Text="{Binding FeaturedCard.LastWatchedLabel}"
                        IsVisible="{Binding FeaturedCard.HasWatchHistory}"
                        Foreground="#A8BDCE" FontSize="13"/>
+            <TextBlock Text="本機海報支援：影片同名 .poster.jpg／.jpg／.png，或單片資料夾內的 folder.jpg"
+                       TextWrapping="Wrap" FontSize="11" Foreground="#7393A9"
+                       IsVisible="{Binding FeaturedCard.ShowPlaceholder}"/>
             <TextBlock Text="{Binding FeaturedCard.HistoryLabel}"
                        IsVisible="{Binding FeaturedCard.HasWatchHistory}"
                        Foreground="#9DDDEE" FontSize="14"/>
@@ -457,9 +465,14 @@
                   VerticalAlignment="Center">
             <Grid>
               <Image Source="{Binding FeaturedCard.Poster}" Stretch="Uniform"/>
-              <TextBlock Text="L" IsVisible="{Binding FeaturedCard.ShowPlaceholder}"
+              <TextBlock Text="{Binding FeaturedCard.PlaceholderGlyph}" IsVisible="{Binding FeaturedCard.ShowPlaceholder}"
                          FontSize="85" Foreground="#637D96"
                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              <TextBlock Text="{Binding FeaturedCard.PlaceholderCaption}"
+                         IsVisible="{Binding FeaturedCard.ShowPlaceholder}"
+                         FontSize="12" LetterSpacing="2" Foreground="#9BB1C5"
+                         HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                         Margin="0,0,0,35"/>
             </Grid>
           </Border>
         </Grid>
