@@ -210,14 +210,18 @@ AudioOutputPlan AlsaPcmAudioOutputProvider::prepare_default_output() {
         &probe, device.c_str(), SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
     if (opened < 0 || probe == nullptr) {
         if (probe != nullptr) snd_pcm_close(probe);
-        return {AudioOutputPrepareStatus::DeviceUnavailable};
+        AudioOutputPlan unavailable;
+        unavailable.status = AudioOutputPrepareStatus::DeviceUnavailable;
+        return unavailable;
     }
     const auto negotiated = configure_stream(probe);
     snd_pcm_close(probe);
     if (negotiated < 0) {
-        return {negotiated == -EINVAL
+        AudioOutputPlan rejected;
+        rejected.status = negotiated == -EINVAL
             ? AudioOutputPrepareStatus::UnsupportedFormat
-            : AudioOutputPrepareStatus::DeviceUnavailable};
+            : AudioOutputPrepareStatus::DeviceUnavailable;
+        return rejected;
     }
     AudioOutputPlan plan;
     plan.status = AudioOutputPrepareStatus::Ready;
