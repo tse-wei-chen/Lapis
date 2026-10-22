@@ -462,6 +462,31 @@
             <TextBlock Text="{Binding FeaturedCard.Title}" FontSize="36"
                        FontWeight="SemiBold" TextWrapping="Wrap"
                        MaxLines="3" Foreground="#F7FAFD"/>
+            <Button x:Name="BigPictureDetailsRename" Classes="bp-secondary"
+                    Content="✎  編輯片名" HorizontalAlignment="Left"
+                    Click="DetailsRename_Click"
+                    AutomationProperties.AutomationId="Lapis.Library.DetailRename"
+                    AutomationProperties.Name="修改這部收藏電影的顯示名稱"/>
+            <StackPanel x:Name="BigPictureRenameEditor" IsVisible="False" Spacing="7">
+              <TextBlock Text="自訂顯示名稱（不會更名或搬動原始影片）"
+                         Foreground="#B2C5D6" FontSize="12"/>
+              <TextBox x:Name="BigPictureRenameInput"
+                       AutomationProperties.AutomationId="Lapis.Library.RenameInput"
+                       MaxLength="160" Width="440" HorizontalAlignment="Left"
+                       Watermark="輸入電影片名" FontSize="17"
+                       Background="#1D3044" Foreground="#F2FAFF"/>
+              <TextBlock x:Name="BigPictureRenameError" IsVisible="False"
+                         Foreground="#EAB4A3" TextWrapping="Wrap"
+                         FontSize="12"/>
+              <StackPanel Orientation="Horizontal" Spacing="9">
+                <Button Classes="bp-primary" Content="儲存片名"
+                        Click="DetailsRenameSave_Click"
+                        AutomationProperties.AutomationId="Lapis.Library.RenameSave"/>
+                <Button Classes="bp-secondary" Content="取消"
+                        Click="DetailsRenameCancel_Click"
+                        AutomationProperties.AutomationId="Lapis.Library.RenameCancel"/>
+              </StackPanel>
+            </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="15">
               <TextBlock Text="{Binding FeaturedCard.KindLabel}" FontSize="14"
                          Foreground="#C4EAF6"/>

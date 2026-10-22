@@ -136,6 +136,7 @@ public sealed partial class MainWindow : Window
         _bigPicture.ForgetHistoryRequested += card => _ = ForgetHistoryAsync(card);
         _bigPicture.ToggleFavoriteRequested += card => _ = ToggleFavoriteAsync(card);
         _bigPicture.RepairSourceRequested += card => _ = RepairSourceAsync(card);
+        _bigPicture.RenameTitleRequested += (card, title) => _ = RenameMovieAsync(card, title);
         _bigPicture.ImportRequested += () => _ = ImportFromBigPictureAsync();
         _bigPicture.ImportDiscRequested += () => _ = ImportDiscCoreAsync();
         _bigPicture.ManageRequested += () => ShowLibraryManagement(true);
@@ -910,6 +911,23 @@ public sealed partial class MainWindow : Window
         {
             if (!_closeStarted)
                 _library.ReportError($"修復來源失敗：{exception.Message}");
+        }
+    }
+
+    private async Task RenameMovieAsync(LibraryCardViewModel card, string title)
+    {
+        if (_closeStarted) return;
+        try
+        {
+            await _library.RenameAsync(card.Item, title);
+            if (!_closeStarted)
+                Dispatcher.UIThread.Post(_bigPicture.RestoreMovieFocus,
+                    DispatcherPriority.Loaded);
+        }
+        catch (Exception exception)
+        {
+            if (!_closeStarted)
+                _library.ReportError($"無法修改電影名稱：{exception.Message}");
         }
     }
 

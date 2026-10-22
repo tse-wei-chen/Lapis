@@ -349,6 +349,17 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         StatusText = $"已修復來源：{updated.Title}（保留最愛及觀看紀錄；未搬移原始檔案）";
     }
 
+    public async Task RenameAsync(MediaLibraryItem item, string newTitle,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        if (_library is not IEditableMediaLibrary editable)
+            throw new NotSupportedException("目前的收藏庫儲存方式不支援修改電影名稱。");
+        var updated = await editable.RenameAsync(item.Id, newTitle, cancellationToken);
+        await LoadAsync(cancellationToken);
+        StatusText = $"已更新片名：{updated.Title}（原始檔案及觀看紀錄未變更）";
+    }
+
     public async Task RemoveAsync(MediaLibraryItem item, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(item);

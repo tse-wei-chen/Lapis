@@ -144,6 +144,31 @@ public sealed class WindowsDesktopJourneys
     }
 
     [Fact]
+    public async Task RenameMovieTitlePersistsAcrossCatalogReloadInActualExe()
+    {
+        using var session = await DesktopSession.CreateAsync();
+        await session.SeedWatchBookmarkAsync();
+        session.Start();
+        var main = session.MainWindow();
+
+        session.Click(session.WaitFor(main, "Lapis.Library.FeaturedDetails"));
+        session.Click(session.WaitFor(main, "Lapis.Library.DetailRename"));
+        var input = session.WaitFor(main, "Lapis.Library.RenameInput").AsTextBox();
+        input.Text = "My Home Cinema";
+        session.Click(session.WaitFor(main, "Lapis.Library.RenameSave"));
+        session.WaitForCatalogTitle("My Home Cinema");
+
+        // The detail sheet closes cleanly and the original media can still
+        // be selected with its bookmark attached to the unchanged item ID.
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.FeaturedDetails"));
+        session.Click(session.WaitFor(main, "Lapis.Library.FeaturedDetails"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.DetailResume"));
+        session.Snapshot("11-renamed-movie");
+        session.Click(session.WaitFor(main, "Lapis.Library.DetailClose"));
+        Assert.True(session.ProcessIsRunning);
+    }
+
+    [Fact]
     public async Task FilmCoverRefreshFindsNewSidecarAndClearsRemovedPoster()
     {
         using var session = await DesktopSession.CreateAsync();
@@ -268,6 +293,19 @@ internal sealed class DesktopSession : IDisposable
             "AAAAFklEQVR4nGPUmnOJgYGBiYGBgYGBAQASogGcsjuU1QAAAABJRU5ErkJggg=="));
         return path;
     }
+
+    public void WaitForCatalogTitle(string expectedTitle) =>
+        _ = Eventually(() =>
+        {
+            try
+            {
+                var items = new JsonMediaLibrary(_catalogPath)
+                    .ListAsync().GetAwaiter().GetResult();
+                return items.Count == 1 && items[0].Title == expectedTitle
+                    ? new object() : null;
+            }
+            catch (IOException) { return null; }
+        }, TimeSpan.FromSeconds(15), "persisted movie title " + expectedTitle);
 
     public void WaitForFavoriteCount(int count) =>
         _ = Eventually(() =>

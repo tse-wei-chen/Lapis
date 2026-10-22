@@ -24,3 +24,13 @@ public interface IRelinkableMediaLibrary : IMediaLibrary
     Task<MediaLibraryItem> RelinkAsync(Guid itemId, MediaLocator replacement,
         CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// Optional catalog capability for editing user-facing movie labels.
+/// Renaming changes display metadata only, not a media source or its ID.
+/// </summary>
+public interface IEditableMediaLibrary : IMediaLibrary
+{
+    Task<MediaLibraryItem> RenameAsync(Guid itemId, string title,
+        CancellationToken cancellationToken = default);
+}

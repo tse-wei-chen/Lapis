@@ -8,7 +8,7 @@ namespace Lapis.Library;
 /// a failed write from silently truncating the existing library.
 /// IMediaLibrary permits a future SQLite adapter without UI or player changes.
 /// </summary>
-public sealed class JsonMediaLibrary(string catalogFilePath) : IRelinkableMediaLibrary
+public sealed class JsonMediaLibrary(string catalogFilePath) : IRelinkableMediaLibrary, IEditableMediaLibrary
 {
     private const int SchemaVersion = 1;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
@@ -87,6 +87,40 @@ public sealed class JsonMediaLibrary(string catalogFilePath) : IRelinkableMediaL
             catalog.Items[index] = repaired;
             await SaveAsync(catalog, cancellationToken);
             return repaired;
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>
+    /// Change only the user-facing title. Stable ID, path, media type and
+    /// import timestamp remain unchanged, so favorites and history survive.
+    /// Serialize under the same catalog gate as import/relink/remove.
+    /// </summary>
+    public async Task<MediaLibraryItem> RenameAsync(Guid itemId, string title,
+        CancellationToken cancellationToken = default)
+    {
+        if (itemId == Guid.Empty)
+            throw new ArgumentException("無效的收藏項目。", nameof(itemId));
+        ArgumentNullException.ThrowIfNull(title);
+        var trimmed = title.Trim();
+        if (trimmed.Length == 0 || trimmed.Length > 160 ||
+            trimmed.Any(char.IsControl))
+            throw new ArgumentException(
+                "電影名稱必須為 1–160 個字元，且不得包含換行或控制字元。", nameof(title));
+
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var catalog = await ReadAsync(cancellationToken);
+            var index = catalog.Items.FindIndex(item => item.Id == itemId);
+            if (index < 0)
+                throw new KeyNotFoundException("找不到要修改的收藏項目。");
+            var existing = catalog.Items[index];
+            if (existing.Title == trimmed) return existing;
+            var renamed = existing with { Title = trimmed };
+            catalog.Items[index] = renamed;
+            await SaveAsync(catalog, cancellationToken);
+            return renamed;
         }
         finally { _gate.Release(); }
     }
