@@ -84,7 +84,10 @@ or `folder.png` when the folder contains only one movie. This deliberately
 avoids assigning the same poster to several unrelated titles in a flat folder.
 Blu-ray artwork continues to be read from `BDMV/META/DL` using the disc's
 bundled large JPEG. Images are discovered and decoded in bounded background
-workers; no artwork is required for playback.
+workers; no artwork is required for playback. If you add, replace, or
+delete a local cover after opening Lapis, open the movie details and click
+**重新掃描封面**. This rechecks sidecars immediately without reimporting the
+movie, touching the catalog, or restarting Native playback.
 
 ## Repository layout
 

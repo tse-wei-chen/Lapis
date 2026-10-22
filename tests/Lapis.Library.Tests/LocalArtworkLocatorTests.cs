@@ -59,6 +59,23 @@ public sealed class LocalArtworkLocatorTests
         Assert.Empty(LocalArtworkLocator.FindCandidates(disc));
     }
 
+    [Fact]
+    public void RefreshDiscoveryRecognizesAddedReplacedAndDeletedArtwork()
+    {
+        using var directory = new Fixture();
+        var movie = directory.Movie("Weekend.mkv");
+        Assert.Empty(LocalArtworkLocator.FindCandidates(movie));
+
+        var cover = directory.Image("Weekend.poster.jpg", "first image");
+        Assert.Equal(cover, Assert.Single(LocalArtworkLocator.FindCandidates(movie)));
+
+        File.WriteAllText(cover, "replacement image");
+        Assert.Equal(cover, Assert.Single(LocalArtworkLocator.FindCandidates(movie)));
+
+        File.Delete(cover);
+        Assert.Empty(LocalArtworkLocator.FindCandidates(movie));
+    }
+
     private sealed class Fixture : IDisposable
     {
         public string Root { get; } = Path.Combine(Path.GetTempPath(),

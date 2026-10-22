@@ -94,6 +94,12 @@ public sealed partial class BigPictureLibraryView : UserControl
         ResumeRequested?.Invoke(card);
     }
 
+    private void DetailsRefreshPoster_Click(object? sender, RoutedEventArgs e)
+    {
+        // Keep the details overlay open while the existing card reloads.
+        Library?.FeaturedCard?.RefreshPoster();
+    }
+
     private void DetailsForget_Click(object? sender, RoutedEventArgs e)
     {
         if (Library?.FeaturedCard is not { HasWatchHistory: true } card) return;

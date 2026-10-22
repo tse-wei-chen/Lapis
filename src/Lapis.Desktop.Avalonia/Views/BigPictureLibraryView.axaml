@@ -438,6 +438,18 @@
             <TextBlock Text="資訊來自本機電影庫，沒有擅自下載外部電影資料。"
                        TextWrapping="Wrap" FontSize="12"
                        Foreground="#8FA5B8" MaxWidth="490"/>
+            <!-- Sidecar artwork refresh works without restarting Lapis or playback. -->
+            <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,5,0,0">
+              <Button Classes="bp-secondary" Content="⟳  重新掃描封面"
+                      Click="DetailsRefreshPoster_Click"
+                      IsEnabled="{Binding FeaturedCard.CanRefreshPoster}"
+                      AutomationProperties.AutomationId="Lapis.Library.DetailRefreshPoster"
+                      AutomationProperties.Name="重新掃描此電影的本機封面"/>
+              <TextBlock Text="{Binding FeaturedCard.PosterRefreshStatus}"
+                         AutomationProperties.AutomationId="Lapis.Library.PosterRefreshStatus"
+                         FontSize="12" Foreground="#A7D9E7"
+                         VerticalAlignment="Center" TextWrapping="Wrap"/>
+            </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,18,0,0">
               <Button x:Name="BigPictureDetailsResume" Classes="bp-primary"
                       Content="▶  繼續播放" Click="DetailsResume_Click"

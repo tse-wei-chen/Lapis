@@ -105,6 +105,27 @@ public sealed class WindowsDesktopJourneys
     }
 
     [Fact]
+    public async Task FilmCoverRefreshFindsNewSidecarAndClearsRemovedPoster()
+    {
+        using var session = await DesktopSession.CreateAsync();
+        session.Start();
+        var main = session.MainWindow();
+        session.Click(session.WaitFor(main, "Lapis.Library.FeaturedDetails"));
+
+        // Initial catalog scan has completed before the refresh button enables.
+        var cover = session.AddPosterFixture();
+        session.Click(session.WaitForEnabled(main, "Lapis.Library.DetailRefreshPoster"));
+        session.WaitForName(main, "Lapis.Library.PosterRefreshStatus", "封面已更新");
+        session.Snapshot("08-cover-reloaded");
+
+        File.Delete(cover);
+        session.Click(session.WaitForEnabled(main, "Lapis.Library.DetailRefreshPoster"));
+        session.WaitForName(main, "Lapis.Library.PosterRefreshStatus", "未找到可用封面");
+        session.Click(session.WaitFor(main, "Lapis.Library.DetailClose"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.PlayFeatured"));
+    }
+
+    [Fact]
     public async Task Movie_Watch_Subtitles_And_Back_RoundTripThroughRealExe()
     {
         using var session = await DesktopSession.CreateAsync();
@@ -188,6 +209,16 @@ internal sealed class DesktopSession : IDisposable
         var item = Assert.Single(await new JsonMediaLibrary(_catalogPath).ListAsync());
         await new JsonWatchProgressStore(_catalogPath + ".watch.v1.json").SaveAsync(
             new WatchProgress(item.Id, 70, 240, DateTimeOffset.UtcNow));
+    }
+
+    public string AddPosterFixture()
+    {
+        var path = Path.Combine(_root, "Lapis-E2E.poster.png");
+        // A real, small 2x2 PNG. The UI must decode it, not fake HasPoster.
+        File.WriteAllBytes(path, Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91Jpz" +
+            "AAAAFklEQVR4nGPUmnOJgYGBiYGBgYGBAQASogGcsjuU1QAAAABJRU5ErkJggg=="));
+        return path;
     }
 
     public bool ProcessIsRunning => _process is { HasExited: false };
@@ -289,6 +320,23 @@ internal sealed class DesktopSession : IDisposable
         Eventually(() => window.FindFirstDescendant(
                 cf => cf.ByAutomationId(automationId)),
             timeout ?? TimeSpan.FromSeconds(15), automationId);
+
+    public AutomationElement WaitForEnabled(Window window, string automationId) =>
+        Eventually(() =>
+        {
+            var element = window.FindFirstDescendant(
+                cf => cf.ByAutomationId(automationId));
+            return element?.IsEnabled == true ? element : null;
+        }, TimeSpan.FromSeconds(15), automationId + " enabled");
+
+    public void WaitForName(Window window, string automationId, string expected) =>
+        _ = Eventually(() =>
+        {
+            var element = window.FindFirstDescendant(
+                cf => cf.ByAutomationId(automationId));
+            return element?.Name.Contains(expected, StringComparison.Ordinal) == true
+                ? element : null;
+        }, TimeSpan.FromSeconds(15), automationId + " " + expected);
 
     public void Click(AutomationElement element)
     {
