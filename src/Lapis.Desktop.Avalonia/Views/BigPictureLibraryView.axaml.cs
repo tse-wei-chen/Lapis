@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Threading;
 using Avalonia.Markup.Xaml;
 using Avalonia.VisualTree;
 using Lapis.Desktop.Avalonia.Services;
@@ -39,7 +40,6 @@ public sealed partial class BigPictureLibraryView : UserControl
     public event Action<LibraryCardViewModel>? RemoveFromLibraryRequested;
     public event Action? ImportRequested;
     public event Action? ImportDiscRequested;
-    public event Action? ManageRequested;
 
     public BigPictureLibraryView()
     {
@@ -292,8 +292,21 @@ public sealed partial class BigPictureLibraryView : UserControl
 
     private void ContextManage_Click(object? sender, RoutedEventArgs e)
     {
+        if (sender is MenuItem { CommandParameter: LibraryCardViewModel card })
+            OpenDetails(card, null);
+    }
+
+    private void Grid_Click(object? sender, RoutedEventArgs e) => SetDisplayMode(false);
+    private void List_Click(object? sender, RoutedEventArgs e) => SetDisplayMode(true);
+
+    private void SetDisplayMode(bool list)
+    {
+        if (Library is not { } view) return;
         CloseDetails();
-        ManageRequested?.Invoke();
+        if (list) view.ShowList();
+        else view.ShowGrid();
+        _scroll.Offset = new Vector(0, 0);
+        Dispatcher.UIThread.Post(RestoreMovieFocus, DispatcherPriority.Loaded);
     }
 
     private void Import_Click(object? sender, RoutedEventArgs e) =>
@@ -301,12 +314,6 @@ public sealed partial class BigPictureLibraryView : UserControl
 
     private void ImportDisc_Click(object? sender, RoutedEventArgs e) =>
         ImportDiscRequested?.Invoke();
-
-    private void Manage_Click(object? sender, RoutedEventArgs e)
-    {
-        CloseDetails();
-        ManageRequested?.Invoke();
-    }
 
     private static readonly LibraryCategory[] Categories =
     [
@@ -374,8 +381,7 @@ public sealed partial class BigPictureLibraryView : UserControl
                 RestoreMovieFocus();
                 break;
             case GamepadAction.Menu:
-                CloseDetails();
-                ManageRequested?.Invoke();
+                SetDisplayMode(Library?.IsGridView == true);
                 break;
             case GamepadAction.PreviousCategory:
                 if (!_detailsOverlay.IsVisible) CycleCategory(-1);
@@ -415,7 +421,8 @@ public sealed partial class BigPictureLibraryView : UserControl
             (button.Classes.Contains("bp-tile") ||
              button.Classes.Contains("bp-nav") ||
              button.Classes.Contains("bp-primary") ||
-             button.Classes.Contains("bp-secondary")))
+             button.Classes.Contains("bp-secondary") ||
+             button.Classes.Contains("bp-mode")))
         .ToArray();
 
     private void MoveFocus(BigPictureDirection direction)

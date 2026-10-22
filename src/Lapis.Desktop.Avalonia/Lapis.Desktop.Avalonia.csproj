@@ -8,7 +8,7 @@
   <ItemGroup>
     <PackageReference Include="Avalonia" />
     <PackageReference Include="Avalonia.Desktop" />
-    <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="FluentAvaloniaUI" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../Lapis.Desktop.Hosting/Lapis.Desktop.Hosting.csproj" />

@@ -1,8 +1,10 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:sty="using:FluentAvalonia.Styling"
              x:Class="Lapis.Desktop.Avalonia.App"
              RequestedThemeVariant="Dark">
   <Application.Styles>
-    <FluentTheme />
+    <!-- One WinUI/Fluent base theme; never stack FluentTheme and FluentAvaloniaTheme. -->
+    <sty:FluentAvaloniaTheme />
   </Application.Styles>
 </Application>

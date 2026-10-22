@@ -27,9 +27,6 @@ public sealed partial class MainWindow : Window
     private readonly Grid _libraryPage;
     private readonly Grid _playerPage;
     private readonly BigPictureLibraryView _bigPicture;
-    private readonly Border _legacyLibraryHeader;
-    private readonly Grid _legacyLibraryBody;
-    private readonly Button _shellManageButton;
     private WatchChromeWindow? _watchChrome;
     private readonly TextSubtitleSourceCatalog _subtitleSources = TextSubtitleSourceCatalog.Default;
     // Invalidated when the Watch screen closes or a new request supersedes it.
@@ -37,19 +34,8 @@ public sealed partial class MainWindow : Window
     private long _watchGeneration;
     private CancellationTokenSource? _subtitleLoadCancellation;
     private WindowState _windowStateBeforeWatch = WindowState.Normal;
-    private readonly ScrollViewer _gridSurface;
-    private readonly Border _listSurface;
     private readonly Grid _dropOverlay;
     private bool _dropBusy;
-    private readonly Grid _navigationHost;
-    private readonly Border _navigationIndicator;
-    private readonly Button _navAll;
-    private readonly Button _navBluRay;
-    private readonly Button _navVideos;
-    private readonly Button _navRecent;
-    private readonly Button _navHistory;
-    private readonly Button _navFavorites;
-    private readonly TextBlock _currentHeading;
     private readonly PlayerViewModel _player;
     private readonly LibraryViewModel _library;
     private readonly JsonWatchProgressStore _watchProgressStore;
@@ -79,39 +65,10 @@ public sealed partial class MainWindow : Window
             ?? throw new InvalidOperationException("Missing watch page.");
         _bigPicture = this.FindControl<BigPictureLibraryView>("BigPictureLibrary")
             ?? throw new InvalidOperationException("Missing Big Picture library.");
-        _legacyLibraryHeader = this.FindControl<Border>("LegacyLibraryHeader")
-            ?? throw new InvalidOperationException("Missing library management header.");
-        _legacyLibraryBody = this.FindControl<Grid>("LegacyLibraryBody")
-            ?? throw new InvalidOperationException("Missing library management body.");
-        _shellManageButton = this.FindControl<Button>("ShellManageButton")
-            ?? throw new InvalidOperationException("Missing shared management button.");
         _videoSurface = this.FindControl<WindowsVideoSurface>("VideoSurface")
             ?? throw new InvalidOperationException("Missing D3D11 surface host.");
-        _gridSurface = this.FindControl<ScrollViewer>("LibraryGridSurface")
-            ?? throw new InvalidOperationException("Missing library grid viewport.");
-        _listSurface = this.FindControl<Border>("LibraryListSurface")
-            ?? throw new InvalidOperationException("Missing library list viewport.");
         _dropOverlay = this.FindControl<Grid>("LibraryDropOverlay")
             ?? throw new InvalidOperationException("Missing library drop overlay.");
-        _navigationHost = this.FindControl<Grid>("LibraryNavigationHost")
-            ?? throw new InvalidOperationException("Missing sidebar host.");
-        _navigationIndicator = this.FindControl<Border>("LibraryNavigationIndicator")
-            ?? throw new InvalidOperationException("Missing sidebar selection indicator.");
-        _navAll = this.FindControl<Button>("NavigationAll")
-            ?? throw new InvalidOperationException("Missing All nav item.");
-        _navBluRay = this.FindControl<Button>("NavigationBluRay")
-            ?? throw new InvalidOperationException("Missing Blu-ray nav item.");
-        _navVideos = this.FindControl<Button>("NavigationVideos")
-            ?? throw new InvalidOperationException("Missing Videos nav item.");
-        _navRecent = this.FindControl<Button>("NavigationRecent")
-            ?? throw new InvalidOperationException("Missing Recently Added nav item.");
-        _navHistory = this.FindControl<Button>("NavigationHistory")
-            ?? throw new InvalidOperationException("Missing Watch History nav item.");
-        _navFavorites = this.FindControl<Button>("NavigationFavorites")
-            ?? throw new InvalidOperationException("Missing Favorites nav item.");
-        _currentHeading = this.FindControl<TextBlock>("LibraryCurrentHeading")
-            ?? throw new InvalidOperationException("Missing library heading.");
-
         var libraryFile = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Lapis", "Library", "catalog.v1.json");
@@ -141,12 +98,10 @@ public sealed partial class MainWindow : Window
         _bigPicture.RemoveFromLibraryRequested += card => _ = RemoveMovieAsync(card);
         _bigPicture.ImportRequested += () => _ = ImportFromBigPictureAsync();
         _bigPicture.ImportDiscRequested += () => _ = ImportDiscCoreAsync();
-        _bigPicture.ManageRequested += () => ShowLibraryManagement(true);
 
         // No player source, Native DLL or video pipeline is initialized at startup.
         _libraryPage.IsVisible = true;
         _playerPage.IsVisible = false;
-        ShowLibraryManagement(false);
         Opened += async (_, _) =>
         {
             try
@@ -293,14 +248,7 @@ public sealed partial class MainWindow : Window
         {
             if (_libraryPage.IsVisible)
             {
-                if (_bigPicture.IsVisible)
-                    _bigPicture.HandleGamepadAction(action);
-                else if (action == GamepadAction.Back)
-                {
-                    ShowLibraryManagement(false);
-                    Dispatcher.UIThread.Post(_bigPicture.RestoreMovieFocus,
-                        DispatcherPriority.Loaded);
-                }
+                _bigPicture.HandleGamepadAction(action);
                 continue;
             }
 
@@ -350,11 +298,6 @@ public sealed partial class MainWindow : Window
                     ? WindowState.Maximized : WindowState.FullScreen;
                 args.Handled = true;
             }
-            else if (args.Key == Key.Escape && !_bigPicture.IsVisible)
-            {
-                ShowLibraryManagement(false);
-                args.Handled = true;
-            }
             return;
         }
         if (!_playerPage.IsVisible) return;
@@ -391,39 +334,13 @@ public sealed partial class MainWindow : Window
         _watchChrome?.NotifyPointerActivity();
     }
 
-    private void ShowLibraryManagement(bool show)
-    {
-        if (show) _bigPicture.CloseDetails();
-        _bigPicture.IsVisible = !show;
-        _legacyLibraryHeader.IsVisible = true; // Keep the same physical header mounted.
-        _legacyLibraryBody.IsVisible = show;
-        _shellManageButton.Content = show ? "← 返回首頁" : "管理收藏";
-        if (show) _shellManageButton.Classes.Add("selected");
-        else _shellManageButton.Classes.Remove("selected");
-        if (show)
-            Dispatcher.UIThread.Post(() => UpdateNavigationMarker(initial: true),
-                DispatcherPriority.Loaded);
-        else
-            Dispatcher.UIThread.Post(() =>
-            {
-                LibraryMotion.Enter(_bigPicture);
-                _bigPicture.RestoreMovieFocus();
-            }, DispatcherPriority.Loaded);
-    }
-
     private void GoBigPicture_Click(object? sender, RoutedEventArgs args)
     {
         _bigPicture.CloseDetails();
-        // Home means the full cinema catalog, not merely closing Management.
-        // History can become empty immediately after forgetting its last film.
         _library.ShowAll();
         _library.SearchText = "";
-        ShowLibraryManagement(false);
         _bigPicture.ResetScroll();
     }
-
-    private void ToggleManagement_Click(object? sender, RoutedEventArgs args) =>
-        ShowLibraryManagement(_bigPicture.IsVisible);
 
     private void ShellAll_Click(object? sender, RoutedEventArgs args) =>
         ShellNavigate(_library.ShowAll);
@@ -442,7 +359,6 @@ public sealed partial class MainWindow : Window
     {
         _bigPicture.CloseDetails();
         navigate();
-        ShowLibraryManagement(false);
         _bigPicture.ResetScroll();
     }
 
@@ -506,221 +422,6 @@ public sealed partial class MainWindow : Window
         {
             _library.ReportError($"匯入 BDMV 失敗：{exception.Message}");
         }
-    }
-
-    private void ShowAll_Click(object? sender, RoutedEventArgs args) =>
-        NavigateLibrary(_library.ShowAll);
-    private void ShowDiscs_Click(object? sender, RoutedEventArgs args) =>
-        NavigateLibrary(_library.ShowDiscs);
-    private void ShowVideos_Click(object? sender, RoutedEventArgs args) =>
-        NavigateLibrary(_library.ShowVideos);
-    private void ShowRecentlyAdded_Click(object? sender, RoutedEventArgs args) =>
-        NavigateLibrary(_library.ShowRecentlyAdded);
-    private void ShowHistory_Click(object? sender, RoutedEventArgs args) =>
-        NavigateLibrary(_library.ShowHistory);
-    private void ShowFavorites_Click(object? sender, RoutedEventArgs args) =>
-        NavigateLibrary(_library.ShowFavorites);
-
-    private void NavigateLibrary(Action navigate)
-    {
-        var previous = _library.Category;
-        navigate();
-        if (previous == _library.Category) return;
-        // The actor does not participate in navigation animations. Update
-        // the read-only compositor visuals after Avalonia has laid out the
-        // newly selected content.
-        Dispatcher.UIThread.Post(() =>
-        {
-            if (!_libraryPage.IsVisible) return;
-            UpdateNavigationMarker(initial: false);
-            LibraryMotion.Enter(_library.IsGridView ? _gridSurface : _listSurface);
-            LibraryMotion.Enter(_currentHeading);
-        }, DispatcherPriority.Loaded);
-    }
-
-    private void UpdateNavigationMarker(bool initial)
-    {
-        if (!_libraryPage.IsVisible) return;
-        var selected = _library.Category switch
-        {
-            LibraryCategory.BluRay => _navBluRay,
-            LibraryCategory.Videos => _navVideos,
-            LibraryCategory.RecentlyAdded => _navRecent,
-            LibraryCategory.History => _navHistory,
-            LibraryCategory.Favorites => _navFavorites,
-            _ => _navAll
-        };
-        var origin = global::Avalonia.VisualExtensions.TranslatePoint(
-            selected, new global::Avalonia.Point(0, 0), _navigationHost);
-        if (origin is null || selected.Bounds.Height <= 0) return;
-        var y = LibraryMotion.IndicatorTop(origin.Value.Y, selected.Bounds.Height,
-            _navigationIndicator.Bounds.Height);
-        LibraryMotion.MoveNavigationMarker(_navigationIndicator, y, animate: !initial);
-    }
-    private void ShowGrid_Click(object? sender, RoutedEventArgs args)
-    {
-        if (_library.IsGridView) return;
-        _library.ShowGrid();
-        Dispatcher.UIThread.Post(() => LibraryMotion.Enter(_gridSurface),
-            DispatcherPriority.Loaded);
-    }
-
-    private void ShowList_Click(object? sender, RoutedEventArgs args)
-    {
-        if (_library.IsListView) return;
-        _library.ShowList();
-        Dispatcher.UIThread.Post(() => LibraryMotion.Enter(_listSurface),
-            DispatcherPriority.Loaded);
-    }
-
-    private void LibraryItem_PointerEntered(object? sender, PointerEventArgs args)
-    {
-        if (sender is Control item) LibraryMotion.Hover(item, true);
-    }
-
-    private void LibraryItem_PointerExited(object? sender, PointerEventArgs args)
-    {
-        if (sender is Control item) LibraryMotion.Hover(item, false);
-    }
-
-    private async void PlayLibraryItem_Click(object? sender, RoutedEventArgs args)
-    {
-        if (sender is Button { CommandParameter: LibraryCardViewModel card })
-            await PlayLibraryItemAsync(card);
-    }
-
-    private async void ContextPlay_Click(object? sender, RoutedEventArgs args)
-    {
-        if (sender is MenuItem { CommandParameter: LibraryCardViewModel card })
-            await PlayLibraryItemAsync(card);
-    }
-
-    private static LibraryCardViewModel? GetContextCard(object? sender) =>
-        (sender as MenuItem)?.CommandParameter as LibraryCardViewModel;
-
-    private async void ContextCopyPath_Click(object? sender, RoutedEventArgs args)
-    {
-        if (GetContextCard(sender) is not { } card) return;
-        try
-        {
-            var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
-            if (clipboard is null)
-                throw new InvalidOperationException("剪貼簿尚未就緒。");
-            await clipboard.SetTextAsync(card.SourcePath);
-            _library.ReportError($"已複製來源路徑：{card.Title}");
-        }
-        catch (Exception exception)
-        {
-            _library.ReportError($"複製路徑失敗：{exception.Message}");
-        }
-    }
-
-    private void ContextReveal_Click(object? sender, RoutedEventArgs args)
-    {
-        if (GetContextCard(sender) is not { } card) return;
-        try
-        {
-            if (!card.IsAvailable)
-                throw new FileNotFoundException("來源已離線或不存在。", card.SourcePath);
-            var process = new ProcessStartInfo("explorer.exe")
-            {
-                UseShellExecute = false
-            };
-            // ArgumentList handles Windows quoting; no shell interpolation.
-            process.ArgumentList.Add("/select,");
-            process.ArgumentList.Add(card.SourcePath);
-            Process.Start(process);
-        }
-        catch (Exception exception)
-        {
-            _library.ReportError($"無法開啟檔案總管：{exception.Message}");
-        }
-    }
-
-    private async void ContextDetails_Click(object? sender, RoutedEventArgs args)
-    {
-        if (GetContextCard(sender) is not { } card) return;
-        var dialog = CreateLibraryDialog(
-            card.Title,
-            $"類型：{card.KindLabel}\n" +
-            $"加入日期：{card.ImportedAtText}\n" +
-            $"來源狀態：{card.AvailabilityLabel}\n\n" +
-            $"來源位置：\n{card.SourcePath}");
-        await dialog.ShowDialog(this);
-    }
-
-    private async void ContextRemove_Click(object? sender, RoutedEventArgs args)
-    {
-        if (GetContextCard(sender) is not { } card) return;
-        var dialog = CreateLibraryDialog(
-            "從收藏庫移除",
-            $"確定從 Lapis 收藏庫移除「{card.Title}」？\n\n" +
-            "只會刪除收藏紀錄，不會刪除或更動硬碟上的影片或 BDMV 資料夾。",
-            confirmRemoval: true);
-        if (await dialog.ShowDialog<bool>(this))
-        {
-            await RemoveMovieAsync(card);
-        }
-    }
-
-    private static Window CreateLibraryDialog(
-        string title, string content, bool confirmRemoval = false)
-    {
-        var dialog = new Window
-        {
-            Title = title,
-            Width = 480,
-            MinHeight = 210,
-            SizeToContent = SizeToContent.Height,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            CanResize = false,
-            RequestedThemeVariant = ThemeVariant.Dark,
-            Background = new global::Avalonia.Media.SolidColorBrush(
-                global::Avalonia.Media.Color.Parse("#111C29"))
-        };
-        var cancel = new Button
-        {
-            Content = confirmRemoval ? "取消" : "關閉",
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Padding = new global::Avalonia.Thickness(16, 8)
-        };
-        cancel.Click += (_, _) => dialog.Close(false);
-        var buttons = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Spacing = 8
-        };
-        buttons.Children.Add(cancel);
-        if (confirmRemoval)
-        {
-            var remove = new Button
-            {
-                Content = "移出收藏庫",
-                Background = global::Avalonia.Media.Brushes.Firebrick,
-                Foreground = global::Avalonia.Media.Brushes.White,
-                Padding = new global::Avalonia.Thickness(16, 8)
-            };
-            remove.Click += (_, _) => dialog.Close(true);
-            buttons.Children.Add(remove);
-        }
-        dialog.Content = new StackPanel
-        {
-            Margin = new global::Avalonia.Thickness(24),
-            Spacing = 18,
-            Children =
-            {
-                new TextBlock
-                {
-                    Text = content,
-                    TextWrapping = global::Avalonia.Media.TextWrapping.Wrap,
-                    FontSize = 13,
-                    Foreground = global::Avalonia.Media.Brushes.White
-                },
-                buttons
-            }
-        };
-        return dialog;
     }
 
     private async Task PlayLibraryItemAsync(LibraryCardViewModel card, bool resume = false)
@@ -831,8 +532,7 @@ public sealed partial class MainWindow : Window
         _libraryPage.IsVisible = true;
         Dispatcher.UIThread.Post(() =>
         {
-            if (_bigPicture.IsVisible) _bigPicture.RestoreMovieFocus();
-            else UpdateNavigationMarker(initial: true);
+            _bigPicture.RestoreMovieFocus();
         }, DispatcherPriority.Loaded);
     }
 
@@ -913,7 +613,7 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// One removal path for the management context menu and Big Picture.
+    /// One removal path for the unified library detail sheet.
     /// The catalog is the source of truth: never remove the physical media.
     /// After a successful catalog write, remove orphaned bookmark/favorite
     /// sidecars and update the corresponding in-memory shelves.

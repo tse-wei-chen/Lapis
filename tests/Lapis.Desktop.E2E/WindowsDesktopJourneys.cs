@@ -24,7 +24,7 @@ namespace Lapis.Desktop.E2E;
 public sealed class WindowsDesktopJourneys
 {
     [Fact]
-    public async Task BigPicture_Manage_And_Back_UseActualDesktopAutomation()
+    public async Task BigPicture_Grid_And_List_ShareOneLibraryPage()
     {
         using var session = await DesktopSession.CreateAsync();
         session.Start();
@@ -33,38 +33,28 @@ public sealed class WindowsDesktopJourneys
         var play = session.WaitFor(main, "Lapis.Library.PlayFeatured");
         Assert.NotNull(play);
         session.Snapshot("01-library");
-        Assert.NotNull(session.WaitFor(main, "Lapis.Library.Manage"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.GridMode"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.ListMode"));
         Assert.NotNull(session.WaitFor(main, "Lapis.Library.Home"));
         Assert.NotNull(session.WaitFor(main, "Lapis.Library.Add"));
 
-        // A poster/info action opens a cinematic detail surface; it is not an
-        // accidental immediate player launch.
         session.Click(session.WaitFor(main, "Lapis.Library.FeaturedDetails"));
         Assert.NotNull(session.WaitFor(main, "Lapis.Library.DetailPlay"));
         session.Click(session.WaitFor(main, "Lapis.Library.DetailClose"));
-        Assert.NotNull(session.WaitFor(main, "Lapis.Library.PlayFeatured"));
 
-        // UIA Invoke activates the real product Button, not the ViewModel.
-        session.Click(session.WaitFor(main, "Lapis.Library.Manage"));
-        // Windows UIA often omits non-interactive Grid containers. Verify
-        // a real focused/interactive management navigation button instead.
-        session.WaitFor(main, "Lapis.Library.ManagementAll");
-        session.Snapshot("02-management");
-        Assert.NotNull(session.WaitFor(main, "Lapis.Library.Home"));
-        Assert.NotNull(session.WaitFor(main, "Lapis.Library.Add"));
-        Assert.NotNull(session.WaitFor(main, "Lapis.Library.ManagementBack"));
-        Assert.Null(main.FindFirstDescendant(cf => cf.ByAutomationId(
-            "Lapis.Library.PlayFeatured")));
+        // Presentation changes in place; neither a management page nor a
+        // second navigation shell is mounted.
+        session.Click(session.WaitFor(main, "Lapis.Library.ListMode"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.GridMode"));
+        Assert.Null(main.FindFirstDescendant(cf =>
+            cf.ByAutomationId("Lapis.Library.PlayFeatured")));
+        session.Snapshot("02-list-view");
 
-        session.Click(session.WaitFor(main, "Lapis.Library.ManagementBack"));
+        session.Click(session.WaitFor(main, "Lapis.Library.GridMode"));
         Assert.NotNull(session.WaitFor(main, "Lapis.Library.PlayFeatured"));
-        session.Click(session.WaitFor(main, "Lapis.Library.Manage"));
-        session.WaitFor(main, "Lapis.Library.ManagementAll");
-
-        main.Focus();
-        Keyboard.Press(VirtualKeyShort.ESCAPE);
-        Assert.NotNull(session.WaitFor(main, "Lapis.Library.PlayFeatured"));
-        session.Snapshot("03-library-restored");
+        Assert.Null(main.FindFirstDescendant(cf =>
+            cf.ByAutomationId("Lapis.Library.ManagementBack")));
+        session.Snapshot("03-grid-restored");
     }
 
     [Fact]

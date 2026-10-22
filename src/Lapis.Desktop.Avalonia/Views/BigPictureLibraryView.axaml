@@ -1,12 +1,12 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="Lapis.Desktop.Avalonia.Views.BigPictureLibraryView"
-             Background="#0A111C" Foreground="#F0F5FA"
+             Background="#090D14" Foreground="#F6F2EC"
              Focusable="True">
   <UserControl.Styles>
     <Style Selector="Button.bp-nav">
       <Setter Property="Background" Value="Transparent"/>
-      <Setter Property="Foreground" Value="#A9B8C9"/>
+      <Setter Property="Foreground" Value="#AAB4C1"/>
       <Setter Property="BorderThickness" Value="0"/>
       <Setter Property="CornerRadius" Value="8"/>
       <Setter Property="Padding" Value="20,12"/>
@@ -19,17 +19,17 @@
       </Setter>
     </Style>
     <Style Selector="Button.bp-nav:pointerover, Button.bp-nav:focus-visible">
-      <Setter Property="Foreground" Value="#F2FAFF"/>
-      <Setter Property="Background" Value="#263D50"/>
+      <Setter Property="Foreground" Value="#FFF6E9"/>
+      <Setter Property="Background" Value="#28394E"/>
     </Style>
     <Style Selector="Button.bp-nav.selected">
       <Setter Property="Foreground" Value="#FFFFFF"/>
-      <Setter Property="Background" Value="#304E65"/>
+      <Setter Property="Background" Value="#32475F"/>
       <Setter Property="FontWeight" Value="SemiBold"/>
     </Style>
     <Style Selector="Button.bp-tile">
-      <Setter Property="Background" Value="#182638"/>
-      <Setter Property="BorderBrush" Value="#354A60"/>
+      <Setter Property="Background" Value="#151D2A"/>
+      <Setter Property="BorderBrush" Value="#34475D"/>
       <Setter Property="BorderThickness" Value="2"/>
       <Setter Property="CornerRadius" Value="10"/>
       <Setter Property="Padding" Value="0"/>
@@ -43,13 +43,13 @@
       </Setter>
     </Style>
     <Style Selector="Button.bp-tile:pointerover, Button.bp-tile:focus-visible">
-      <Setter Property="Background" Value="#284457"/>
-      <Setter Property="BorderBrush" Value="#9DDFEE"/>
+      <Setter Property="Background" Value="#31445B"/>
+      <Setter Property="BorderBrush" Value="#F0C58C"/>
       <Setter Property="BorderThickness" Value="3"/>
     </Style>
     <Style Selector="Button.bp-primary">
-      <Setter Property="Background" Value="#B7E7FA"/>
-      <Setter Property="Foreground" Value="#071724"/>
+      <Setter Property="Background" Value="#F0C58C"/>
+      <Setter Property="Foreground" Value="#24190E"/>
       <Setter Property="BorderThickness" Value="0"/>
       <Setter Property="CornerRadius" Value="8"/>
       <Setter Property="Padding" Value="25,13"/>
@@ -57,44 +57,77 @@
       <Setter Property="FontSize" Value="16"/>
     </Style>
     <Style Selector="Button.bp-primary:pointerover">
-      <Setter Property="Background" Value="#E3F7FF"/>
+      <Setter Property="Background" Value="#FFE0B3"/>
     </Style>
     <Style Selector="Button.bp-secondary">
       <Setter Property="Background" Value="#6B253A4B"/>
-      <Setter Property="Foreground" Value="#E8F2FA"/>
+      <Setter Property="Foreground" Value="#F5F0E9"/>
       <Setter Property="BorderBrush" Value="#526579"/>
       <Setter Property="BorderThickness" Value="1"/>
       <Setter Property="CornerRadius" Value="8"/>
       <Setter Property="Padding" Value="18,12"/>
     </Style>
     <Style Selector="Button.bp-secondary:pointerover">
-      <Setter Property="Background" Value="#456075"/>
+      <Setter Property="Background" Value="#3C5369"/>
+    </Style>
+    <Style Selector="Button.bp-mode">
+      <Setter Property="Background" Value="#182335"/>
+      <Setter Property="Foreground" Value="#A9B6C6"/>
+      <Setter Property="BorderBrush" Value="#354459"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="10"/>
+      <Setter Property="Padding" Value="14,10"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style Selector="Button.bp-mode.active">
+      <Setter Property="Background" Value="#3C342F"/>
+      <Setter Property="Foreground" Value="#FFD99F"/>
+      <Setter Property="BorderBrush" Value="#E9B879"/>
+    </Style>
+    <Style Selector="Button.bp-mode:pointerover, Button.bp-mode:focus-visible">
+      <Setter Property="BorderBrush" Value="#F0C58C"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
+    </Style>
+    <Style Selector="Button.bp-list-row">
+      <Setter Property="Background" Value="#182332"/>
+      <Setter Property="BorderBrush" Value="#2C3C50"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="10"/>
+      <Setter Property="Padding" Value="12,8"/>
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+      <Setter Property="Margin" Value="0,0,0,4"/>
+    </Style>
+    <Style Selector="Button.bp-list-row:pointerover, Button.bp-list-row:focus-visible">
+      <Setter Property="Background" Value="#2B3B4D"/>
+      <Setter Property="BorderBrush" Value="#F0C58C"/>
+      <Setter Property="BorderThickness" Value="1"/>
     </Style>
   </UserControl.Styles>
-  <Grid x:Name="BigPictureRoot" AutomationProperties.AutomationId="Lapis.Library.Root" RowDefinitions="*,46"
-        Background="#0A111C">
+  <Grid x:Name="BigPictureRoot" AutomationProperties.AutomationId="Lapis.Library.Root" RowDefinitions="*,52"
+        Background="#090D14">
 
     <ScrollViewer Grid.Row="0" x:Name="BigPictureScroll"
                   HorizontalScrollBarVisibility="Disabled"
                   VerticalScrollBarVisibility="Auto">
-      <StackPanel Spacing="25" Margin="42,28,42,42">
+      <StackPanel Spacing="25" Margin="38,26,38,42">
 
         <!-- Hero backdrop is sourced only from user-imported media artwork.
              It is not a fictitious poster or an external metadata scrape. -->
         <Border x:Name="BigPictureHero" AutomationProperties.AutomationId="Lapis.Library.Hero" Height="310" ClipToBounds="True"
-                CornerRadius="16" Background="#142336"
-                BorderBrush="#33495F" BorderThickness="1"
-                IsVisible="{Binding HasFeaturedCard}">
+                CornerRadius="22" Background="#18263A"
+                BorderBrush="#3A4C61" BorderThickness="1"
+                IsVisible="{Binding ShowFeaturedHero}">
           <Grid>
             <Image Source="{Binding FeaturedCard.Poster}" Stretch="UniformToFill"
-                   Opacity="0.3"/>
+                   Opacity="0.45"/>
             <Border Background="#9A0B1726"/>
             <Grid ColumnDefinitions="*,392" Margin="38,26,28,26"
                   ColumnSpacing="24">
               <StackPanel VerticalAlignment="Center" Spacing="10">
-                <TextBlock Text="NOW IN YOUR CINEMA" FontSize="12"
+                <TextBlock Text="TONIGHT AT LAPIS" FontSize="12"
                            LetterSpacing="2" FontWeight="Bold"
-                           Foreground="#9EDBE9"/>
+                           Foreground="#F3C688"/>
                 <TextBlock Text="{Binding FeaturedCard.Title}" FontSize="38"
                            FontWeight="SemiBold" Foreground="#FFFFFF"
                            TextTrimming="CharacterEllipsis" MaxLines="2"
@@ -135,8 +168,8 @@
         </Border>
 
         <Border IsVisible="{Binding IsEmpty}" Height="320"
-                CornerRadius="14" Background="#17273A"
-                BorderBrush="#32465A" BorderThickness="1" Padding="48">
+                CornerRadius="14" Background="#151F2E"
+                BorderBrush="#304258" BorderThickness="1" Padding="48">
           <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
                       Spacing="16">
             <TextBlock Text="你的家庭影院，從這裡開始" FontSize="30"
@@ -150,7 +183,7 @@
         </Border>
 
         <!-- User-curated, independent of playback progress and imports. -->
-        <StackPanel Spacing="12" IsVisible="{Binding HasFavorites}">
+        <StackPanel Spacing="12" IsVisible="{Binding ShowFavoritesShelf}">
           <Grid ColumnDefinitions="*,Auto">
             <TextBlock Text="我的最愛" FontSize="25" FontWeight="SemiBold"
                        AutomationProperties.AutomationId="Lapis.Library.FavoritesHeading"/>
@@ -174,7 +207,7 @@
                           PointerEntered="TilePointerEntered"
                           AutomationProperties.Name="{Binding Title}">
                     <Grid RowDefinitions="145,*">
-                      <Border Background="#243449" CornerRadius="8"
+                      <Border Background="#222E40" CornerRadius="8"
                               ClipToBounds="True">
                         <Grid>
                           <Image Source="{Binding Poster}" Stretch="Uniform"/>
@@ -191,7 +224,7 @@
                       </Border>
                       <TextBlock Grid.Row="1" Text="{Binding Title}" Margin="9,6"
                                  FontSize="14" TextTrimming="CharacterEllipsis"
-                                 Foreground="#F0F5FA" VerticalAlignment="Center"/>
+                                 Foreground="#F6F2EC" VerticalAlignment="Center"/>
                     </Grid>
                   </Button>
                 </DataTemplate>
@@ -201,7 +234,7 @@
         </StackPanel>
 
         <!-- Resumable local files, sorted by the last viewing session. -->
-        <StackPanel Spacing="12" IsVisible="{Binding HasContinueWatching}">
+        <StackPanel Spacing="12" IsVisible="{Binding ShowContinueShelf}">
           <TextBlock Text="繼續觀看" FontSize="25" FontWeight="SemiBold"
                      AutomationProperties.AutomationId="Lapis.Library.ContinueWatchingHeading"/>
           <ScrollViewer HorizontalScrollBarVisibility="Auto"
@@ -220,7 +253,7 @@
                           PointerEntered="TilePointerEntered"
                           AutomationProperties.Name="{Binding Title}">
                     <Grid RowDefinitions="149,4,*">
-                      <Border Grid.Row="0" CornerRadius="8" Background="#243449"
+                      <Border Grid.Row="0" CornerRadius="8" Background="#222E40"
                               ClipToBounds="True">
                         <Grid>
                           <Image Source="{Binding Poster}" Stretch="Uniform"/>
@@ -232,7 +265,7 @@
                       </Border>
                       <ProgressBar Grid.Row="1" Minimum="0" Maximum="100"
                                    Height="4" Value="{Binding ProgressPercent}"
-                                   Foreground="#B7E7FA" Background="#314256"
+                                   Foreground="#F0C58C" Background="#314256"
                                    IsHitTestVisible="False"/>
                       <StackPanel Grid.Row="2" Margin="10,5" Spacing="2">
                         <TextBlock Text="{Binding Title}" FontSize="14"
@@ -250,7 +283,7 @@
 
         <!-- A separate activity shelf: completed films remain visible, but
              cannot masquerade as resumable playback bookmarks. -->
-        <StackPanel Spacing="12" IsVisible="{Binding HasRecentlyWatched}">
+        <StackPanel Spacing="12" IsVisible="{Binding ShowHistoryShelf}">
           <Grid ColumnDefinitions="*,Auto">
             <TextBlock Text="最近觀看" FontSize="25" FontWeight="SemiBold"
                        AutomationProperties.AutomationId="Lapis.Library.HistoryHeading"/>
@@ -274,7 +307,7 @@
                           PointerEntered="TilePointerEntered"
                           AutomationProperties.Name="{Binding Title}">
                     <Grid RowDefinitions="145,*">
-                      <Border Background="#243449" CornerRadius="8" ClipToBounds="True">
+                      <Border Background="#222E40" CornerRadius="8" ClipToBounds="True">
                         <Grid>
                           <Image Source="{Binding Poster}" Stretch="Uniform"/>
                           <TextBlock Text="{Binding PlaceholderGlyph}" FontSize="64" Foreground="#647B93"
@@ -289,7 +322,7 @@
                       </Border>
                       <TextBlock Grid.Row="1" Text="{Binding Title}" Margin="9,6"
                                  FontSize="14" TextTrimming="CharacterEllipsis"
-                                 Foreground="#F0F5FA" VerticalAlignment="Center"/>
+                                 Foreground="#F6F2EC" VerticalAlignment="Center"/>
                     </Grid>
                   </Button>
                 </DataTemplate>
@@ -330,12 +363,12 @@
                     <ContextMenu>
                       <MenuItem Header="▶ 播放" Click="ContextPlay_Click"
                                 CommandParameter="{Binding}"/>
-                      <MenuItem Header="☷ 管理收藏" Click="ContextManage_Click"/>
+                      <MenuItem Header="檢視與管理" Click="ContextManage_Click" CommandParameter="{Binding}"/>
                     </ContextMenu>
                   </Button.ContextMenu>
                   <Grid RowDefinitions="154,*">
                     <Border Grid.Row="0" ClipToBounds="True"
-                            Background="#243449" CornerRadius="8">
+                            Background="#222E40" CornerRadius="8">
                       <Grid>
                         <Image Source="{Binding Poster}" Stretch="Uniform"/>
                         <TextBlock Text="{Binding PlaceholderGlyph}" IsVisible="{Binding ShowPlaceholder}"
@@ -366,9 +399,17 @@
                      FontSize="25" FontWeight="SemiBold"
                      VerticalAlignment="Center"/>
           <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
+            <Button Classes="bp-mode" Classes.active="{Binding IsGridView}"
+                    Content="▦ 海報" Click="Grid_Click" Height="42"
+                    AutomationProperties.AutomationId="Lapis.Library.GridMode"
+                    AutomationProperties.Name="切換海報檢視"/>
+            <Button Classes="bp-mode" Classes.active="{Binding IsListView}"
+                    Content="☷ 清單" Click="List_Click" Height="42"
+                    AutomationProperties.AutomationId="Lapis.Library.ListMode"
+                    AutomationProperties.Name="切換清單檢視"/>
             <ComboBox ItemsSource="{Binding SortOptions}"
                       SelectedItem="{Binding SelectedSort, Mode=TwoWay}"
-                      Width="140" Height="40">
+                      Width="152" Height="42">
               <ComboBox.ItemTemplate>
                 <DataTemplate>
                   <TextBlock Text="{Binding Label}"/>
@@ -376,9 +417,9 @@
               </ComboBox.ItemTemplate>
             </ComboBox>
             <TextBox Text="{Binding SearchText, Mode=TwoWay}"
-                     Watermark="搜尋電影或路徑" Width="250" Height="40"
-                     Background="#19283B" CornerRadius="8"
-                     Foreground="#F4F7FA" BorderBrush="#39516A"/>
+                     Watermark="搜尋片名或檔案路徑" Width="248" Height="42"
+                     Background="#182436" CornerRadius="8"
+                     Foreground="#F7F2EB" BorderBrush="#3B4A60"/>
           </StackPanel>
         </Grid>
 
@@ -386,7 +427,7 @@
                    IsVisible="{Binding HasNoResults}" FontSize="15"
                    Foreground="#A9BED0" Margin="0,16"/>
 
-        <ItemsControl ItemsSource="{Binding VisibleItems}">
+        <ItemsControl IsVisible="{Binding IsGridView}" ItemsSource="{Binding VisibleItems}">
           <ItemsControl.ItemsPanel>
             <ItemsPanelTemplate>
               <WrapPanel Orientation="Horizontal"/>
@@ -404,11 +445,11 @@
                   <ContextMenu>
                     <MenuItem Header="▶ 播放" Click="ContextPlay_Click"
                               CommandParameter="{Binding}"/>
-                    <MenuItem Header="☷ 管理收藏" Click="ContextManage_Click"/>
+                    <MenuItem Header="檢視與管理" Click="ContextManage_Click" CommandParameter="{Binding}"/>
                   </ContextMenu>
                 </Button.ContextMenu>
                 <Grid RowDefinitions="137,*">
-                  <Border Grid.Row="0" Background="#25364A" CornerRadius="7"
+                  <Border Grid.Row="0" Background="#212E41" CornerRadius="7"
                           ClipToBounds="True">
                     <Grid>
                       <Image Source="{Binding Poster}" Stretch="Uniform"/>
@@ -433,24 +474,91 @@
             </DataTemplate>
           </ItemsControl.ItemTemplate>
         </ItemsControl>
+        <!-- Alternative projection over the SAME VisibleItems collection. -->
+        <Border IsVisible="{Binding IsListView}" Background="#111924"
+                BorderBrush="#334155" BorderThickness="1"
+                CornerRadius="14" Padding="12,12,12,8"
+                AutomationProperties.AutomationId="Lapis.Library.ListSurface">
+          <StackPanel Spacing="10">
+            <Grid ColumnDefinitions="64,3*,108,2*,122,126" ColumnSpacing="12"
+                  Margin="10,0,10,2">
+              <TextBlock Grid.Column="0" Text="封面" Foreground="#91A3B5" FontSize="12"/>
+              <TextBlock Grid.Column="1" Text="片名" Foreground="#91A3B5" FontSize="12"/>
+              <TextBlock Grid.Column="2" Text="類型" Foreground="#91A3B5" FontSize="12"/>
+              <TextBlock Grid.Column="3" Text="來源位置" Foreground="#91A3B5" FontSize="12"/>
+              <TextBlock Grid.Column="4" Text="加入日期" Foreground="#91A3B5" FontSize="12"/>
+              <TextBlock Grid.Column="5" Text="狀態" Foreground="#91A3B5" FontSize="12"/>
+            </Grid>
+            <ItemsControl ItemsSource="{Binding VisibleItems}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Button Classes="bp-tile bp-list-row"
+                          CommandParameter="{Binding}"
+                          Click="TilePlay_Click" GotFocus="TileGotFocus"
+                          PointerEntered="TilePointerEntered"
+                          AutomationProperties.Name="{Binding Title}">
+                    <Button.ContextMenu>
+                      <ContextMenu>
+                        <MenuItem Header="▶ 播放" Click="ContextPlay_Click" CommandParameter="{Binding}"/>
+                        <MenuItem Header="檢視與管理" Click="ContextManage_Click" CommandParameter="{Binding}"/>
+                      </ContextMenu>
+                    </Button.ContextMenu>
+                    <Grid ColumnDefinitions="64,3*,108,2*,122,126"
+                          ColumnSpacing="12" Height="55">
+                      <Border Grid.Column="0" CornerRadius="7" Background="#253247"
+                              ClipToBounds="True">
+                        <Grid>
+                          <Image Source="{Binding Poster}" Stretch="Uniform"/>
+                          <TextBlock Text="{Binding PlaceholderGlyph}"
+                                     IsVisible="{Binding ShowPlaceholder}"
+                                     FontSize="27" Foreground="#647B93"
+                                     HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Grid>
+                      </Border>
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
+                        <TextBlock Text="{Binding Title}" FontSize="14"
+                                   FontWeight="SemiBold" Foreground="#F6F2EC"
+                                   TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="{Binding ProgressLabel}" FontSize="11"
+                                   Foreground="#9DAEC2" TextTrimming="CharacterEllipsis"/>
+                      </StackPanel>
+                      <TextBlock Grid.Column="2" Text="{Binding KindLabel}"
+                                 VerticalAlignment="Center" FontSize="12"
+                                 Foreground="#D0B893" TextTrimming="CharacterEllipsis"/>
+                      <TextBlock Grid.Column="3" Text="{Binding SourcePath}"
+                                 VerticalAlignment="Center" FontSize="11"
+                                 Foreground="#A9B6C7" TextTrimming="CharacterEllipsis"/>
+                      <TextBlock Grid.Column="4" Text="{Binding ImportedAtText}"
+                                 VerticalAlignment="Center" FontSize="12" Foreground="#B6C2D0"/>
+                      <TextBlock Grid.Column="5" Text="{Binding AvailabilityLabel}"
+                                 VerticalAlignment="Center" FontSize="11"
+                                 Foreground="#D5DDE6" TextTrimming="CharacterEllipsis"/>
+                    </Grid>
+                  </Button>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Border>
+
       </StackPanel>
     </ScrollViewer>
 
     <Border Grid.Row="1" BorderBrush="#2D4053" BorderThickness="0,1,0,0"
-            Background="#F009121E" Padding="35,8">
+            Background="#EF0C111A" Padding="35,8">
       <Grid ColumnDefinitions="*,Auto">
         <TextBlock Text="{Binding StatusText}" Foreground="#8FA2B6"
                    FontSize="12" TextTrimming="CharacterEllipsis"
                    VerticalAlignment="Center"/>
         <TextBlock Grid.Column="1"
-                   Text="手把：方向鍵選片 · A 詳情／確認 · B 返回 · LB/RB 切分類 · Menu 管理   ｜   鍵盤：方向鍵／Enter／Esc"
+                   Text="手把：方向鍵選片 · A 詳情／確認 · B 返回 · LB/RB 切分類 · Menu 切換檢視   ｜   鍵盤：方向鍵／Enter／Esc"
                    Foreground="#AEC0CF" FontSize="12"
                    VerticalAlignment="Center"/>
       </Grid>
     </Border>
     <!-- Cinematic detail sheet: inspect a film before committing to playback. -->
     <Grid x:Name="BigPictureDetailsOverlay" Grid.RowSpan="2" ZIndex="80"
-          IsVisible="False" Background="#E90A111C"
+          IsVisible="False" Background="#ED070B12"
           AutomationProperties.AutomationId="Lapis.Library.DetailOverlay">
       <Border Background="#132235" BorderBrush="#3D566D" BorderThickness="1"
               CornerRadius="18" Padding="44" Margin="35" MaxWidth="1050"
@@ -458,7 +566,7 @@
         <Grid ColumnDefinitions="*,328" ColumnSpacing="28" MinHeight="380">
           <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="16">
             <TextBlock Text="你的電影收藏" FontSize="12" FontWeight="SemiBold"
-                       Foreground="#9DDDEE" LetterSpacing="2"/>
+                       Foreground="#F3C688" LetterSpacing="2"/>
             <TextBlock Text="{Binding FeaturedCard.Title}" FontSize="36"
                        FontWeight="SemiBold" TextWrapping="Wrap"
                        MaxLines="3" Foreground="#F7FAFD"/>
@@ -474,7 +582,7 @@
                        AutomationProperties.AutomationId="Lapis.Library.RenameInput"
                        MaxLength="160" Width="440" HorizontalAlignment="Left"
                        Watermark="輸入電影片名" FontSize="17"
-                       Background="#1D3044" Foreground="#F2FAFF"/>
+                       Background="#1D3044" Foreground="#FFF6E9"/>
               <TextBlock x:Name="BigPictureRenameError" IsVisible="False"
                          Foreground="#EAB4A3" TextWrapping="Wrap"
                          FontSize="12"/>
@@ -494,7 +602,7 @@
                          Foreground="#AFC2D1" FontSize="14"/>
             </StackPanel>
             <TextBlock Text="收藏資訊" FontSize="15" FontWeight="Medium"
-                       Margin="0,12,0,0" Foreground="#F0F5FA"/>
+                       Margin="0,12,0,0" Foreground="#F6F2EC"/>
             <StackPanel Orientation="Horizontal" Spacing="12">
               <TextBlock Text="加入日期" FontSize="13" Foreground="#99AEC0"/>
               <TextBlock Text="{Binding FeaturedCard.ImportedAtText}"
@@ -508,10 +616,10 @@
                        IsVisible="{Binding FeaturedCard.ShowPlaceholder}"/>
             <TextBlock Text="{Binding FeaturedCard.HistoryLabel}"
                        IsVisible="{Binding FeaturedCard.HasWatchHistory}"
-                       Foreground="#9DDDEE" FontSize="14"/>
+                       Foreground="#F3C688" FontSize="14"/>
             <TextBlock Text="{Binding FeaturedCard.ProgressLabel}"
                        IsVisible="{Binding FeaturedCard.CanResume}"
-                       Foreground="#B7E7FA" FontSize="14"/>
+                       Foreground="#F0C58C" FontSize="14"/>
             <TextBlock Text="來源移動或硬碟代號改變？選擇原本同一部影片或 Blu-ray 的新位置，保留觀看紀錄與最愛。"
                        IsVisible="{Binding FeaturedCard.NeedsSourceRepair}"
                        TextWrapping="Wrap" FontSize="13" Foreground="#E9C39D" MaxWidth="490"/>

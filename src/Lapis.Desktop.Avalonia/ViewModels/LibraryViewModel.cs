@@ -43,6 +43,9 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
     public bool HasFavorites => FavoriteItems.Count != 0;
     public bool HasRecentlyWatched => RecentlyWatchedItems.Count != 0;
     public bool HasContinueWatching => ContinueWatchingItems.Count != 0;
+    public bool ShowFavoritesShelf => HasFavorites && IsGridView;
+    public bool ShowHistoryShelf => HasRecentlyWatched && IsGridView;
+    public bool ShowContinueShelf => HasContinueWatching && IsGridView;
 
     /// <summary>Local bookmarks are independent of the media catalog.</summary>
     public void LoadWatchProgress(IEnumerable<WatchProgress> snapshots)
@@ -129,6 +132,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
             .ToArray();
         ReconcileItems(FavoriteItems, favorites);
         Notify(nameof(HasFavorites));
+        Notify(nameof(ShowFavoritesShelf));
 
         var recentlyWatched = _cards.Values
             .Where(card => card.HasWatchHistory && card.IsAvailable &&
@@ -139,6 +143,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
             .ToArray();
         ReconcileItems(RecentlyWatchedItems, recentlyWatched);
         Notify(nameof(HasRecentlyWatched));
+        Notify(nameof(ShowHistoryShelf));
         var watching = _cards.Values
             .Where(card => card.CanResume &&
                 _category == LibraryCategory.All &&
@@ -148,10 +153,12 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
             .ToArray();
         ReconcileItems(ContinueWatchingItems, watching);
         Notify(nameof(HasContinueWatching));
+        Notify(nameof(ShowContinueShelf));
     }
 
     public LibraryCardViewModel? FeaturedCard => _featuredCard;
     public bool HasFeaturedCard => _featuredCard is not null;
+    public bool ShowFeaturedHero => HasFeaturedCard && IsGridView;
 
     public void SelectFeatured(LibraryCardViewModel? card)
     {
@@ -161,6 +168,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
         _featuredCard?.EnsurePosterLoaded();
         Notify(nameof(FeaturedCard));
         Notify(nameof(HasFeaturedCard));
+        Notify(nameof(ShowFeaturedHero));
     }
 
     public static IReadOnlyList<LibrarySortChoice> SortChoices { get; } =
@@ -218,6 +226,11 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
             Notify();
             Notify(nameof(IsGridView));
             Notify(nameof(IsListView));
+            Notify(nameof(ShowFeaturedHero));
+            Notify(nameof(ShowFavoritesShelf));
+            Notify(nameof(ShowContinueShelf));
+            Notify(nameof(ShowHistoryShelf));
+            Notify(nameof(ShowRecentShelf));
         }
     }
 
@@ -230,7 +243,7 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
     public bool IsRecentlyAddedCategory => _category == LibraryCategory.RecentlyAdded;
     public bool IsHistoryCategory => _category == LibraryCategory.History;
     public bool IsFavoritesCategory => _category == LibraryCategory.Favorites;
-    public bool ShowRecentShelf => HasItems && _category == LibraryCategory.All &&
+    public bool ShowRecentShelf => IsGridView && HasItems && _category == LibraryCategory.All &&
         string.IsNullOrWhiteSpace(_searchText);
     public bool IsRecentlyAddedSort => SelectedSort.Mode == LibrarySortMode.RecentlyAdded;
 

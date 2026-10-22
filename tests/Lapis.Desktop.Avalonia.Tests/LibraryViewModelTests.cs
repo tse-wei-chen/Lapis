@@ -44,13 +44,23 @@ public sealed class LibraryViewModelTests
         Assert.Equal(LibraryDisplayMode.Grid, view.DisplayMode);
         Assert.True(view.IsGridView);
         Assert.False(view.IsListView);
+        Assert.True(view.ShowFeaturedHero);
+        Assert.True(view.ShowRecentShelf);
+
         view.ShowList();
         Assert.True(view.IsListView);
         Assert.False(view.IsGridView);
+        Assert.False(view.ShowFeaturedHero);
+        Assert.False(view.ShowRecentShelf);
+        Assert.False(view.ShowFavoritesShelf);
+        Assert.False(view.ShowContinueShelf);
+        Assert.False(view.ShowHistoryShelf);
         Assert.Same(item, Assert.Single(view.VisibleItems));
 
         view.ShowGrid();
         Assert.True(view.IsGridView);
+        Assert.True(view.ShowFeaturedHero);
+        Assert.True(view.ShowRecentShelf);
         Assert.Same(item, Assert.Single(view.VisibleItems));
         Assert.Equal(1, storage.ImportCount);
     }
