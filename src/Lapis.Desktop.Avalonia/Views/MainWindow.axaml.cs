@@ -48,10 +48,13 @@ public sealed partial class MainWindow : Window
     private readonly Button _navVideos;
     private readonly Button _navRecent;
     private readonly Button _navHistory;
+    private readonly Button _navFavorites;
     private readonly TextBlock _currentHeading;
     private readonly PlayerViewModel _player;
     private readonly LibraryViewModel _library;
     private readonly JsonWatchProgressStore _watchProgressStore;
+    private readonly JsonFavoriteStore _favoriteStore;
+    private readonly HashSet<Guid> _pendingFavoriteChanges = [];
     private LibraryCardViewModel? _activeWatchCard;
     private readonly DispatcherTimer _watchProgressTimer = new()
         { Interval = TimeSpan.FromSeconds(10) };
@@ -103,6 +106,8 @@ public sealed partial class MainWindow : Window
             ?? throw new InvalidOperationException("Missing Recently Added nav item.");
         _navHistory = this.FindControl<Button>("NavigationHistory")
             ?? throw new InvalidOperationException("Missing Watch History nav item.");
+        _navFavorites = this.FindControl<Button>("NavigationFavorites")
+            ?? throw new InvalidOperationException("Missing Favorites nav item.");
         _currentHeading = this.FindControl<TextBlock>("LibraryCurrentHeading")
             ?? throw new InvalidOperationException("Missing library heading.");
 
@@ -120,6 +125,7 @@ public sealed partial class MainWindow : Window
         _library = new LibraryViewModel(new JsonMediaLibrary(libraryFile));
         // Same parent path means E2E fixtures get a private bookmark journal.
         _watchProgressStore = new JsonWatchProgressStore(libraryFile + ".watch.v1.json");
+        _favoriteStore = new JsonFavoriteStore(libraryFile + ".favorites.v1.json");
         _player = new PlayerViewModel(
             new NativePlayerPlaybackService(() => _videoSurface.OutputHandle));
         _libraryPage.DataContext = _library;
@@ -128,6 +134,7 @@ public sealed partial class MainWindow : Window
         _bigPicture.PlayRequested += card => _ = PlayLibraryItemAsync(card, resume: false);
         _bigPicture.ResumeRequested += card => _ = PlayLibraryItemAsync(card, resume: true);
         _bigPicture.ForgetHistoryRequested += card => _ = ForgetHistoryAsync(card);
+        _bigPicture.ToggleFavoriteRequested += card => _ = ToggleFavoriteAsync(card);
         _bigPicture.ImportRequested += () => _ = ImportFromBigPictureAsync();
         _bigPicture.ImportDiscRequested += () => _ = ImportDiscCoreAsync();
         _bigPicture.ManageRequested += () => ShowLibraryManagement(true);
@@ -149,6 +156,14 @@ public sealed partial class MainWindow : Window
                 catch (Exception exception)
                 {
                     _library.ReportError($"觀影紀錄無法載入：{exception.Message}");
+                }
+                try
+                {
+                    _library.LoadFavorites(await _favoriteStore.LoadAsync());
+                }
+                catch (Exception exception)
+                {
+                    _library.ReportError($"我的最愛無法載入：{exception.Message}");
                 }
                 WindowState = WindowState.Maximized;
                 Dispatcher.UIThread.Post(_bigPicture.RestoreMovieFocus,
@@ -416,6 +431,8 @@ public sealed partial class MainWindow : Window
         ShellNavigate(_library.ShowVideos);
     private void ShellHistory_Click(object? sender, RoutedEventArgs args) =>
         ShellNavigate(_library.ShowHistory);
+    private void ShellFavorites_Click(object? sender, RoutedEventArgs args) =>
+        ShellNavigate(_library.ShowFavorites);
 
     private void ShellNavigate(Action navigate)
     {
@@ -497,6 +514,8 @@ public sealed partial class MainWindow : Window
         NavigateLibrary(_library.ShowRecentlyAdded);
     private void ShowHistory_Click(object? sender, RoutedEventArgs args) =>
         NavigateLibrary(_library.ShowHistory);
+    private void ShowFavorites_Click(object? sender, RoutedEventArgs args) =>
+        NavigateLibrary(_library.ShowFavorites);
 
     private void NavigateLibrary(Action navigate)
     {
@@ -524,6 +543,7 @@ public sealed partial class MainWindow : Window
             LibraryCategory.Videos => _navVideos,
             LibraryCategory.RecentlyAdded => _navRecent,
             LibraryCategory.History => _navHistory,
+            LibraryCategory.Favorites => _navFavorites,
             _ => _navAll
         };
         var origin = global::Avalonia.VisualExtensions.TranslatePoint(
@@ -843,6 +863,32 @@ public sealed partial class MainWindow : Window
         // Native render worker is stopped/detached before hiding the host.
         await _player.CloseAsync();
         RestoreLibraryView();
+    }
+
+    private async Task ToggleFavoriteAsync(LibraryCardViewModel card)
+    {
+        var id = card.Item.Id;
+        if (!_pendingFavoriteChanges.Add(id)) return;
+        try
+        {
+            var next = !card.IsFavorite;
+            await _favoriteStore.SetAsync(id, next);
+            if (!_closeStarted)
+            {
+                _library.SetFavorite(id, next);
+                _library.ReportError(next
+                    ? $"已加入我的最愛：{card.Title}" : $"已移出我的最愛：{card.Title}");
+            }
+        }
+        catch (Exception exception)
+        {
+            if (!_closeStarted)
+                _library.ReportError($"無法更新我的最愛：{exception.Message}");
+        }
+        finally
+        {
+            _pendingFavoriteChanges.Remove(id);
+        }
     }
 
     private async Task ForgetHistoryAsync(LibraryCardViewModel card)

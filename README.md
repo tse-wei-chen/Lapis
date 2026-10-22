@@ -89,6 +89,16 @@ delete a local cover after opening Lapis, open the movie details and click
 **重新掃描封面**. This rechecks sidecars immediately without reimporting the
 movie, touching the catalog, or restarting Native playback.
 
+## My Favorites
+
+In Movie Details, choose **☆ 加入我的最愛** to pin a local movie or Blu-ray
+disc to the **我的最愛** shelf and category. The pin is reversible, independent
+of viewing history, and never moves or modifies the media itself. Lapis stores
+favorites in a versioned, atomic sidecar beside the catalog under the user's
+local application data; corrupted or unsupported versions are preserved rather
+than silently reset. Missing/offline media remains pinned until the user
+explicitly removes it from Favorites.
+
 ## Repository layout
 
 ```text

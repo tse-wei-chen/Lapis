@@ -105,6 +105,29 @@ public sealed class WindowsDesktopJourneys
     }
 
     [Fact]
+    public async Task FavoriteMovieCanBePinnedFilteredAndUnpinnedInActualExe()
+    {
+        using var session = await DesktopSession.CreateAsync();
+        session.Start();
+        var main = session.MainWindow();
+        session.Click(session.WaitFor(main, "Lapis.Library.FeaturedDetails"));
+        session.Click(session.WaitFor(main, "Lapis.Library.DetailFavorite"));
+        session.WaitForName(main, "Lapis.Library.DetailFavorite", "移出我的最愛");
+        session.WaitForFavoriteCount(1);
+
+        session.Click(session.WaitFor(main, "Lapis.Library.FavoritesTab"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.FeaturedDetails"));
+        session.Click(session.WaitFor(main, "Lapis.Library.FeaturedDetails"));
+        session.WaitForName(main, "Lapis.Library.DetailFavorite", "移出我的最愛");
+        session.Click(session.WaitFor(main, "Lapis.Library.DetailFavorite"));
+        session.WaitForFavoriteCount(0);
+        session.Snapshot("09-favorites-unpinned");
+        session.Click(session.WaitFor(main, "Lapis.Library.Home"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.PlayFeatured"));
+        Assert.True(session.ProcessIsRunning);
+    }
+
+    [Fact]
     public async Task FilmCoverRefreshFindsNewSidecarAndClearsRemovedPoster()
     {
         using var session = await DesktopSession.CreateAsync();
@@ -220,6 +243,18 @@ internal sealed class DesktopSession : IDisposable
             "AAAAFklEQVR4nGPUmnOJgYGBiYGBgYGBAQASogGcsjuU1QAAAABJRU5ErkJggg=="));
         return path;
     }
+
+    public void WaitForFavoriteCount(int count) =>
+        _ = Eventually(() =>
+        {
+            try
+            {
+                var entries = new JsonFavoriteStore(_catalogPath + ".favorites.v1.json")
+                    .LoadAsync().GetAwaiter().GetResult();
+                return entries.Count == count ? new object() : null;
+            }
+            catch (IOException) { return null; }
+        }, TimeSpan.FromSeconds(15), "favorites count " + count);
 
     public bool ProcessIsRunning => _process is { HasExited: false };
 

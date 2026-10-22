@@ -229,6 +229,9 @@
             <Button Classes="shell-tab" Classes.selected="{Binding IsHistoryCategory}"
                     Content="觀看紀錄" Click="ShellHistory_Click"
                     AutomationProperties.AutomationId="Lapis.Library.HistoryTab"/>
+            <Button Classes="shell-tab" Classes.selected="{Binding IsFavoritesCategory}"
+                    Content="★ 我的最愛" Click="ShellFavorites_Click"
+                    AutomationProperties.AutomationId="Lapis.Library.FavoritesTab"/>
           </StackPanel>
           <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8"
                       VerticalAlignment="Center">
@@ -271,6 +274,9 @@
             <Button x:Name="NavigationHistory" Classes="library-nav"
                     Classes.selected="{Binding IsHistoryCategory}"
                     Content="◷   觀看紀錄" Click="ShowHistory_Click"/>
+            <Button x:Name="NavigationFavorites" Classes="library-nav"
+                    Classes.selected="{Binding IsFavoritesCategory}"
+                    Content="★   我的最愛" Click="ShowFavorites_Click"/>
             <Border Height="1" Background="{StaticResource LibraryBorder}" Margin="6,19,6,16"/>
             <TextBlock Text="匯入" Classes="sidebar-section" Margin="11,0,0,10"/>
             <TextBlock Text="使用頂端「＋ 新增媒體」，或拖曳影片、BDMV 資料夾匯入。"
