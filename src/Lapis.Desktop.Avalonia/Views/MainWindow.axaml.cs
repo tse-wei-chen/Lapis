@@ -1039,8 +1039,9 @@ public sealed partial class MainWindow : Window
             DateTimeOffset.UtcNow);
         try
         {
-            await _watchProgressStore.SaveAsync(progress);
-            if (!_closeStarted && progress.IsHistoryEligible)
+            // The timer and the final close save can overlap. Apply only
+            // observations accepted by the journal's monotonic time guard.
+            if (await _watchProgressStore.TrySaveAsync(progress) && !_closeStarted)
             {
                 _library.UpdateWatchProgress(progress);
                 _library.UpdateWatchHistory(progress);

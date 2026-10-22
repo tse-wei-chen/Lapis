@@ -60,15 +60,32 @@ public sealed class JsonWatchProgressStore(string path)
     }
 
     public async Task SaveAsync(WatchProgress progress,
+        CancellationToken cancellationToken = default) =>
+        _ = await TrySaveAsync(progress, cancellationToken);
+
+    /// <summary>
+    /// Write an eligible observation only if it is newer than the stored
+    /// observation for the same movie. A delayed timer callback must not
+    /// resurrect an earlier resume position after completion or rewind
+    /// a newer seek. The result tells UI callers if the snapshot was
+    /// actually persisted, preventing stale in-memory shelf updates.
+    /// </summary>
+    public async Task<bool> TrySaveAsync(WatchProgress progress,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(progress);
         // A glance or failed playback must not destroy a previous bookmark.
-        if (!progress.IsHistoryEligible) return;
+        if (!progress.IsHistoryEligible) return false;
         await _gate.WaitAsync(cancellationToken);
         try
         {
             var state = await ReadAsync(cancellationToken);
+            // Look at history, not bookmarks: a completed movie deliberately
+            // has no resume bookmark, but still has a latest timestamp.
+            var existing = state.History.Find(item => item.ItemId == progress.ItemId);
+            if (existing is not null && existing.UpdatedAtUtc >= progress.UpdatedAtUtc)
+                return false;
+
             state.Bookmarks.RemoveAll(item => item.ItemId == progress.ItemId);
             if (progress.IsResumable)
                 state.Bookmarks.Add(progress);
@@ -77,6 +94,7 @@ public sealed class JsonWatchProgressStore(string path)
             state.History.Add(progress);
             TrimHistory(state.History);
             await WriteAsync(state, cancellationToken);
+            return true;
         }
         finally { _gate.Release(); }
     }

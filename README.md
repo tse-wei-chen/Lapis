@@ -133,6 +133,17 @@ uses the same cleanup logic. If a sidecar cleanup fails after catalog removal,
 Lapis reports the partial failure instead of pretending that all private
 metadata was erased.
 
+## Durable playback snapshots
+
+Lapis saves each eligible watch snapshot in an atomic, versioned local
+sidecar. Playback timer callbacks and the final close snapshot can race:
+the journal compares `UpdatedAtUtc` while holding its write gate, and rejects
+observations older than or equal to the latest persisted one for that movie.
+This prevents delayed writes from restoring obsolete resume positions after
+completion or a newer seek. Only accepted saves update the in-memory Continue
+Watching and History shelves. Starting a genuinely later viewing session is
+still allowed. No media file or Native playback ABI is changed.
+
 ## Repository layout
 
 ```text
