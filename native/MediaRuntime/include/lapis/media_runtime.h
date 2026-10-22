@@ -167,7 +167,9 @@ typedef struct lapis_playback_snapshot {
 /*
  * Output-surface binding is independent of playback discontinuities. None must
  * have a zero native_handle; Win32Window must have a non-zero HWND represented
- * as uintptr_t. The caller owns the HWND and must keep it alive until a later
+ * as uintptr_t. On Linux, X11Window holds a 32-bit X11 Window XID
+ * in native_handle (not a Display*). The host owns the window and must
+ * keep it alive until a later
  * successful detach/replacement, session close, or session destruction.
  * A successful call returns APPLIED if acknowledged by the render thread,
  * otherwise DEFERRED when no render generation is active. Both states guarantee
@@ -177,7 +179,8 @@ typedef struct lapis_playback_snapshot {
  */
 typedef enum lapis_video_output_surface_kind {
     LAPIS_VIDEO_OUTPUT_SURFACE_NONE = 0,
-    LAPIS_VIDEO_OUTPUT_SURFACE_WIN32_WINDOW = 1
+    LAPIS_VIDEO_OUTPUT_SURFACE_WIN32_WINDOW = 1,
+    LAPIS_VIDEO_OUTPUT_SURFACE_X11_WINDOW = 2
 } lapis_video_output_surface_kind;
 
 typedef struct lapis_video_output_surface {

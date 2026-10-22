@@ -7,7 +7,8 @@ namespace Lapis.Application.Runtime;
 public enum VideoOutputSurfaceKind
 {
     None = 0,
-    Win32Window = 1
+    Win32Window = 1,
+    X11Window = 2
 }
 
 public readonly record struct VideoOutputSurface(
@@ -15,6 +16,11 @@ public readonly record struct VideoOutputSurface(
     nint NativeHandle)
 {
     public static VideoOutputSurface None => default;
+
+    public static VideoOutputSurface ForX11Window(uint xid) =>
+        xid != 0
+            ? new VideoOutputSurface(VideoOutputSurfaceKind.X11Window, (nint)xid)
+            : throw new ArgumentException("An X11 window XID must be non-zero.", nameof(xid));
 
     public static VideoOutputSurface ForWin32Window(nint hwnd) =>
         hwnd != 0

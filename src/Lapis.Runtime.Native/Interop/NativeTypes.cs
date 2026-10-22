@@ -177,7 +177,8 @@ internal struct NativePlaybackSessionId
 internal enum NativeVideoOutputSurfaceKind : int
 {
     None = 0,
-    Win32Window = 1
+    Win32Window = 1,
+    X11Window = 2
 }
 
 internal enum NativeVideoOutputSurfaceBinding : int

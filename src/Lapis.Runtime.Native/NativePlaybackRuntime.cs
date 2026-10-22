@@ -988,6 +988,13 @@ public sealed class NativePlaybackRuntime : IPlaybackRuntime, IVideoOutputSurfac
                     Kind = NativeVideoOutputSurfaceKind.Win32Window,
                     NativeHandle = (nuint)surface.NativeHandle
                 },
+            VideoOutputSurfaceKind.X11Window when surface.NativeHandle > 0 &&
+                (ulong)surface.NativeHandle <= uint.MaxValue =>
+                new NativeVideoOutputSurface
+                {
+                    Kind = NativeVideoOutputSurfaceKind.X11Window,
+                    NativeHandle = (nuint)surface.NativeHandle
+                },
             _ => throw new ArgumentException(
                 "Invalid output-surface kind or native handle combination.",
                 nameof(surface))

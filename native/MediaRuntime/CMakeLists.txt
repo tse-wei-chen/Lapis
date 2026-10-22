@@ -96,6 +96,13 @@ if(WIN32)
         src/audio/wasapi/wasapi_shared_audio_output_provider.cpp
         src/video/d3d11/d3d11_video_presenter.cpp
     )
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # X11/XWayland CPU fallback; independent of Vulkan/Wayland and the Core.
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(XCB REQUIRED IMPORTED_TARGET xcb)
+    target_sources(Lapis.MediaRuntime.Platform PRIVATE
+        src/video/x11/xcb_software_video_presenter.cpp)
+    target_link_libraries(Lapis.MediaRuntime.Platform PRIVATE PkgConfig::XCB)
 endif()
 target_compile_features(Lapis.MediaRuntime.Platform PUBLIC cxx_std_20)
 set_target_properties(Lapis.MediaRuntime.Platform PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -719,7 +726,7 @@ if(BUILD_TESTING)
     add_test(NAME audio_output_contract COMMAND Lapis.MediaRuntime.AudioOutputContractTests)
 
     if(NOT WIN32)
-        # Headless is a test-only baseline, not a Linux desktop presenter.
+        # Unbound playback stays headless, including with the X11 adapter.
         add_executable(Lapis.MediaRuntime.HeadlessPlatformTests
             tests/linux_headless_platform.cpp)
         target_compile_features(Lapis.MediaRuntime.HeadlessPlatformTests
@@ -729,5 +736,17 @@ if(BUILD_TESTING)
         lapis_enable_strict_warnings(Lapis.MediaRuntime.HeadlessPlatformTests)
         add_test(NAME linux_headless_platform_boundary
             COMMAND Lapis.MediaRuntime.HeadlessPlatformTests)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            # Real window/pixel-readback smoke under Xvfb in Linux CI.
+            add_executable(Lapis.MediaRuntime.X11PresenterTests
+                tests/x11_software_presenter.cpp)
+            target_compile_features(Lapis.MediaRuntime.X11PresenterTests
+                PRIVATE cxx_std_20)
+            target_link_libraries(Lapis.MediaRuntime.X11PresenterTests
+                PRIVATE Lapis.MediaRuntime.Platform PkgConfig::XCB)
+            lapis_enable_strict_warnings(Lapis.MediaRuntime.X11PresenterTests)
+            add_test(NAME x11_real_window_pixel_readback
+                COMMAND Lapis.MediaRuntime.X11PresenterTests)
+        endif()
     endif()
 endif()
