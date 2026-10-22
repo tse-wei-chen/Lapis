@@ -8,7 +8,7 @@ namespace Lapis.Library;
 /// a failed write from silently truncating the existing library.
 /// IMediaLibrary permits a future SQLite adapter without UI or player changes.
 /// </summary>
-public sealed class JsonMediaLibrary(string catalogFilePath) : IMediaLibrary
+public sealed class JsonMediaLibrary(string catalogFilePath) : IRelinkableMediaLibrary
 {
     private const int SchemaVersion = 1;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
@@ -49,6 +49,44 @@ public sealed class JsonMediaLibrary(string catalogFilePath) : IMediaLibrary
             catalog.Items.Add(imported);
             await SaveAsync(catalog, cancellationToken);
             return imported;
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>
+    /// Repair a moved video or BDMV root while keeping its stable catalog ID,
+    /// title, import timestamp, favorite and watch-history associations.
+    /// Deliberately refuses overwriting a currently reachable source, and
+    /// refuses pointing two different items at the same canonical location.
+    /// </summary>
+    public async Task<MediaLibraryItem> RelinkAsync(Guid itemId, MediaLocator replacement,
+        CancellationToken cancellationToken = default)
+    {
+        if (itemId == Guid.Empty) throw new ArgumentException("無效的收藏項目。", nameof(itemId));
+        var source = LibrarySourcePaths.Normalize(replacement);
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var catalog = await ReadAsync(cancellationToken);
+            var index = catalog.Items.FindIndex(item => item.Id == itemId);
+            if (index < 0)
+                throw new KeyNotFoundException("找不到要修復的收藏項目。");
+
+            var previous = catalog.Items[index];
+            if (previous.Kind != source.Kind)
+                throw new InvalidOperationException("修復來源必須保持原本的媒體類型。");
+            if (PathComparer.Equals(previous.SourcePath, source.Value))
+                return previous; // The original drive may simply be mounted again.
+            if (previous.IsAvailable)
+                throw new InvalidOperationException("原始來源仍可存取，不可覆寫現有收藏路徑。");
+            if (catalog.Items.Any(item => item.Id != itemId &&
+                item.Kind == source.Kind && PathComparer.Equals(item.SourcePath, source.Value)))
+                throw new InvalidOperationException("所選路徑已屬於另一部收藏，請勿合併不同影片。");
+
+            var repaired = previous with { SourcePath = source.Value };
+            catalog.Items[index] = repaired;
+            await SaveAsync(catalog, cancellationToken);
+            return repaired;
         }
         finally { _gate.Release(); }
     }

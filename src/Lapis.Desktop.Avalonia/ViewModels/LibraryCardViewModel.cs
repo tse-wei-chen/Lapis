@@ -36,6 +36,19 @@ public sealed class LibraryCardViewModel : INotifyPropertyChanged, IDisposable
     public string SourcePath => Item.SourcePath;
     public string ImportedAtText => Item.ImportedAtUtc.ToLocalTime().ToString("yyyy/MM/dd");
     public bool IsAvailable => Item.IsAvailable;
+    public bool NeedsSourceRepair => !IsAvailable;
+
+    /// <summary>Refresh availability after unplugging a drive while the app is open.</summary>
+    public void RefreshSourceAvailability()
+    {
+        if (_disposed) return;
+        Notify(nameof(IsAvailable));
+        Notify(nameof(NeedsSourceRepair));
+        Notify(nameof(AvailabilityLabel));
+        Notify(nameof(CanResume));
+        Notify(nameof(PlayActionLabel));
+    }
+
     public bool IsDisc => Item.IsDisc;
     public Bitmap? Poster => _poster;
     public bool HasPoster => _poster is not null;

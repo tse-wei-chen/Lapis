@@ -259,7 +259,18 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
             _cards.Remove(stale);
         }
         foreach (var item in _items)
-            _cards.TryAdd(item.Id, new LibraryCardViewModel(item));
+        {
+            if (_cards.TryGetValue(item.Id, out var current))
+            {
+                if (current.Item == item) continue;
+                // A repaired source keeps its stable catalog ID but needs a
+                // fresh card for path availability, sidecar artwork and title.
+                current.Dispose();
+                _cards[item.Id] = new LibraryCardViewModel(item);
+            }
+            else
+                _cards.Add(item.Id, new LibraryCardViewModel(item));
+        }
         _loaded = true;
         UpdateWatchShelf();
         Notify(nameof(CountText));
@@ -325,6 +336,17 @@ public sealed class LibraryViewModel(IMediaLibrary library) : INotifyPropertyCha
                      $"略過 {failed} 個。" +
                      (firstError is null ? "" : $" 首個錯誤：{firstError}");
         return new LibraryDropImportResult(imported, alreadyStored, failed);
+    }
+
+    public async Task RelinkAsync(MediaLibraryItem item, MediaLocator replacement,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        if (_library is not IRelinkableMediaLibrary repairable)
+            throw new NotSupportedException("目前的收藏庫儲存方式不支援來源路徑修復。");
+        var updated = await repairable.RelinkAsync(item.Id, replacement, cancellationToken);
+        await LoadAsync(cancellationToken);
+        StatusText = $"已修復來源：{updated.Title}（保留最愛及觀看紀錄；未搬移原始檔案）";
     }
 
     public async Task RemoveAsync(MediaLibraryItem item, CancellationToken cancellationToken = default)

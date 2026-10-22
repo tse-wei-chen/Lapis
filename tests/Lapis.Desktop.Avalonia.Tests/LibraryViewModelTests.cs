@@ -275,6 +275,47 @@ public sealed class LibraryViewModelTests
     }
 
     [Fact]
+    public async Task SourceRepairReplacesStaleCardButKeepsLogicalFavoriteAndResumeState()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "lapis-relink-view-" + Guid.NewGuid());
+        Directory.CreateDirectory(root);
+        try
+        {
+            var oldPath = Path.Combine(root, "favorite.mp4");
+            var newPath = Path.Combine(root, "favorite-moved.mp4");
+            File.WriteAllText(oldPath, "original");
+            using var view = new LibraryViewModel(
+                new JsonMediaLibrary(Path.Combine(root, "catalog.json")));
+            await view.LoadAsync();
+            await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, oldPath));
+            var oldCard = Assert.Single(view.VisibleItems);
+            var now = DateTimeOffset.UtcNow;
+            view.LoadFavorites([new FavoriteEntry(oldCard.Item.Id, now)]);
+            view.LoadWatchProgress([new WatchProgress(oldCard.Item.Id, 90, 240, now)]);
+            File.Move(oldPath, newPath);
+            view.ShowFavorites();
+            Assert.True(oldCard.IsFavorite);
+            Assert.False(oldCard.IsAvailable);
+
+            await view.RelinkAsync(oldCard.Item, new MediaLocator(MediaLocatorKind.File, newPath));
+            var card = Assert.Single(view.VisibleItems);
+            Assert.NotSame(oldCard, card); // Poster loader must pick up new sidecar.
+            Assert.Equal(oldCard.Item.Id, card.Item.Id);
+            Assert.Equal(oldCard.Title, card.Title);
+            Assert.Equal(newPath, card.SourcePath);
+            Assert.True(card.IsFavorite);
+            Assert.True(card.CanResume);
+            Assert.True(card.IsAvailable);
+            view.ShowAll();
+            Assert.Same(card, Assert.Single(view.FavoriteItems));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task SidebarNavigationMaintainsExactlyOneActiveTarget()
     {
         using var view = new LibraryViewModel(new FakeLibrary());

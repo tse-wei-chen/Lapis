@@ -128,6 +128,22 @@ public sealed class WindowsDesktopJourneys
     }
 
     [Fact]
+    public async Task MissingMovieOffersSourceRepairInsteadOfBrokenPlayback()
+    {
+        using var session = await DesktopSession.CreateAsync();
+        var moved = session.MoveMovieOffline();
+        session.Start();
+        var main = session.MainWindow();
+        session.Click(session.WaitFor(main, "Lapis.Library.FeaturedDetails"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.DetailRepairSource"));
+        Assert.False(session.WaitFor(main, "Lapis.Library.DetailPlay").IsEnabled);
+        Assert.True(File.Exists(moved));
+        session.Snapshot("10-missing-source-repair");
+        session.Click(session.WaitFor(main, "Lapis.Library.DetailClose"));
+        Assert.True(session.ProcessIsRunning);
+    }
+
+    [Fact]
     public async Task FilmCoverRefreshFindsNewSidecarAndClearsRemovedPoster()
     {
         using var session = await DesktopSession.CreateAsync();
@@ -232,6 +248,15 @@ internal sealed class DesktopSession : IDisposable
         var item = Assert.Single(await new JsonMediaLibrary(_catalogPath).ListAsync());
         await new JsonWatchProgressStore(_catalogPath + ".watch.v1.json").SaveAsync(
             new WatchProgress(item.Id, 70, 240, DateTimeOffset.UtcNow));
+    }
+
+    public string MoveMovieOffline()
+    {
+        // Move *after* catalog import but *before* process launch. The app
+        // must keep the catalog entry and render a safe repair action.
+        var newPath = Path.Combine(_root, "same-video-moved.mp4");
+        File.Move(_mediaPath, newPath);
+        return newPath;
     }
 
     public string AddPosterFixture()

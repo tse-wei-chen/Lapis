@@ -99,6 +99,19 @@ local application data; corrupted or unsupported versions are preserved rather
 than silently reset. Missing/offline media remains pinned until the user
 explicitly removes it from Favorites.
 
+## Repair a moved or offline library source
+
+If a video moves to a different folder or a Blu-ray drive is remounted at
+another location, the original library entry is retained. Open that movie's
+details and use **修復來源位置…** to select the **same** local video file or
+complete BDMV disc root at its new location. Lapis validates the replacement
+before atomically updating the catalog. The movie ID, display title, original
+import date, favorites and watch history stay intact; no media bytes are
+copied or renamed. Only missing/offline items may be relinked: pointing a
+valid entry at a different source or duplicating another movie's catalog
+location is rejected. Relinking does not establish that two different video
+files contain identical content; the user must select the original movie.
+
 ## Repository layout
 
 ```text

@@ -12,3 +12,15 @@ public interface IMediaLibrary
     Task<MediaLibraryItem> ImportAsync(MediaLocator locator, CancellationToken cancellationToken = default);
     Task<bool> RemoveAsync(Guid id, CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// Optional catalog capability for repairing moved/offline media sources.
+/// Keeps the logical movie ID stable so watch progress and favorites remain
+/// attached to the same title. Implementations must validate new locations
+/// before atomically persisting the change.
+/// </summary>
+public interface IRelinkableMediaLibrary : IMediaLibrary
+{
+    Task<MediaLibraryItem> RelinkAsync(Guid itemId, MediaLocator replacement,
+        CancellationToken cancellationToken = default);
+}
