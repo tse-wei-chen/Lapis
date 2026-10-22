@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -122,6 +123,15 @@ int main() {
     CHECK(presenter.present(good, context) == VideoPresentStatus::Presented);
     CHECK(presenter.diagnostics().device_creations == 1);
     CHECK(presenter.diagnostics().swap_chain_creations == 1);
+
+    const auto present_batch_started = std::chrono::steady_clock::now();
+    for (int frame = 0; frame < 180; ++frame) {
+        const auto status = presenter.present(good, context);
+        CHECK(status == VideoPresentStatus::Presented ||
+            status == VideoPresentStatus::Dropped);
+    }
+    CHECK(std::chrono::steady_clock::now() - present_batch_started <
+        std::chrono::seconds(2));
 
     CHECK(MoveWindow(first, 100, 100, 500, 220, TRUE) != FALSE);
     CHECK(presenter.present(good, context) == VideoPresentStatus::Presented);

@@ -18,6 +18,7 @@ enum class VideoPresenterBeginStatus : std::uint8_t {
 
 enum class VideoPresentStatus : std::uint8_t {
     Presented,
+    Dropped,
     UnsupportedSurface,
     DeviceLost,
     Failed

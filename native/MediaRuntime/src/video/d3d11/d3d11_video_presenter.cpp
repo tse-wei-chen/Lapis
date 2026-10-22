@@ -320,7 +320,13 @@ public:
         // Unbind the input texture before reusing/replacing it on the next frame.
         ID3D11ShaderResourceView* empty_view = nullptr;
         context_->PSSetShaderResources(0, 1, &empty_view);
-        const auto present_hr = swap_chain_->Present(1, 0);
+        // Seek/close joins the render worker. Never let presentation wait for
+        // vblank or a full DXGI queue while that worker is being retired.
+        const auto present_hr = swap_chain_->Present(
+            0, DXGI_PRESENT_DO_NOT_WAIT);
+        if (present_hr == DXGI_ERROR_WAS_STILL_DRAWING) {
+            return VideoPresentStatus::Dropped;
+        }
         if (FAILED(present_hr)) {
             record_failure(VideoPresenterFailureStage::Present, present_hr);
         }
