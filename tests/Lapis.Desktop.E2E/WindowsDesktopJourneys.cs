@@ -409,8 +409,21 @@ internal sealed class DesktopSession : IDisposable
     {
         Assert.NotNull(_app);
         Assert.NotNull(_automation);
-        return _app!.GetMainWindow(_automation!, TimeSpan.FromSeconds(20))
-            ?? throw new InvalidOperationException("No real Lapis main window.");
+        // Fresh Windows GitHub runners occasionally let UIA return a
+        // transient COM timeout while Avalonia initializes its desktop.
+        // Retry the real EXE's main HWND (not a fake UI element), with an
+        // overall deadline, process-exit detection and screenshot artifacts.
+        return Eventually(() =>
+        {
+            try
+            {
+                return _app!.GetMainWindow(_automation!, TimeSpan.FromSeconds(4));
+            }
+            catch (TimeoutException)
+            {
+                return null;
+            }
+        }, TimeSpan.FromSeconds(30), "Lapis main window");
     }
 
     public Window WaitForWatch()

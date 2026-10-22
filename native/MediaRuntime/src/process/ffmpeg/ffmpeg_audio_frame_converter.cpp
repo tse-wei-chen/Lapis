@@ -5,6 +5,7 @@
 extern "C" {
 #include <libavutil/channel_layout.h>
 #include <libavutil/mathematics.h>
+#include <libavutil/mem.h>
 #include <libavutil/samplefmt.h>
 #include <libswresample/swresample.h>
 }
@@ -88,9 +89,16 @@ bool make_channel_layout(
         return false;
     }
 
-    if (av_channel_layout_custom_init(
-            &layout,
-            static_cast<int>(format.channels.size())) < 0) {
+    // Build the custom-order channel map through the public AVChannelLayout
+    // struct and FFmpeg allocator. Unlike a channel-mask layout, this
+    // preserves explicit surround-channel order on every supported FFmpeg
+    // target (including the Ubuntu system package).
+    layout.order = AV_CHANNEL_ORDER_CUSTOM;
+    layout.nb_channels = static_cast<int>(format.channels.size());
+    layout.u.map = static_cast<AVChannelCustom*>(
+        av_calloc(format.channels.size(), sizeof(AVChannelCustom)));
+    if (layout.u.map == nullptr) {
+        av_channel_layout_uninit(&layout);
         return false;
     }
 
