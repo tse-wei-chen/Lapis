@@ -237,9 +237,10 @@ public sealed class PlayerViewModel : INotifyPropertyChanged, IAsyncDisposable
         // Only inspect the actual playback state once serialization is held.
         if (!HasSeekableTransport)
             return Task.CompletedTask;
-        var position = _player.Snapshot.Position.ToTimeSpan() +
+        var snapshot = _player.Snapshot;
+        var position = snapshot.Position.ToTimeSpan() +
                        TimeSpan.FromSeconds(deltaSeconds);
-        var duration = _player.Snapshot.Duration?.ToTimeSpan();
+        var duration = snapshot.Duration?.ToTimeSpan();
         if (position < TimeSpan.Zero) position = TimeSpan.Zero;
         if (duration is not null && position > duration.Value)
             position = duration.Value;

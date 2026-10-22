@@ -3,6 +3,8 @@
 #include "process/ffmpeg/ffmpeg_audio_frame_converter.hpp"
 #include "process/ffmpeg/ffmpeg_video_frame_converter.hpp"
 #include "session/playback_media_session.hpp"
+#include "source/bluray/bluray_source.hpp"
+#include "source/file/file_source.hpp"
 #include "video/video_presenter.hpp"
 
 #include <algorithm>
@@ -11,6 +13,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -390,6 +393,80 @@ std::string audio_asset_path() {
     };
 }
 
+std::string bluray_asset_path() {
+    const auto utf8_path = filesystem_path_from_utf8(
+        LAPIS_TEST_BLURAY_MEDIA_PATH).u8string();
+    return {
+        reinterpret_cast<const char*>(utf8_path.data()),
+        utf8_path.size()
+    };
+}
+
+class TestBlurayDisc final : public lapis::media::bluray::IBlurayDisc {
+public:
+    explicit TestBlurayDisc(const std::filesystem::path& media_path)
+        : stream_(media_path) {}
+
+    [[nodiscard]] lapis::media::NavigationSnapshot navigation() const override {
+        using namespace lapis::media;
+        NavigationSnapshot snapshot;
+        snapshot.revision = 1;
+        snapshot.capabilities = NavigationCapability::Titles |
+                                NavigationCapability::Playlists;
+        TitleInfo title;
+        title.id = 0;
+        title.playlist_id = 1;
+        title.duration = MediaTime{35'000'000'000};
+        snapshot.titles.push_back(title);
+        snapshot.playlists.push_back({1, title.duration});
+        snapshot.selected_title = 0;
+        snapshot.selected_playlist = 1;
+        return snapshot;
+    }
+
+    lapis::media::StreamReadResult read(
+        std::span<std::byte> bytes) override {
+        return stream_.read(bytes);
+    }
+
+    lapis::media::StreamSeekResult seek(
+        std::int64_t offset,
+        lapis::media::SeekOrigin origin) override {
+        return stream_.seek(offset, origin);
+    }
+
+    [[nodiscard]] std::uint64_t size() const noexcept override {
+        return stream_.size().value_or(0);
+    }
+
+private:
+    lapis::media::FileByteStream stream_;
+};
+
+class TemporaryBdmvRoot final {
+public:
+    TemporaryBdmvRoot()
+        : root_(std::filesystem::temp_directory_path() /
+            ("lapis-bdmv-playback-" + std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count()))) {
+        std::filesystem::create_directories(root_ / "BDMV" / "PLAYLIST");
+        std::filesystem::create_directories(root_ / "BDMV" / "STREAM");
+        std::ofstream(root_ / "BDMV" / "index.bdmv").put('B');
+    }
+
+    ~TemporaryBdmvRoot() {
+        std::error_code error;
+        std::filesystem::remove_all(root_, error);
+    }
+
+    [[nodiscard]] const std::filesystem::path& path() const noexcept {
+        return root_;
+    }
+
+private:
+    std::filesystem::path root_;
+};
+
 } // namespace
 
 int main() {
@@ -583,6 +660,94 @@ int main() {
         for (std::size_t index = 0; index < probe->presented_epochs.size(); ++index) {
             CHECK(probe->pixel_formats[index] == VideoPixelFormat::Bgra8);
         }
+    }
+
+    // Exercise timestamp seeks and temporary fast-forward through the actual
+    // Blu-ray source adapter, MPEG-TS demux hint and custom FFmpeg AVIO path.
+    // The fake disc supplies synthetic M2TS bytes; this is not a claim of real
+    // libbluray/hardware acceptance.
+    {
+        TemporaryBdmvRoot bdmv;
+        const auto media_path = filesystem_path_from_utf8(bluray_asset_path());
+        PlaybackMediaSession media;
+        media.register_source_provider(
+            std::make_unique<bluray::BluraySourceProvider>(
+                [media_path](const std::filesystem::path&) {
+                    return std::make_unique<TestBlurayDisc>(media_path);
+                }));
+
+        const auto root_bytes = bdmv.path().u8string();
+        std::string root_path;
+        root_path.reserve(root_bytes.size());
+        for (const char8_t character : root_bytes) {
+            root_path.push_back(static_cast<char>(character));
+        }
+        const auto opened = media.open({
+            MediaLocatorKind::Directory, std::move(root_path)
+        });
+        CHECK(opened.ok());
+        CHECK(opened.has_video);
+        CHECK(opened.duration.has_value());
+        CHECK(opened.duration->nanoseconds >= 35'000'000'000);
+
+        auto probe = std::make_shared<PresenterProbe>();
+        PlaybackExecution execution(
+            media,
+            std::make_unique<ffmpeg::FfmpegVideoFrameConverter>(),
+            std::make_unique<RecordingPresenter>(probe));
+        CHECK(execution.start(PlaybackEpoch{1}, MediaTime{}).ok());
+        CHECK(wait_for_clock_position(execution, MediaTime{100'000'000}));
+
+        const auto before_fast_forward =
+            execution.snapshot().clock.position.nanoseconds;
+        CHECK(execution.set_fast_forward(PlaybackEpoch{1}, true).ok());
+        const auto fast_forward_started = std::chrono::steady_clock::now();
+        CHECK(wait_for_clock_position(
+            execution, MediaTime{before_fast_forward + 300'000'000}));
+        CHECK(std::chrono::steady_clock::now() - fast_forward_started < 300ms);
+        CHECK(execution.set_fast_forward(PlaybackEpoch{1}, false).ok());
+        const auto before_forward_seek =
+            execution.snapshot().clock.position.nanoseconds;
+        const auto forward_seek_target =
+            before_forward_seek + 10'000'000'000;
+        CHECK(execution.seek(
+            PlaybackEpoch{2}, MediaTime{forward_seek_target}).ok());
+        auto snapshot = execution.snapshot();
+        CHECK(snapshot.state == PlaybackExecutionState::Running);
+        CHECK(snapshot.clock.epoch.value() == 2);
+        CHECK(snapshot.clock.position.nanoseconds >= forward_seek_target);
+        CHECK(snapshot.clock.position.nanoseconds <
+              forward_seek_target + 1'000'000'000);
+        CHECK(execution.seek(
+            PlaybackEpoch{3},
+            MediaTime{forward_seek_target - 10'000'000'000}).ok());
+        snapshot = execution.snapshot();
+        CHECK(snapshot.state == PlaybackExecutionState::Running);
+        CHECK(snapshot.clock.epoch.value() == 3);
+        const auto backward_seek_target =
+            forward_seek_target - 10'000'000'000;
+        CHECK(snapshot.clock.position.nanoseconds >= backward_seek_target);
+        CHECK(snapshot.clock.position.nanoseconds <
+              backward_seek_target + 1'000'000'000);
+
+        CHECK(execution.pause().ok());
+        CHECK(execution.seek(
+            PlaybackEpoch{4}, MediaTime{20'000'000'000}).ok());
+        snapshot = execution.snapshot();
+        CHECK(snapshot.state == PlaybackExecutionState::Paused);
+        CHECK(snapshot.clock.epoch.value() == 4);
+        CHECK(snapshot.clock.position.nanoseconds == 20'000'000'000);
+
+        CHECK(execution.resume().ok());
+        CHECK(execution.seek(
+            PlaybackEpoch{5}, MediaTime{29'500'000'000}).ok());
+        snapshot = execution.snapshot();
+        CHECK(snapshot.state == PlaybackExecutionState::Running);
+        CHECK(snapshot.clock.epoch.value() == 5);
+        CHECK(snapshot.clock.position.nanoseconds >= 29'500'000'000);
+        CHECK(wait_for_clock_position(execution, MediaTime{29'600'000'000}));
+        CHECK(execution.snapshot().clock.epoch.value() == 5);
+        CHECK(execution.close(PlaybackEpoch{6}).ok());
     }
 
     // Returning to normal speed must start a fresh audio render generation;

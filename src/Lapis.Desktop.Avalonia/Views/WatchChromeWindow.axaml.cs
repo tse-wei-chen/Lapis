@@ -62,6 +62,7 @@ public sealed partial class WatchChromeWindow : Window
     private bool _forwardSeekPressed;
     private bool _fastForwardActive;
     private bool _topmostSyncFailureReported;
+    private bool _scrubbingTimelinePointer;
     private int _seekPressGeneration;
     private CancellationTokenSource? _fastForwardDelay;
     private Task<bool>? _fastForwardStartTask;
@@ -108,6 +109,8 @@ public sealed partial class WatchChromeWindow : Window
         _discBottom.IsVisible = playlists.Count != 0;
         _timeline.AddHandler(InputElement.PointerPressedEvent,
             OnScrubStart, RoutingStrategies.Tunnel, handledEventsToo: true);
+        _timeline.AddHandler(InputElement.PointerMovedEvent,
+            OnScrubMoved, RoutingStrategies.Tunnel, handledEventsToo: true);
         _timeline.AddHandler(InputElement.PointerReleasedEvent,
             OnScrubEnd, RoutingStrategies.Tunnel, handledEventsToo: true);
         _timeline.AddHandler(InputElement.PointerCaptureLostEvent,
@@ -505,21 +508,55 @@ public sealed partial class WatchChromeWindow : Window
 
     private void OnScrubStart(object? sender, PointerPressedEventArgs args)
     {
-        if (args.GetCurrentPoint(_timeline).Properties.IsLeftButtonPressed)
+        if (!args.GetCurrentPoint(_timeline).Properties.IsLeftButtonPressed)
+            return;
+
+        _player.BeginScrub();
+        if (_player.CanScrub && _timeline.Bounds.Width > 0)
         {
-            _player.BeginScrub();
-            NotifyPointerActivity();
+            _scrubbingTimelinePointer = true;
+            args.Pointer.Capture(_timeline);
+            UpdateScrubPosition(args.GetPosition(_timeline));
+            args.Handled = true;
         }
+        NotifyPointerActivity();
+    }
+
+    private void OnScrubMoved(object? sender, PointerEventArgs args)
+    {
+        if (!_scrubbingTimelinePointer) return;
+
+        UpdateScrubPosition(args.GetPosition(_timeline));
+        args.Handled = true;
     }
 
     private async void OnScrubEnd(object? sender, PointerReleasedEventArgs args)
     {
+        if (_scrubbingTimelinePointer)
+        {
+            _scrubbingTimelinePointer = false;
+            args.Handled = true;
+        }
         await _player.CommitScrubAsync();
         NotifyPointerActivity();
     }
 
-    private void OnScrubCancelled(object? sender, PointerCaptureLostEventArgs args) =>
+    private void UpdateScrubPosition(Point point)
+    {
+        var width = _timeline.Bounds.Width;
+        if (width <= 0) return;
+        var fraction = Math.Clamp(point.X / width, 0, 1);
+        _player.SeekPositionSeconds =
+            fraction * _player.SeekDurationSeconds;
+    }
+
+    private void OnScrubCancelled(
+        object? sender, PointerCaptureLostEventArgs args)
+    {
+        if (!_scrubbingTimelinePointer) return;
+        _scrubbingTimelinePointer = false;
         _player.CancelScrub();
+    }
 
     private void OnBackSeekPressed(object? sender, PointerPressedEventArgs args)
     {

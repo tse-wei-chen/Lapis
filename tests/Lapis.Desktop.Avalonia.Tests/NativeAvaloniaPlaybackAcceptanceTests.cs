@@ -116,8 +116,8 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
             // Create the real owned transparent Avalonia top-level above the
             // live D3D11 child. A XAML-only/headless test cannot prove HWND
             // layering even at a basic smoke-test level.
-            await using var overlayPlayer = new PlayerViewModel(
-                new AcceptancePlaybackService(host));
+            await using             var playbackService = new AcceptancePlaybackService(host);
+            var overlayPlayer = new PlayerViewModel(playbackService);
             await overlayPlayer.OpenAsync(
                 new Lapis.Contracts.Media.MediaLocator(
                     Lapis.Contracts.Media.MediaLocatorKind.File, media));
@@ -158,6 +158,22 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
                 Assert.NotNull(timeline);
                 Assert.NotNull(backSeek);
                 Assert.NotNull(forwardSeek);
+
+                var seekDuration = host.Snapshot.Duration?.ToTimeSpan() ??
+                    throw new InvalidOperationException(
+                        "The native playback snapshot has no seekable duration.");
+                Assert.True(seekDuration > TimeSpan.FromSeconds(40));
+                await overlayPlayer.SeekToAsync(TimeSpan.FromSeconds(30));
+                await Task.Delay(TimeSpan.FromMilliseconds(500), cancel.Token);
+                await WaitUntilAsync(
+                    () => overlayPlayer.CanSeek,
+                    TimeSpan.FromSeconds(5), cancel.Token);
+                Assert.InRange(
+                    Math.Abs((host.Snapshot.Position.ToTimeSpan() -
+                        TimeSpan.FromSeconds(30)).TotalSeconds),
+                    0, 1);
+
+                var beforeBackPosition = host.Snapshot.Position.ToTimeSpan();
                 var beforeBackClick = host.Snapshot.Epoch;
                 await ClickControlAsync(
                     window, chrome, backSeek!, 0.5, TimeSpan.FromMilliseconds(80),
@@ -165,10 +181,31 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
                 await WaitUntilAsync(
                     () => host.Snapshot.Epoch.Value > beforeBackClick.Value,
                     TimeSpan.FromSeconds(5), cancel.Token);
-
                 await WaitUntilAsync(
                     () => overlayPlayer.CanSeek,
                     TimeSpan.FromSeconds(5), cancel.Token);
+                var afterBackPosition = host.Snapshot.Position.ToTimeSpan();
+                var backAdvanceSeconds =
+                    (beforeBackPosition - afterBackPosition).TotalSeconds;
+                Assert.True(
+                    backAdvanceSeconds is >= 9 and <= 11,
+                    $"A real back-button click should subtract 10 seconds " +
+                    $"(before={beforeBackPosition} after={afterBackPosition} " +
+                    $"epoch={host.Snapshot.Epoch.Value} " +
+                    $"status={overlayPlayer.StatusText}; " +
+                    $"advance={backAdvanceSeconds:F3}s " +
+                    $"requested={playbackService.LastSeekPosition}).");
+                Assert.NotNull(playbackService.LastSeekPosition);
+                Assert.InRange(
+                    Math.Abs((playbackService.LastSeekPosition!.Value -
+                        (beforeBackPosition - TimeSpan.FromSeconds(10))).TotalSeconds),
+                    0, 1);
+                Assert.InRange(
+                    Math.Abs(overlayPlayer.SeekPositionSeconds -
+                        afterBackPosition.TotalSeconds),
+                    0, 1);
+
+                var beforeForwardPosition = host.Snapshot.Position.ToTimeSpan();
                 var beforeForwardClick = host.Snapshot.Epoch;
                 await ClickControlAsync(
                     window, chrome, forwardSeek!, 0.5, TimeSpan.FromMilliseconds(80),
@@ -195,14 +232,46 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
                 await WaitUntilAsync(
                     () => overlayPlayer.CanSeek,
                     TimeSpan.FromSeconds(5), cancel.Token);
+                var afterForwardPosition = host.Snapshot.Position.ToTimeSpan();
+                var forwardAdvanceSeconds =
+                    (afterForwardPosition - beforeForwardPosition).TotalSeconds;
+                Assert.True(
+                    forwardAdvanceSeconds is >= 9 and <= 11,
+                    $"A real forward-button click should add 10 seconds " +
+                    $"(before={beforeForwardPosition} after={afterForwardPosition} " +
+                    $"epoch={host.Snapshot.Epoch.Value} " +
+                    $"status={overlayPlayer.StatusText}; " +
+                    $"advance={forwardAdvanceSeconds:F3}s).");
+                Assert.NotNull(playbackService.LastSeekPosition);
+                Assert.InRange(
+                    Math.Abs((playbackService.LastSeekPosition!.Value -
+                        (beforeForwardPosition + TimeSpan.FromSeconds(10))).TotalSeconds),
+                    0, 1);
+                Assert.InRange(
+                    Math.Abs(overlayPlayer.SeekPositionSeconds -
+                        afterForwardPosition.TotalSeconds),
+                    0, 1);
+
+                var beforeFastForwardPosition =
+                    host.Snapshot.Position.ToTimeSpan();
+                var fastForwardStarted = DateTime.UtcNow;
                 await ClickControlAsync(
-                    window, chrome, forwardSeek!, 0.5, TimeSpan.FromMilliseconds(700),
+                    window, chrome, forwardSeek!, 0.5, TimeSpan.FromMilliseconds(1300),
                     cancel.Token);
                 Assert.Equal(TransportState.Playing, host.Snapshot.Transport);
-
                 await WaitUntilAsync(
                     () => overlayPlayer.CanSeek,
                     TimeSpan.FromSeconds(5), cancel.Token);
+                var fastForwardElapsed = DateTime.UtcNow - fastForwardStarted;
+                var fastForwardAdvance =
+                    (host.Snapshot.Position.ToTimeSpan() -
+                        beforeFastForwardPosition).TotalSeconds;
+                Assert.True(
+                    fastForwardAdvance > fastForwardElapsed.TotalSeconds,
+                    $"Holding fast-forward should advance faster than normal " +
+                    $"(advanced={fastForwardAdvance:F3}s elapsed=" +
+                    $"{fastForwardElapsed.TotalSeconds:F3}s).");
+
                 var beforeTimelineClick = host.Snapshot.Epoch;
                 await ClickControlAsync(
                     window, chrome, timeline!, 0.65, TimeSpan.FromMilliseconds(80),
@@ -210,6 +279,17 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
                 await WaitUntilAsync(
                     () => host.Snapshot.Epoch.Value > beforeTimelineClick.Value,
                     TimeSpan.FromSeconds(5), cancel.Token);
+                await WaitUntilAsync(
+                    () => overlayPlayer.CanSeek,
+                    TimeSpan.FromSeconds(5), cancel.Token);
+                var timelinePosition = host.Snapshot.Position.ToTimeSpan();
+                Assert.InRange(
+                    timelinePosition.TotalSeconds / seekDuration.TotalSeconds,
+                    0.60, 0.70);
+                Assert.InRange(
+                    Math.Abs(overlayPlayer.SeekPositionSeconds -
+                        timelinePosition.TotalSeconds),
+                    0, 1);
 
                 var otherWindow = new Window { Width = 100, Height = 100 };
                 try
@@ -411,6 +491,9 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
             $"point=({point.X},{point.Y}) control={control.Name} " +
             $"overlay=0x{expectedRoot:X} hit=0x{hit:X} root=0x{hitRoot:X} " +
             $"overlayRect={WindowRectText(expectedRoot)}");
+        await WaitUntilAsync(
+            () => control.IsPointerOver,
+            TimeSpan.FromSeconds(2), cancellationToken);
         MouseEvent(MouseLeftDown, 0, 0, 0, 0);
         await Task.Delay(hold, cancellationToken);
         MouseEvent(MouseLeftUp, 0, 0, 0, 0);
@@ -420,6 +503,8 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
     private sealed class AcceptancePlaybackService(DesktopPlaybackHost host)
         : IPlayerPlaybackService, ITemporaryFastForwardPlaybackService
     {
+        public TimeSpan? LastSeekPosition { get; private set; }
+
         public PlaybackSnapshot Snapshot => host.Snapshot;
 
         public Task OpenAsync(
@@ -429,8 +514,11 @@ public sealed class NativeAvaloniaPlaybackAcceptanceTests
         public Task ToggleAsync(CancellationToken cancellationToken) =>
             host.TogglePlayPauseAsync(cancellationToken);
 
-        public Task SeekAsync(TimeSpan position, CancellationToken cancellationToken) =>
-            host.SeekAsync(position, cancellationToken);
+        public Task SeekAsync(TimeSpan position, CancellationToken cancellationToken)
+        {
+            LastSeekPosition = position;
+            return host.SeekAsync(position, cancellationToken);
+        }
 
         public Task CloseAsync(CancellationToken cancellationToken) =>
             host.CloseMediaAsync(cancellationToken);

@@ -164,6 +164,10 @@ if(BUILD_TESTING)
         LAPIS_TEST_AV_MEDIA_PATH
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/test_av_pipeline.mp4"
     )
+    set(
+        LAPIS_TEST_BLURAY_MEDIA_PATH
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/test_bluray_seek.m2ts"
+    )
     set(LAPIS_TEST_AUDIO_PATH "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/test_audio.wav")
     set(LAPIS_TEST_CHURN_MEDIA_PATH
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/test_soak_churn.mp4")
@@ -712,6 +716,7 @@ if(BUILD_TESTING)
             LAPIS_TEST_PIPELINE_MEDIA_PATH="${LAPIS_TEST_PIPELINE_MEDIA_PATH}"
             LAPIS_TEST_CHURN_MEDIA_PATH="${LAPIS_TEST_CHURN_MEDIA_PATH}"
             LAPIS_TEST_AV_MEDIA_PATH="${LAPIS_TEST_AV_MEDIA_PATH}"
+            LAPIS_TEST_BLURAY_MEDIA_PATH="${LAPIS_TEST_BLURAY_MEDIA_PATH}"
     )
     target_link_libraries(
         Lapis.MediaRuntime.PlaybackExecutionTests
@@ -722,6 +727,7 @@ if(BUILD_TESTING)
         NAME playback_execution_smoke
         COMMAND Lapis.MediaRuntime.PlaybackExecutionTests
     )
+    set_tests_properties(playback_execution_smoke PROPERTIES TIMEOUT 20)
 
     add_executable(Lapis.MediaRuntime.BoundedQueueTests tests/bounded_queue.cpp)
     target_compile_features(Lapis.MediaRuntime.BoundedQueueTests PRIVATE cxx_std_20)

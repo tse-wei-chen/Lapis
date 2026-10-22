@@ -188,13 +188,15 @@ headphone-unplug/default-device-switch acceptance gate.
 The Native CI job builds `Lapis.Desktop.Avalonia.Tests` and runs the
 opt-in `NativeAvaloniaPlaybackAcceptanceTests` with a real native DLL
 when `LAPIS_AVALONIA_NATIVE_ACCEPTANCE=1` and `LAPIS_NATIVE_UI_MEDIA`
-points to a locally permitted six-second fixture.
+points to a locally permitted, correctly indexed A/V fixture of at least
+two hours.
 
 The test starts Avalonia's real Win32 STA desktop lifetime. It verifies
-the D3D11 swapchain, persistent GPU child HWND, six NativeControlHost
+the D3D11 swapchain, persistent GPU child HWND, real mouse clicks on the
+timeline and ±10-second controls, held fast-forward, six NativeControlHost
 detach/attach cycles (including deferred proxy teardown), child pixel
-resizing, epoch-advancing seek, EOF, replay and native shutdown before
-HWND destruction. Ordinary managed unit CI requires no native DLL.
+resizing, EOF, replay and native shutdown before HWND destruction.
+Ordinary managed unit CI requires no native DLL.
 
 This is NOT proof of first-frame pixel correctness, hardware DPI,
 physical GPU device removal, long-duration stability or audio endpoint
