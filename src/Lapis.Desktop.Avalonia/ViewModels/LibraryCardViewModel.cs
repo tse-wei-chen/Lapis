@@ -37,6 +37,8 @@ public sealed class LibraryCardViewModel : INotifyPropertyChanged, IDisposable
     public Bitmap? Poster => _poster;
     public bool HasPoster => _poster is not null;
     public bool ShowPlaceholder => _poster is null;
+    public string PlaceholderGlyph => IsDisc ? "◈" : "▶";
+    public string PlaceholderCaption => IsDisc ? "BLU-RAY" : "LOCAL VIDEO";
     public bool CanResume => !IsDisc && IsAvailable && _watchProgress?.IsResumable == true;
     public double ResumePositionSeconds => CanResume ? _watchProgress!.PositionSeconds : 0;
     public string PlayActionLabel => CanResume ? "▶  繼續播放" : "▶  開始播放";
@@ -89,12 +91,12 @@ public sealed class LibraryCardViewModel : INotifyPropertyChanged, IDisposable
     {
         if (_started || _disposed) return;
         _started = true;
-        var path = DiscArtworkLocator.FindPreferredArtwork(Item);
-        if (path is not null)
-            _ = LoadPosterAsync(path);
+        // Discovery and all image I/O stay off the Avalonia UI thread.
+        // Missing/corrupt artwork never prevents catalog browsing.
+        _ = LoadPosterAsync();
     }
 
-    private async Task LoadPosterAsync(string path)
+    private async Task LoadPosterAsync()
     {
         Bitmap? decoded = null;
         try
@@ -104,18 +106,34 @@ public sealed class LibraryCardViewModel : INotifyPropertyChanged, IDisposable
             {
                 decoded = await Task.Run(() =>
                 {
-                    using var stream = new FileStream(path, FileMode.Open,
-                        FileAccess.Read, FileShare.ReadWrite);
-                    if (stream.Length is <= 0 or > DiscArtworkLocator.MaxSourceBytes)
-                        return null;
-                    // Never hold a full-resolution disc jacket in each UI tile.
-                    return Bitmap.DecodeToWidth(stream, 400);
+                    foreach (var path in LocalArtworkLocator.FindCandidates(Item))
+                    {
+                        _lifetime.Token.ThrowIfCancellationRequested();
+                        try
+                        {
+                            using var stream = new FileStream(path, FileMode.Open,
+                                FileAccess.Read, FileShare.ReadWrite);
+                            if (stream.Length is <= 0 or > LocalArtworkLocator.MaxSourceBytes)
+                                continue;
+                            // Full-resolution covers must never be held per card.
+                            return Bitmap.DecodeToWidth(stream, 400);
+                        }
+                        catch (Exception exception) when (exception is
+                            IOException or UnauthorizedAccessException or
+                            ArgumentException or InvalidOperationException)
+                        {
+                            // A damaged image is not a fatal library error;
+                            // a lower-priority candidate may be valid.
+                        }
+                    }
+                    return null;
                 }, _lifetime.Token).ConfigureAwait(false);
             }
             finally
             {
                 DecodeSlots.Release();
             }
+
             if (decoded is null) return;
             var image = decoded;
             decoded = null;
@@ -133,10 +151,13 @@ public sealed class LibraryCardViewModel : INotifyPropertyChanged, IDisposable
                 Notify(nameof(ShowPlaceholder));
             });
         }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+            // The card was removed while its cover was decoding.
+        }
         catch (Exception)
         {
-            // Broken/unmounted disc art is never allowed to prevent library
-            // browsing. The stable placeholder remains visible.
+            // Unavailable drives and malformed local sources are nonfatal.
         }
         finally
         {

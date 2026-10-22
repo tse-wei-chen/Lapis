@@ -389,7 +389,7 @@
                           <Grid RowDefinitions="Auto,*,Auto">
                             <Image Grid.RowSpan="3" Source="{Binding Poster}"
                                    IsVisible="{Binding HasPoster}" Stretch="Uniform"/>
-                            <TextBlock Grid.Row="1" Text="L"
+                            <TextBlock Grid.Row="1" Text="{Binding PlaceholderGlyph}"
                                        IsVisible="{Binding ShowPlaceholder}"
                                        FontSize="68" FontWeight="Light"
                                        Foreground="#536578"
