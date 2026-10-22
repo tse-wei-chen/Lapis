@@ -55,6 +55,7 @@ public sealed partial class MainWindow : Window
     private readonly JsonWatchProgressStore _watchProgressStore;
     private readonly JsonFavoriteStore _favoriteStore;
     private readonly HashSet<Guid> _pendingFavoriteChanges = [];
+    private readonly HashSet<Guid> _pendingLibraryRemovals = [];
     private LibraryCardViewModel? _activeWatchCard;
     private readonly DispatcherTimer _watchProgressTimer = new()
         { Interval = TimeSpan.FromSeconds(10) };
@@ -137,6 +138,7 @@ public sealed partial class MainWindow : Window
         _bigPicture.ToggleFavoriteRequested += card => _ = ToggleFavoriteAsync(card);
         _bigPicture.RepairSourceRequested += card => _ = RepairSourceAsync(card);
         _bigPicture.RenameTitleRequested += (card, title) => _ = RenameMovieAsync(card, title);
+        _bigPicture.RemoveFromLibraryRequested += card => _ = RemoveMovieAsync(card);
         _bigPicture.ImportRequested += () => _ = ImportFromBigPictureAsync();
         _bigPicture.ImportDiscRequested += () => _ = ImportDiscCoreAsync();
         _bigPicture.ManageRequested += () => ShowLibraryManagement(true);
@@ -657,11 +659,7 @@ public sealed partial class MainWindow : Window
             confirmRemoval: true);
         if (await dialog.ShowDialog<bool>(this))
         {
-            try { await _library.RemoveAsync(card.Item); }
-            catch (Exception exception)
-            {
-                _library.ReportError($"無法移除收藏：{exception.Message}");
-            }
+            await RemoveMovieAsync(card);
         }
     }
 
@@ -912,6 +910,57 @@ public sealed partial class MainWindow : Window
             if (!_closeStarted)
                 _library.ReportError($"修復來源失敗：{exception.Message}");
         }
+    }
+
+    /// <summary>
+    /// One removal path for the management context menu and Big Picture.
+    /// The catalog is the source of truth: never remove the physical media.
+    /// After a successful catalog write, remove orphaned bookmark/favorite
+    /// sidecars and update the corresponding in-memory shelves.
+    /// </summary>
+    private async Task RemoveMovieAsync(LibraryCardViewModel card)
+    {
+        if (_closeStarted || !_pendingLibraryRemovals.Add(card.Item.Id)) return;
+        try
+        {
+            await _library.RemoveAsync(card.Item);
+            var cleanupErrors = new List<string>();
+            try
+            {
+                await _favoriteStore.SetAsync(card.Item.Id, false);
+                if (!_closeStarted) _library.SetFavorite(card.Item.Id, false);
+            }
+            catch (Exception exception)
+            {
+                cleanupErrors.Add($"最愛：{exception.Message}");
+            }
+
+            try
+            {
+                await _watchProgressStore.ForgetAsync(card.Item.Id);
+                if (!_closeStarted) _library.ForgetWatchHistory(card.Item.Id);
+            }
+            catch (Exception exception)
+            {
+                cleanupErrors.Add($"觀看紀錄：{exception.Message}");
+            }
+
+            if (!_closeStarted)
+            {
+                if (cleanupErrors.Count > 0)
+                    _library.ReportError("收藏已移除，但部分關聯紀錄清理失敗：" +
+                        string.Join("；", cleanupErrors));
+                else
+                    Dispatcher.UIThread.Post(_bigPicture.RestoreMovieFocus,
+                        DispatcherPriority.Loaded);
+            }
+        }
+        catch (Exception exception)
+        {
+            if (!_closeStarted)
+                _library.ReportError($"無法移除收藏：{exception.Message}");
+        }
+        finally { _pendingLibraryRemovals.Remove(card.Item.Id); }
     }
 
     private async Task RenameMovieAsync(LibraryCardViewModel card, string title)

@@ -169,6 +169,39 @@ public sealed class WindowsDesktopJourneys
     }
 
     [Fact]
+    public async Task BigPictureRemoveRequiresConfirmationKeepsMediaAndCleansSidecars()
+    {
+        using var session = await DesktopSession.CreateAsync();
+        await session.SeedWatchBookmarkAsync();
+        await session.SeedFavoriteAsync();
+        session.Start();
+        var main = session.MainWindow();
+
+        session.Click(session.WaitFor(main, "Lapis.Library.FeaturedDetails"));
+        session.Click(session.WaitFor(main, "Lapis.Library.DetailRemove"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.RemoveCancel"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.RemoveConfirm"));
+
+        // Cancellation must leave media, catalog and watch/favorite metadata intact.
+        session.Click(session.WaitFor(main, "Lapis.Library.RemoveCancel"));
+        Assert.True(session.MediaFileExists);
+        session.WaitForCatalogCount(1);
+        session.WaitForFavoriteCount(1);
+        session.WaitForWatchCount(1);
+
+        session.Click(session.WaitFor(main, "Lapis.Library.DetailRemove"));
+        session.Snapshot("12-confirm-library-remove");
+        session.Click(session.WaitFor(main, "Lapis.Library.RemoveConfirm"));
+        session.WaitForCatalogCount(0);
+        session.WaitForFavoriteCount(0);
+        session.WaitForWatchCount(0);
+        Assert.True(session.MediaFileExists); // Original MP4 was never deleted.
+        Assert.True(session.ProcessIsRunning);
+        Assert.Null(main.FindFirstDescendant(cf =>
+            cf.ByAutomationId("Lapis.Library.PlayFeatured")));
+    }
+
+    [Fact]
     public async Task FilmCoverRefreshFindsNewSidecarAndClearsRemovedPoster()
     {
         using var session = await DesktopSession.CreateAsync();
@@ -275,6 +308,15 @@ internal sealed class DesktopSession : IDisposable
             new WatchProgress(item.Id, 70, 240, DateTimeOffset.UtcNow));
     }
 
+    public async Task SeedFavoriteAsync()
+    {
+        var movie = Assert.Single(await new JsonMediaLibrary(_catalogPath).ListAsync());
+        await new JsonFavoriteStore(_catalogPath + ".favorites.v1.json")
+            .SetAsync(movie.Id, true);
+    }
+
+    public bool MediaFileExists => File.Exists(_mediaPath);
+
     public string MoveMovieOffline()
     {
         // Move *after* catalog import but *before* process launch. The app
@@ -306,6 +348,30 @@ internal sealed class DesktopSession : IDisposable
             }
             catch (IOException) { return null; }
         }, TimeSpan.FromSeconds(15), "persisted movie title " + expectedTitle);
+
+    public void WaitForCatalogCount(int count) =>
+        _ = Eventually(() =>
+        {
+            try
+            {
+                var items = new JsonMediaLibrary(_catalogPath)
+                    .ListAsync().GetAwaiter().GetResult();
+                return items.Count == count ? new object() : null;
+            }
+            catch (IOException) { return null; }
+        }, TimeSpan.FromSeconds(15), "catalog count " + count);
+
+    public void WaitForWatchCount(int count) =>
+        _ = Eventually(() =>
+        {
+            try
+            {
+                var entries = new JsonWatchProgressStore(_catalogPath + ".watch.v1.json")
+                    .LoadHistoryAsync().GetAwaiter().GetResult();
+                return entries.Count == count ? new object() : null;
+            }
+            catch (IOException) { return null; }
+        }, TimeSpan.FromSeconds(15), "watch history count " + count);
 
     public void WaitForFavoriteCount(int count) =>
         _ = Eventually(() =>
