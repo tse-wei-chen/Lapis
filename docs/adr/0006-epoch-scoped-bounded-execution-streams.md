@@ -26,5 +26,8 @@ Playback discontinuities already advance `PlaybackEpoch`, so the execution layer
 - Scheduler/render code can block efficiently without polling and can terminate cleanly when a stream closes.
 - Epoch checks remain valid even if an old consumer or callback wakes late.
 - Queue capacity becomes a deliberate tuning/policy value rather than an accidental implementation detail.
+- D3D11 presentation uses non-blocking DXGI presents. A frame is dropped when
+  the presentation queue is full, so vblank/backpressure cannot hold up the
+  render worker while a seek or close joins the generation.
 - A blocked FFmpeg read is not yet interruptible by `std::stop_token`; an FFmpeg interrupt/cancellation bridge remains a later requirement before network/Blu-ray sources are considered fully cancellable.
 - End-of-stream and decode failure are still coarse at the decoder boundary because the current decoder returns `std::nullopt` for both. The worker exposes a `Faulted` state for thrown failures, but richer decode error/event propagation remains future work.

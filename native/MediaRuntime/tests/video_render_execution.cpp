@@ -269,6 +269,30 @@ int main() {
     CHECK(probe->present_count == 0);
     CHECK(probe->end_count == 0);
 
+    // A non-blocking presenter may drop a frame when DXGI is backpressured.
+    // That is not a presentation failure and must not disable the renderer.
+    CHECK(media.seek(MediaTime{}));
+    CHECK(clock.rebase(PlaybackEpoch{9}, MediaTime{}, SteadyClockSource::now()));
+    probe->reset_records();
+    probe->present_status = VideoPresentStatus::Dropped;
+    CHECK(media.start_decode_generation(MediaDecodeSelection{true, false}));
+
+    auto dropped_decoded = decoder.start(PlaybackEpoch{9});
+    auto dropped_presentation = scheduler.start(dropped_decoded);
+    renderer.start(dropped_presentation);
+    CHECK(wait_for_render_completion(renderer));
+    renderer.stop();
+    scheduler.stop();
+    decoder.stop();
+    media.stop_decode_generation();
+
+    CHECK(renderer.state() == VideoRenderWorkerState::Drained);
+    render_stats = renderer.stats();
+    CHECK(render_stats.presented_frames == 0);
+    CHECK(render_stats.presenter_failures == 0);
+    CHECK(renderer.last_present_status() == VideoPresentStatus::Dropped);
+    CHECK(probe->present_count == 2);
+
     CHECK(media.seek(MediaTime{}));
     const auto failure_now = SteadyClockSource::now();
     CHECK(clock.rebase(PlaybackEpoch{10}, MediaTime{}, failure_now));
