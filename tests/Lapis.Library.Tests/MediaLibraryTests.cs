@@ -101,6 +101,89 @@ public sealed class MediaLibraryTests
         Assert.Equal("{ broken", File.ReadAllText(Path.Combine(test.Root, "catalog.json")));
     }
 
+    [Fact]
+    public async Task MovedMovieRelinkPreservesIdentityFavoritesAndWatchHistory()
+    {
+        using var test = new TestFiles();
+        var oldPath = Path.Combine(test.Root, "original.mp4");
+        var movedPath = Path.Combine(test.Root, "new-drive.mp4");
+        File.WriteAllText(oldPath, "original media bytes");
+        var catalogPath = Path.Combine(test.Root, "catalog.json");
+        var library = new JsonMediaLibrary(catalogPath);
+        var original = await library.ImportAsync(new MediaLocator(MediaLocatorKind.File, oldPath));
+        var favorite = new JsonFavoriteStore(catalogPath + ".favorites.v1.json");
+        var history = new JsonWatchProgressStore(catalogPath + ".watch.v1.json");
+        await favorite.SetAsync(original.Id, true);
+        var watch = new WatchProgress(original.Id, 75, 240, DateTimeOffset.UtcNow);
+        await history.SaveAsync(watch);
+        File.Move(oldPath, movedPath);
+        Assert.False(original.IsAvailable);
+
+        var fixedMovie = await library.RelinkAsync(original.Id,
+            new MediaLocator(MediaLocatorKind.File, movedPath));
+        Assert.Equal(original.Id, fixedMovie.Id);
+        Assert.Equal(original.Title, fixedMovie.Title);
+        Assert.Equal(original.ImportedAtUtc, fixedMovie.ImportedAtUtc);
+        Assert.Equal(movedPath, fixedMovie.SourcePath);
+        Assert.True(fixedMovie.IsAvailable);
+        Assert.Equal(fixedMovie, Assert.Single(
+            await new JsonMediaLibrary(catalogPath).ListAsync()));
+        Assert.Equal(original.Id, Assert.Single(await favorite.LoadAsync()).ItemId);
+        Assert.Equal(watch, Assert.Single(await history.LoadHistoryAsync()));
+        Assert.True(File.Exists(movedPath));
+        Assert.False(File.Exists(oldPath));
+    }
+
+    [Fact]
+    public async Task RelinkRejectsAvailableSourceDifferentKindAndDuplicateTarget()
+    {
+        using var test = new TestFiles();
+        var oldPath = Path.Combine(test.Root, "old.mp4");
+        var targetPath = Path.Combine(test.Root, "target.mp4");
+        File.WriteAllText(oldPath, "original");
+        File.WriteAllText(targetPath, "other");
+        var catalogPath = Path.Combine(test.Root, "catalog.json");
+        var library = new JsonMediaLibrary(catalogPath);
+        var old = await library.ImportAsync(new MediaLocator(MediaLocatorKind.File, oldPath));
+        var other = await library.ImportAsync(new MediaLocator(MediaLocatorKind.File, targetPath));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            library.RelinkAsync(old.Id, new MediaLocator(MediaLocatorKind.File, targetPath)));
+        File.Delete(oldPath);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            library.RelinkAsync(old.Id, new MediaLocator(MediaLocatorKind.File, targetPath)));
+
+        var disc = test.CreateDisc("replacement");
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            library.RelinkAsync(old.Id, new MediaLocator(MediaLocatorKind.Directory, disc)));
+        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            library.RelinkAsync(Guid.NewGuid(), new MediaLocator(MediaLocatorKind.File, targetPath)));
+        Assert.Equal(new[] { old, other }, await library.ListAsync());
+        Assert.Equal(2, (await new JsonMediaLibrary(catalogPath).ListAsync()).Count);
+    }
+
+    [Fact]
+    public async Task RelinkDiscNormalizesBdmvChildAndRejectsIncompleteDisc()
+    {
+        using var test = new TestFiles();
+        var source = test.CreateDisc("disc-original");
+        var replacement = test.CreateDisc("disc-remounted");
+        var library = new JsonMediaLibrary(Path.Combine(test.Root, "catalog.json"));
+        var item = await library.ImportAsync(new MediaLocator(MediaLocatorKind.Directory, source));
+        Directory.Delete(source, recursive: true);
+        var repaired = await library.RelinkAsync(item.Id, new MediaLocator(
+            MediaLocatorKind.Directory, Path.Combine(replacement, "BDMV")));
+        Assert.Equal(replacement, repaired.SourcePath);
+        Assert.Equal(item.Id, repaired.Id);
+        Assert.Single(await library.ListAsync());
+        Assert.True(repaired.IsAvailable);
+
+        var broken = Path.Combine(test.Root, "empty-folder");
+        Directory.CreateDirectory(broken);
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            library.RelinkAsync(item.Id, new MediaLocator(MediaLocatorKind.Directory, broken)));
+        Assert.Equal(repaired, Assert.Single(await library.ListAsync()));
+    }
+
     private sealed class TestFiles : IDisposable
     {
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "lapis-library-" + Guid.NewGuid());

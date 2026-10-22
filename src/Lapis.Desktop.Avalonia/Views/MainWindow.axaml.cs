@@ -135,6 +135,7 @@ public sealed partial class MainWindow : Window
         _bigPicture.ResumeRequested += card => _ = PlayLibraryItemAsync(card, resume: true);
         _bigPicture.ForgetHistoryRequested += card => _ = ForgetHistoryAsync(card);
         _bigPicture.ToggleFavoriteRequested += card => _ = ToggleFavoriteAsync(card);
+        _bigPicture.RepairSourceRequested += card => _ = RepairSourceAsync(card);
         _bigPicture.ImportRequested += () => _ = ImportFromBigPictureAsync();
         _bigPicture.ImportDiscRequested += () => _ = ImportDiscCoreAsync();
         _bigPicture.ManageRequested += () => ShowLibraryManagement(true);
@@ -863,6 +864,53 @@ public sealed partial class MainWindow : Window
         // Native render worker is stopped/detached before hiding the host.
         await _player.CloseAsync();
         RestoreLibraryView();
+    }
+
+    private async Task RepairSourceAsync(LibraryCardViewModel card)
+    {
+        if (_closeStarted) return;
+        try
+        {
+            if (card.IsAvailable)
+            {
+                card.RefreshSourceAvailability();
+                _library.ReportError("來源已重新連接，無需更換路徑。");
+                return;
+            }
+
+            MediaLocator replacement;
+            if (card.IsDisc)
+            {
+                var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+                {
+                    Title = "選擇原本 Blu-ray 光碟的新根目錄（包含 BDMV）",
+                    AllowMultiple = false
+                });
+                var folder = folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
+                if (string.IsNullOrWhiteSpace(folder)) return;
+                replacement = new MediaLocator(MediaLocatorKind.Directory, folder);
+            }
+            else
+            {
+                var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+                {
+                    Title = "選擇原本同一部影片的新檔案位置",
+                    AllowMultiple = false
+                });
+                var file = files.Count > 0 ? files[0].TryGetLocalPath() : null;
+                if (string.IsNullOrWhiteSpace(file)) return;
+                replacement = new MediaLocator(MediaLocatorKind.File, file);
+            }
+
+            if (_closeStarted) return;
+            await _library.RelinkAsync(card.Item, replacement);
+            _bigPicture.RestoreMovieFocus();
+        }
+        catch (Exception exception)
+        {
+            if (!_closeStarted)
+                _library.ReportError($"修復來源失敗：{exception.Message}");
+        }
     }
 
     private async Task ToggleFavoriteAsync(LibraryCardViewModel card)

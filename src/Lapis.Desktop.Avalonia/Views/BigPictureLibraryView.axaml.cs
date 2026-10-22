@@ -20,12 +20,14 @@ public sealed partial class BigPictureLibraryView : UserControl
     private readonly Grid _detailsOverlay;
     private readonly Button _detailsPlay;
     private readonly Button _detailsResume;
+    private readonly Button _detailsRepair;
     private Button? _focusedTile;
 
     public event Action<LibraryCardViewModel>? PlayRequested;
     public event Action<LibraryCardViewModel>? ResumeRequested;
     public event Action<LibraryCardViewModel>? ForgetHistoryRequested;
     public event Action<LibraryCardViewModel>? ToggleFavoriteRequested;
+    public event Action<LibraryCardViewModel>? RepairSourceRequested;
     public event Action? ImportRequested;
     public event Action? ImportDiscRequested;
     public event Action? ManageRequested;
@@ -43,6 +45,8 @@ public sealed partial class BigPictureLibraryView : UserControl
             ?? throw new InvalidOperationException("Missing film detail play action.");
         _detailsResume = this.FindControl<Button>("BigPictureDetailsResume")
             ?? throw new InvalidOperationException("Missing film detail resume action.");
+        _detailsRepair = this.FindControl<Button>("BigPictureDetailsRepair")
+            ?? throw new InvalidOperationException("Missing source repair action.");
         // Tunnel before Button/ScrollViewer swallow navigation arrows.
         AddHandler(InputElement.KeyDownEvent, BigPictureKeyDown,
             RoutingStrategies.Tunnel, handledEventsToo: true);
@@ -67,8 +71,10 @@ public sealed partial class BigPictureLibraryView : UserControl
     {
         if (tile is not null) _focusedTile = tile;
         Library?.SelectFeatured(card);
+        card.RefreshSourceAvailability();
         _detailsOverlay.IsVisible = true;
-        if (card.CanResume) _detailsResume.Focus();
+        if (card.NeedsSourceRepair) _detailsRepair.Focus();
+        else if (card.CanResume) _detailsResume.Focus();
         else _detailsPlay.Focus();
         LibraryMotion.Enter(_detailsOverlay);
     }
@@ -99,6 +105,13 @@ public sealed partial class BigPictureLibraryView : UserControl
     {
         // Keep the details overlay open while the existing card reloads.
         Library?.FeaturedCard?.RefreshPoster();
+    }
+
+    private void DetailsRepairSource_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Library?.FeaturedCard is not { NeedsSourceRepair: true } card) return;
+        CloseDetails();
+        RepairSourceRequested?.Invoke(card);
     }
 
     private void DetailsFavorite_Click(object? sender, RoutedEventArgs e)
