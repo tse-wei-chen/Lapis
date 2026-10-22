@@ -395,6 +395,10 @@ public sealed partial class MainWindow : Window
     private void GoBigPicture_Click(object? sender, RoutedEventArgs args)
     {
         _bigPicture.CloseDetails();
+        // Home means the full cinema catalog, not merely closing Management.
+        // History can become empty immediately after forgetting its last film.
+        _library.ShowAll();
+        _library.SearchText = "";
         ShowLibraryManagement(false);
         _bigPicture.ResetScroll();
     }
