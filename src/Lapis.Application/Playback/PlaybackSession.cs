@@ -182,18 +182,15 @@ public sealed class PlaybackSession : IAsyncDisposable
                     continue;
                 }
 
+                RuntimePlaybackObservation observed;
                 try
                 {
                     // Some native adapters expose synchronous P/Invoke under a
-                    // ValueTask API. Always execute that read off the UI thread,
-                    // and never enqueue an unbounded backlog of observations.
-                    var observed = await Task.Run(async () =>
+                    // ValueTask API. Keep the read off the UI thread; never
+                    // have more than one native observation in flight.
+                    observed = await Task.Run(async () =>
                         await observer.ReadSnapshotAsync(SessionId, _shutdown.Token)
                             .ConfigureAwait(false), _shutdown.Token).ConfigureAwait(false);
-                    _commands.Writer.TryWrite(new CommandEnvelope(
-                        new RuntimeObservationCommand(observed),
-                        _shutdown.Token,
-                        new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)));
                 }
                 catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
                 {
@@ -201,12 +198,36 @@ public sealed class PlaybackSession : IAsyncDisposable
                 }
                 catch (Exception exception)
                 {
-                    _commands.Writer.TryWrite(new CommandEnvelope(
+                    // Fault this playback generation, but retain the observer
+                    // for a later Close/Open recovery. A terminal error must
+                    // not be silently discarded when the command mailbox is
+                    // full. Waiting for the actor acknowledgement ensures we
+                    // don't repeatedly poll a permanently failed generation.
+                    var completion = new TaskCompletionSource(
+                        TaskCreationOptions.RunContinuationsAsynchronously);
+                    await _commands.Writer.WriteAsync(new CommandEnvelope(
                         new RuntimeObservationFailureCommand(snapshot.Epoch, exception),
-                        _shutdown.Token,
-                        new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)));
-                    // Do not spin on a permanently failing P/Invoke snapshot.
-                    break;
+                        _shutdown.Token, completion), _shutdown.Token).ConfigureAwait(false);
+                    await completion.Task.WaitAsync(_shutdown.Token).ConfigureAwait(false);
+                    continue;
+                }
+
+                var update = new CommandEnvelope(
+                    new RuntimeObservationCommand(observed),
+                    _shutdown.Token,
+                    new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+                if (observed.Transport is TransportState.Ended or TransportState.Faulted)
+                {
+                    // Terminal states must be delivered even during command
+                    // bursts. This awaits asynchronously and is cancellable.
+                    await _commands.Writer.WriteAsync(update, _shutdown.Token)
+                        .ConfigureAwait(false);
+                }
+                else
+                {
+                    // Routine position samples are supersedable. Never block
+                    // command execution or accumulate an unbounded backlog.
+                    _commands.Writer.TryWrite(update);
                 }
             }
         }

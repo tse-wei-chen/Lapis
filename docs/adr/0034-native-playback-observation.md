@@ -27,6 +27,32 @@ The first Windows desktop host in ADR 0033 uses command-driven `PlaybackSnapshot
 - Bounded, cancellable observation uses at most one in-flight native read per session and one timer task. The actor remains the single writer of playback state.
 - A future event-driven native adapter can implement the same observation port while preserving the actor's session/epoch guard.
 
+## Amendment (2026-10-22): recoverable observations and terminal delivery
+
+A snapshot read exception faults the current playback epoch, but must not
+permanently terminate the session's observation task. Otherwise a successful
+Close/Open after a transient device or interop failure would lose position and
+end-of-media observation for all subsequent titles.
+
+- Observation failures are placed in the bounded actor mailbox using
+  cancellable asynchronous backpressure, and the observer awaits actor
+  acknowledgement before polling again. While Faulted, polling remains idle;
+  it resumes when a newly opened movie enters Playing/Paused.
+- Routine nonterminal position updates stay best-effort `TryWrite` and may be
+  dropped under load. Terminal Ended/Faulted observations instead use bounded,
+  cancellable `WriteAsync` so a temporarily full queue cannot permanently
+  suppress an end-of-media or fault transition.
+- The serialized actor alone publishes state. Session and epoch checks still
+  discard any observation or failure from a previous playback generation.
+  Cancellation still joins the observer before disposing native handles.
+- A real actor test injects a read exception, verifies Faulted, closes and
+  reopens, then verifies the new epoch emits positions and Ended.
+
+This updates Decision 4's *nonblocking best-effort queue* policy only for
+terminal observations and failures. There is still at most one in-flight
+native read and a fixed-capacity command mailbox; awaiting space happens on
+the observation task, never on the UI or command actor.
+
 ## Deferred
 
 - Frame-accurate progress and native push-based state-change notifications.

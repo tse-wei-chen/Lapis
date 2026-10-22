@@ -316,6 +316,47 @@ public sealed class PlaybackSessionTests
     }
 
     [Fact]
+    public async Task ObservationReadFailureCanRecoverOnNextOpenedMovie()
+    {
+        var runtime = new ObservingRuntime();
+        await using var session = new PlaybackSession(runtime);
+        await session.ExecuteAsync(new OpenMediaCommand(
+            new MediaLocator(MediaLocatorKind.File, "movie-one.mkv")));
+        await session.ExecuteAsync(new PlayCommand());
+        await runtime.PollStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // This failure is a native read exception, not a Faulted payload.
+        // It faults the active epoch, but must not permanently kill polling.
+        runtime.Fail(new IOException("Injected device snapshot failure"));
+        await WaitForSnapshotAsync(session, snapshot =>
+            snapshot.Transport == TransportState.Faulted);
+        Assert.Equal("ObservationFailure", session.Snapshot.LastError?.Code);
+        Assert.Equal(new PlaybackEpoch(1), session.Snapshot.Epoch);
+
+        // Reopen with a new generation; a fresh position and natural End
+        // must still reach the actor through its surviving observation loop.
+        await session.ExecuteAsync(new CloseCommand());
+        await session.ExecuteAsync(new OpenMediaCommand(
+            new MediaLocator(MediaLocatorKind.File, "movie-two.mkv")));
+        await session.ExecuteAsync(new PlayCommand());
+        Assert.Equal(new PlaybackEpoch(3), session.Snapshot.Epoch);
+
+        runtime.Emit(new RuntimePlaybackObservation(
+            session.SessionId, new PlaybackEpoch(3),
+            MediaTime.FromSeconds(12), TransportState.Playing));
+        await WaitForSnapshotAsync(session, snapshot =>
+            snapshot.Transport == TransportState.Playing &&
+            snapshot.Position == MediaTime.FromSeconds(12));
+        runtime.Emit(new RuntimePlaybackObservation(
+            session.SessionId, new PlaybackEpoch(3),
+            MediaTime.FromSeconds(35), TransportState.Ended));
+        await WaitForSnapshotAsync(session, snapshot =>
+            snapshot.Transport == TransportState.Ended);
+        Assert.Equal(MediaTime.FromSeconds(35), session.Snapshot.Position);
+        Assert.Null(session.Snapshot.LastError);
+    }
+
+    [Fact]
     public async Task ObservationDisposalCancelsPendingReadBeforeRuntimeDispose()
     {
         var runtime = new ObservingRuntime();
@@ -341,8 +382,8 @@ public sealed class PlaybackSessionTests
 
     private sealed class ObservingRuntime : FakeRuntime, IPlaybackRuntimeObserver
     {
-        private readonly Channel<RuntimePlaybackObservation> _updates =
-            Channel.CreateUnbounded<RuntimePlaybackObservation>();
+        private readonly Channel<object> _updates =
+            Channel.CreateUnbounded<object>();
         private int _readsDelivered;
         public TaskCompletionSource PollStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -365,8 +406,9 @@ public sealed class PlaybackSessionTests
             try
             {
                 var value = await _updates.Reader.ReadAsync(cancellationToken);
+                if (value is Exception failure) throw failure;
                 Interlocked.Increment(ref _readsDelivered);
-                return value;
+                return (RuntimePlaybackObservation)value;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -377,6 +419,9 @@ public sealed class PlaybackSessionTests
 
         public void Emit(RuntimePlaybackObservation observation) =>
             _updates.Writer.TryWrite(observation);
+
+        public void Fail(Exception failure) =>
+            _updates.Writer.TryWrite(failure);
 
         public async Task WaitForDeliveredReadsAsync(int count)
         {
