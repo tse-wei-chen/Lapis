@@ -5,6 +5,7 @@
 #include "session/playback_media_session.hpp"
 #include "video/video_presenter.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -14,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <stop_token>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -338,9 +340,54 @@ bool wait_for_count(
     return false;
 }
 
+bool wait_for_clock_position(
+    const lapis::media::PlaybackExecution& execution,
+    lapis::media::MediaTime minimum) {
+    using namespace std::chrono_literals;
+    const auto deadline = std::chrono::steady_clock::now() + 4s;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (execution.snapshot().clock.position.nanoseconds >= minimum.nanoseconds) {
+            return true;
+        }
+        std::this_thread::sleep_for(1ms);
+    }
+    return false;
+}
+
+std::filesystem::path filesystem_path_from_utf8(const std::string& value) {
+    std::u8string utf8;
+    utf8.reserve(value.size());
+    for (const unsigned char character : value) {
+        utf8.push_back(static_cast<char8_t>(character));
+    }
+    return std::filesystem::path(utf8);
+}
+
+std::string playback_asset_path() {
+    const auto utf8_path = filesystem_path_from_utf8(
+        LAPIS_TEST_CHURN_MEDIA_PATH).u8string();
+    return {
+        reinterpret_cast<const char*>(utf8_path.data()),
+        utf8_path.size()
+    };
+}
+
+std::string av_playback_asset_path() {
+    const auto utf8_path = filesystem_path_from_utf8(
+        LAPIS_TEST_AV_MEDIA_PATH).u8string();
+    return {
+        reinterpret_cast<const char*>(utf8_path.data()),
+        utf8_path.size()
+    };
+}
+
 std::string audio_asset_path() {
-    const std::filesystem::path video_path{LAPIS_TEST_PIPELINE_MEDIA_PATH};
-    return (video_path.parent_path() / "test_audio.wav").string();
+    const auto video_path = filesystem_path_from_utf8(LAPIS_TEST_PIPELINE_MEDIA_PATH);
+    const auto utf8_path = (video_path.parent_path() / "test_audio.wav").u8string();
+    return {
+        reinterpret_cast<const char*>(utf8_path.data()),
+        utf8_path.size()
+    };
 }
 
 } // namespace
@@ -382,6 +429,10 @@ int main() {
         CHECK(snapshot.clock.epoch.value() == 0);
 
         CHECK(execution.start(PlaybackEpoch{1}, MediaTime{}).ok());
+        CHECK(execution.set_fast_forward(PlaybackEpoch{1}, true).ok());
+        CHECK(execution.snapshot().state == PlaybackExecutionState::Running);
+        CHECK(execution.set_fast_forward(PlaybackEpoch{1}, false).ok());
+        CHECK(execution.snapshot().state == PlaybackExecutionState::Running);
         snapshot = execution.snapshot();
         CHECK(snapshot.video_active);
         CHECK(!snapshot.audio_active);
@@ -470,6 +521,111 @@ int main() {
         CHECK(snapshot.process_state != VideoProcessWorkerState::Running);
         CHECK(snapshot.scheduler_state != VideoSchedulerWorkerState::Running);
         CHECK(snapshot.render_state != VideoRenderWorkerState::Running);
+    }
+
+    // Exercise discontinuities and temporary rate changes against a
+    // multi-second compressed file while decode and presentation are active.
+    {
+        PlaybackMediaSession media;
+        const MediaLocator locator{
+            MediaLocatorKind::File,
+            playback_asset_path()
+        };
+        const auto opened = media.open(locator);
+        CHECK(opened.ok());
+        CHECK(opened.has_video);
+        CHECK(opened.duration.has_value());
+        CHECK(opened.duration->nanoseconds >= 5'000'000'000);
+
+        auto probe = std::make_shared<PresenterProbe>();
+        PlaybackExecution execution(
+            media,
+            std::make_unique<ffmpeg::FfmpegVideoFrameConverter>(),
+            std::make_unique<RecordingPresenter>(probe));
+        CHECK(execution.start(PlaybackEpoch{1}, MediaTime{}).ok());
+        CHECK(wait_for_clock_position(execution, MediaTime{150'000'000}));
+
+        const auto before_fast_forward = execution.snapshot().clock.position;
+        CHECK(execution.set_fast_forward(PlaybackEpoch{1}, true).ok());
+        const auto fast_forward_started = std::chrono::steady_clock::now();
+        CHECK(wait_for_clock_position(
+            execution,
+            MediaTime{before_fast_forward.nanoseconds + 400'000'000}));
+        CHECK(
+            std::chrono::steady_clock::now() - fast_forward_started <
+            350ms);
+        CHECK(execution.set_fast_forward(PlaybackEpoch{1}, false).ok());
+        CHECK(execution.snapshot().state == PlaybackExecutionState::Running);
+
+        CHECK(execution.seek(
+            PlaybackEpoch{2}, MediaTime{2'000'000'000}).ok());
+        auto snapshot = execution.snapshot();
+        CHECK(snapshot.state == PlaybackExecutionState::Running);
+        CHECK(snapshot.clock.position.nanoseconds >= 2'000'000'000);
+
+        CHECK(execution.pause().ok());
+        CHECK(execution.seek(
+            PlaybackEpoch{3}, MediaTime{4'000'000'000}).ok());
+        snapshot = execution.snapshot();
+        CHECK(snapshot.state == PlaybackExecutionState::Paused);
+        CHECK(snapshot.clock.position.nanoseconds == 4'000'000'000);
+
+        CHECK(execution.resume().ok());
+        CHECK(wait_for_state(execution, PlaybackExecutionState::Ended));
+        snapshot = execution.snapshot();
+        CHECK(snapshot.clock.epoch.value() == 3);
+        CHECK(snapshot.rendering.presenter_failures == 0);
+        CHECK(probe->present_count > 0);
+        CHECK(std::find(
+            probe->presented_epochs.begin(),
+            probe->presented_epochs.end(),
+            3) != probe->presented_epochs.end());
+        for (std::size_t index = 0; index < probe->presented_epochs.size(); ++index) {
+            CHECK(probe->pixel_formats[index] == VideoPixelFormat::Bgra8);
+        }
+    }
+
+    // Returning to normal speed must start a fresh audio render generation;
+    // fast-forward intentionally retires the old audio graph.
+    {
+        PlaybackMediaSession media;
+        const MediaLocator locator{
+            MediaLocatorKind::File,
+            av_playback_asset_path()
+        };
+        const auto opened = media.open(locator);
+        CHECK(opened.ok());
+        CHECK(opened.has_video);
+        CHECK(opened.has_audio);
+
+        auto output_probe = std::make_shared<AudioOutputProbe>();
+        auto presenter_probe = std::make_shared<PresenterProbe>();
+        PlaybackExecutionConfig config{};
+        config.audio_decode_queue_capacity = 1;
+        config.audio_process_queue_capacity = 1;
+        PlaybackExecution execution(
+            media,
+            std::make_unique<ffmpeg::FfmpegVideoFrameConverter>(),
+            std::make_unique<RecordingPresenter>(presenter_probe),
+            std::make_unique<BlockingAudioOutputProvider>(output_probe),
+            [](const AudioFormat& target) -> std::unique_ptr<IAudioFrameProcessor> {
+                return std::make_unique<ffmpeg::FfmpegAudioFrameConverter>(target);
+            },
+            config);
+
+        CHECK(execution.start(PlaybackEpoch{1}, MediaTime{}).ok());
+        CHECK(wait_for_count(output_probe->open_count, 1));
+        CHECK(execution.set_fast_forward(PlaybackEpoch{1}, true).ok());
+        CHECK(wait_for_count(output_probe->close_count, 1));
+        CHECK(!execution.snapshot().audio_active);
+
+        CHECK(execution.set_fast_forward(PlaybackEpoch{1}, false).ok());
+        CHECK(wait_for_count(output_probe->open_count, 2));
+        auto snapshot = execution.snapshot();
+        CHECK(snapshot.state == PlaybackExecutionState::Running);
+        CHECK(snapshot.audio_active);
+        CHECK(execution.close(PlaybackEpoch{2}).ok());
+        CHECK(output_probe->close_count.load(std::memory_order_relaxed) >= 2);
     }
 
     // Audio-only media exercises PlaybackExecution's optional audio branch

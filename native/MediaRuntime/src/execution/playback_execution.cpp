@@ -337,6 +337,9 @@ PlaybackExecutionResult PlaybackExecution::set_fast_forward(
         logical_state_ = PlaybackExecutionState::Faulted;
         return {PlaybackExecutionError::ClockFailure};
     }
+    if (!resume_audio_unlocked()) {
+        return fault_unlocked(PlaybackExecutionError::WorkerFailed);
+    }
 
     logical_state_ = PlaybackExecutionState::Running;
     return {};

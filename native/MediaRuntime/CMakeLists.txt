@@ -22,7 +22,7 @@ endif()
 
 function(lapis_enable_strict_warnings target)
     if(MSVC)
-        target_compile_options(${target} PRIVATE /W4 /WX /permissive-)
+        target_compile_options(${target} PRIVATE /W4 /WX /permissive- /utf-8)
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
@@ -159,6 +159,10 @@ if(BUILD_TESTING)
     set(
         LAPIS_TEST_PIPELINE_MEDIA_PATH
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/test_pipeline.y4m"
+    )
+    set(
+        LAPIS_TEST_AV_MEDIA_PATH
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/test_av_pipeline.mp4"
     )
     set(LAPIS_TEST_AUDIO_PATH "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/test_audio.wav")
     set(LAPIS_TEST_CHURN_MEDIA_PATH
@@ -704,7 +708,10 @@ if(BUILD_TESTING)
     )
     target_compile_definitions(
         Lapis.MediaRuntime.PlaybackExecutionTests
-        PRIVATE LAPIS_TEST_PIPELINE_MEDIA_PATH="${LAPIS_TEST_PIPELINE_MEDIA_PATH}"
+        PRIVATE
+            LAPIS_TEST_PIPELINE_MEDIA_PATH="${LAPIS_TEST_PIPELINE_MEDIA_PATH}"
+            LAPIS_TEST_CHURN_MEDIA_PATH="${LAPIS_TEST_CHURN_MEDIA_PATH}"
+            LAPIS_TEST_AV_MEDIA_PATH="${LAPIS_TEST_AV_MEDIA_PATH}"
     )
     target_link_libraries(
         Lapis.MediaRuntime.PlaybackExecutionTests
