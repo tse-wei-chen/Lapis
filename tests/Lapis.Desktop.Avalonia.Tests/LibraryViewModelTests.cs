@@ -331,7 +331,7 @@ public sealed class LibraryViewModelTests
             await view.LoadAsync();
             await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, first));
             await view.ImportAsync(new MediaLocator(MediaLocatorKind.File, second));
-            var card = Assert.Single(view.VisibleItems.Where(x => x.Title == "zebra.2026"));
+            var card = Assert.Single(view.VisibleItems, x => x.Title == "zebra.2026");
             var id = card.Item.Id;
             var now = DateTimeOffset.UtcNow;
             view.LoadFavorites([new FavoriteEntry(id, now)]);
@@ -340,7 +340,7 @@ public sealed class LibraryViewModelTests
             Assert.True(card.CanResume);
 
             await view.RenameAsync(card.Item, "A Favorite Movie");
-            var renamed = Assert.Single(view.VisibleItems.Where(x => x.Title == "A Favorite Movie"));
+            var renamed = Assert.Single(view.VisibleItems, x => x.Title == "A Favorite Movie");
             Assert.Equal(id, renamed.Item.Id);
             Assert.True(renamed.IsFavorite);
             Assert.True(renamed.CanResume);
