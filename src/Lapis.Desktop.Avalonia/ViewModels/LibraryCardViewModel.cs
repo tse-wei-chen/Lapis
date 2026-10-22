@@ -19,6 +19,8 @@ public sealed class LibraryCardViewModel : INotifyPropertyChanged, IDisposable
     private WatchProgress? _watchProgress;
     private WatchProgress? _watchHistory;
     private bool _started;
+    private bool _posterLoading;
+    private string _posterRefreshStatus = "";
     private bool _disposed;
 
     public LibraryCardViewModel(MediaLibraryItem item) =>
@@ -37,6 +39,8 @@ public sealed class LibraryCardViewModel : INotifyPropertyChanged, IDisposable
     public Bitmap? Poster => _poster;
     public bool HasPoster => _poster is not null;
     public bool ShowPlaceholder => _poster is null;
+    public bool CanRefreshPoster => !_disposed && !_posterLoading;
+    public string PosterRefreshStatus => _posterRefreshStatus;
     public string PlaceholderGlyph => IsDisc ? "◈" : "▶";
     public string PlaceholderCaption => IsDisc ? "BLU-RAY" : "LOCAL VIDEO";
     public bool CanResume => !IsDisc && IsAvailable && _watchProgress?.IsResumable == true;
@@ -91,12 +95,31 @@ public sealed class LibraryCardViewModel : INotifyPropertyChanged, IDisposable
     {
         if (_started || _disposed) return;
         _started = true;
-        // Discovery and all image I/O stay off the Avalonia UI thread.
-        // Missing/corrupt artwork never prevents catalog browsing.
-        _ = LoadPosterAsync();
+        StartPosterScan(manual: false);
     }
 
-    private async Task LoadPosterAsync()
+    /// <summary>
+    /// Re-discover local sidecars without changing the catalog or restarting
+    /// playback. Calls are serialized per card and capped globally at two
+    /// concurrent image decodes. Can safely run after a prior missing cover.
+    /// </summary>
+    public void RefreshPoster()
+    {
+        if (_disposed || _posterLoading) return;
+        _started = true;
+        StartPosterScan(manual: true);
+    }
+
+    private void StartPosterScan(bool manual)
+    {
+        _posterLoading = true;
+        _posterRefreshStatus = manual ? "正在重新掃描本機封面…" : "";
+        Notify(nameof(CanRefreshPoster));
+        Notify(nameof(PosterRefreshStatus));
+        _ = LoadPosterAsync(manual);
+    }
+
+    private async Task LoadPosterAsync(bool manual)
     {
         Bitmap? decoded = null;
         try
@@ -115,15 +138,14 @@ public sealed class LibraryCardViewModel : INotifyPropertyChanged, IDisposable
                                 FileAccess.Read, FileShare.ReadWrite);
                             if (stream.Length is <= 0 or > LocalArtworkLocator.MaxSourceBytes)
                                 continue;
-                            // Full-resolution covers must never be held per card.
+                            // Never hold a full-resolution disc cover in each card.
                             return Bitmap.DecodeToWidth(stream, 400);
                         }
                         catch (Exception exception) when (exception is
                             IOException or UnauthorizedAccessException or
                             ArgumentException or InvalidOperationException)
                         {
-                            // A damaged image is not a fatal library error;
-                            // a lower-priority candidate may be valid.
+                            // A damaged sidecar cannot prevent trying the next.
                         }
                     }
                     return null;
@@ -133,35 +155,41 @@ public sealed class LibraryCardViewModel : INotifyPropertyChanged, IDisposable
             {
                 DecodeSlots.Release();
             }
-
-            if (decoded is null) return;
-            var image = decoded;
-            decoded = null;
+        }
+        catch (OperationCanceledException)
+        {
+            // Card removed while scanning; do not publish stale artwork.
+        }
+        catch (Exception)
+        {
+            // Missing media drives or invalid image data are nonfatal.
+        }
+        finally
+        {
+            var next = decoded;
             Dispatcher.UIThread.Post(() =>
             {
                 if (_disposed)
                 {
-                    image.Dispose();
+                    next?.Dispose();
                     return;
                 }
-                _poster?.Dispose();
-                _poster = image;
+
+                // Null means the cover was removed or no usable image was found.
+                // It must also clear the old poster rather than retaining stale art.
+                var previous = _poster;
+                _poster = next;
+                previous?.Dispose();
+                _posterLoading = false;
+                _posterRefreshStatus = manual
+                    ? next is null ? "未找到可用封面；請確認圖片名稱與格式。" : "封面已更新。"
+                    : "";
                 Notify(nameof(Poster));
                 Notify(nameof(HasPoster));
                 Notify(nameof(ShowPlaceholder));
+                Notify(nameof(CanRefreshPoster));
+                Notify(nameof(PosterRefreshStatus));
             });
-        }
-        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
-        {
-            // The card was removed while its cover was decoding.
-        }
-        catch (Exception)
-        {
-            // Unavailable drives and malformed local sources are nonfatal.
-        }
-        finally
-        {
-            decoded?.Dispose();
         }
     }
 
