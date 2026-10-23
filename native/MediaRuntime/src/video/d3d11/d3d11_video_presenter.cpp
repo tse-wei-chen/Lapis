@@ -499,8 +499,11 @@ private:
     }
 
     [[nodiscard]] HRESULT resize(UINT width, UINT height) {
+        // ResizeBuffers requires every direct and indirect back-buffer reference
+        // to be released, including commands queued by the immediate context.
         context_->ClearState();
         render_target_.Reset();
+        context_->Flush();
         const auto hr = swap_chain_->ResizeBuffers(
             0, width, height, DXGI_FORMAT_UNKNOWN, 0);
         if (FAILED(hr)) {
