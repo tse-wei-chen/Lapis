@@ -19,6 +19,7 @@ public sealed partial class BigPictureLibraryView : UserControl
     private readonly ScrollViewer _scroll;
     private readonly Border _hero;
     private readonly Grid _detailsOverlay;
+    private readonly ScrollViewer _detailsScroll;
     private readonly Button _detailsPlay;
     private readonly Button _detailsResume;
     private readonly Button _detailsRepair;
@@ -38,6 +39,8 @@ public sealed partial class BigPictureLibraryView : UserControl
     public event Action<LibraryCardViewModel>? RepairSourceRequested;
     public event Action<LibraryCardViewModel, string>? RenameTitleRequested;
     public event Action<LibraryCardViewModel>? RemoveFromLibraryRequested;
+    public event Action<LibraryCardViewModel>? CopyPathRequested;
+    public event Action<LibraryCardViewModel>? RevealSourceRequested;
     public event Action? ImportRequested;
     public event Action? ImportDiscRequested;
 
@@ -50,6 +53,8 @@ public sealed partial class BigPictureLibraryView : UserControl
             ?? throw new InvalidOperationException("Missing Big Picture hero.");
         _detailsOverlay = this.FindControl<Grid>("BigPictureDetailsOverlay")
             ?? throw new InvalidOperationException("Missing Big Picture film details.");
+        _detailsScroll = this.FindControl<ScrollViewer>("BigPictureDetailsScroll")
+            ?? throw new InvalidOperationException("Missing scrollable detail sheet.");
         _detailsPlay = this.FindControl<Button>("BigPictureDetailsPlay")
             ?? throw new InvalidOperationException("Missing film detail play action.");
         _detailsResume = this.FindControl<Button>("BigPictureDetailsResume")
@@ -99,6 +104,7 @@ public sealed partial class BigPictureLibraryView : UserControl
         CancelRenameEditor();
         _removeConfirmation.IsVisible = false;
         card.RefreshSourceAvailability();
+        _detailsScroll.Offset = new Vector(0, 0);
         _detailsOverlay.IsVisible = true;
         if (card.NeedsSourceRepair) _detailsRepair.Focus();
         else if (card.CanResume) _detailsResume.Focus();
@@ -209,6 +215,18 @@ public sealed partial class BigPictureLibraryView : UserControl
         // the detail sheet before the selected card disappears.
         if (Library.IsFavoritesCategory && card.IsFavorite) CloseDetails();
         ToggleFavoriteRequested?.Invoke(card);
+    }
+
+    private void DetailsCopyPath_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Library?.FeaturedCard is { } card)
+            CopyPathRequested?.Invoke(card);
+    }
+
+    private void DetailsReveal_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Library?.FeaturedCard is { IsAvailable: true } card)
+            RevealSourceRequested?.Invoke(card);
     }
 
     private void DetailsForget_Click(object? sender, RoutedEventArgs e)

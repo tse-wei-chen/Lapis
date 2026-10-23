@@ -3,7 +3,7 @@ using System.Threading;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Themes.Fluent;
+using FluentAvalonia.Styling;
 using Lapis.Contracts.Playback;
 using Lapis.Desktop.Avalonia.Controls;
 using Lapis.Desktop.Avalonia.Views;
@@ -612,7 +612,11 @@ public sealed class AvaloniaAcceptanceApplication : global::Avalonia.Application
     internal static TaskCompletionSource? Completed { get; set; }
     internal static string? MediaPath { get; set; }
 
-    public override void Initialize() => Styles.Add(new FluentTheme());
+    public override void Initialize()
+    {
+        RequestedThemeVariant = global::Avalonia.Styling.ThemeVariant.Dark;
+        Styles.Add(new FluentAvaloniaTheme());
+    }
 
     public override void OnFrameworkInitializationCompleted()
     {

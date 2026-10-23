@@ -96,6 +96,8 @@ public sealed partial class MainWindow : Window
         _bigPicture.RepairSourceRequested += card => _ = RepairSourceAsync(card);
         _bigPicture.RenameTitleRequested += (card, title) => _ = RenameMovieAsync(card, title);
         _bigPicture.RemoveFromLibraryRequested += card => _ = RemoveMovieAsync(card);
+        _bigPicture.CopyPathRequested += card => _ = CopySourcePathAsync(card);
+        _bigPicture.RevealSourceRequested += RevealSourceInExplorer;
         _bigPicture.ImportRequested += () => _ = ImportFromBigPictureAsync();
         _bigPicture.ImportDiscRequested += () => _ = ImportDiscCoreAsync();
 
@@ -421,6 +423,47 @@ public sealed partial class MainWindow : Window
         catch (Exception exception)
         {
             _library.ReportError($"匯入 BDMV 失敗：{exception.Message}");
+        }
+    }
+
+    private async Task CopySourcePathAsync(LibraryCardViewModel card)
+    {
+        if (_closeStarted) return;
+        try
+        {
+            var clipboard = TopLevel.GetTopLevel(this)?.Clipboard
+                ?? throw new InvalidOperationException("剪貼簿尚未就緒。");
+            await clipboard.SetTextAsync(card.SourcePath);
+            if (!_closeStarted)
+                _library.ReportError($"已複製來源路徑：{card.Title}");
+        }
+        catch (Exception exception)
+        {
+            if (!_closeStarted)
+                _library.ReportError($"複製來源路徑失敗：{exception.Message}");
+        }
+    }
+
+    private void RevealSourceInExplorer(LibraryCardViewModel card)
+    {
+        if (_closeStarted) return;
+        try
+        {
+            if (!card.IsAvailable)
+                throw new FileNotFoundException("影片來源已離線或不存在。", card.SourcePath);
+
+            var process = new ProcessStartInfo("explorer.exe")
+            {
+                UseShellExecute = false
+            };
+            process.ArgumentList.Add("/select,");
+            process.ArgumentList.Add(card.SourcePath);
+            Process.Start(process);
+        }
+        catch (Exception exception)
+        {
+            if (!_closeStarted)
+                _library.ReportError($"無法在檔案總管中顯示來源：{exception.Message}");
         }
     }
 

@@ -47,9 +47,11 @@ public sealed class LibraryViewModelTests
         Assert.True(view.ShowFeaturedHero);
         Assert.True(view.ShowRecentShelf);
 
+        var featured = view.FeaturedCard;
         view.ShowList();
         Assert.True(view.IsListView);
         Assert.False(view.IsGridView);
+        Assert.Same(featured, view.FeaturedCard);
         Assert.False(view.ShowFeaturedHero);
         Assert.False(view.ShowRecentShelf);
         Assert.False(view.ShowFavoritesShelf);
@@ -61,6 +63,7 @@ public sealed class LibraryViewModelTests
         Assert.True(view.IsGridView);
         Assert.True(view.ShowFeaturedHero);
         Assert.True(view.ShowRecentShelf);
+        Assert.Same(featured, view.FeaturedCard);
         Assert.Same(item, Assert.Single(view.VisibleItems));
         Assert.Equal(1, storage.ImportCount);
     }

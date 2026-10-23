@@ -40,6 +40,8 @@ public sealed class WindowsDesktopJourneys
 
         session.Click(session.WaitFor(main, "Lapis.Library.FeaturedDetails"));
         Assert.NotNull(session.WaitFor(main, "Lapis.Library.DetailPlay"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.DetailCopyPath"));
+        Assert.NotNull(session.WaitFor(main, "Lapis.Library.DetailReveal"));
         session.Click(session.WaitFor(main, "Lapis.Library.DetailClose"));
 
         // Presentation changes in place; neither a management page nor a
