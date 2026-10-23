@@ -4,6 +4,7 @@
 #include "process/ffmpeg/ffmpeg_audio_frame_converter.hpp"
 #include "session/playback_media_session.hpp"
 
+#include <array>
 #include <cstdint>
 #include <iostream>
 #include <memory>
@@ -15,6 +16,44 @@
             return 1; \
         } \
     } while (false)
+
+namespace {
+
+class MonoTestBuffer final : public lapis::media::IAudioBuffer {
+public:
+    MonoTestBuffer() { samples_.fill(0.25F); }
+
+    [[nodiscard]] const lapis::media::AudioFormat& format() const noexcept override {
+        return format_;
+    }
+    [[nodiscard]] std::uint32_t sample_frame_count() const noexcept override {
+        return static_cast<std::uint32_t>(samples_.size());
+    }
+    [[nodiscard]] std::uint32_t bytes_per_sample() const noexcept override {
+        return sizeof(float);
+    }
+    [[nodiscard]] std::uint32_t plane_count() const noexcept override {
+        return 1;
+    }
+    [[nodiscard]] lapis::media::AudioPlaneView plane(
+        std::uint32_t index) const noexcept override {
+        return index == 0
+            ? lapis::media::AudioPlaneView{
+                reinterpret_cast<const std::byte*>(samples_.data()), sizeof(samples_)}
+            : lapis::media::AudioPlaneView{};
+    }
+private:
+    lapis::media::AudioFormat format_{
+        lapis::media::AudioSampleFormat::F32,
+        lapis::media::AudioPacking::Interleaved,
+        48'000,
+        {lapis::media::AudioChannel::FrontCenter},
+        false
+    };
+    std::array<float, 480> samples_{};
+};
+
+} // namespace
 
 int main() {
     using namespace lapis::media;
@@ -115,6 +154,29 @@ int main() {
         CHECK(remaining.item->timestamp == remaining.item->payload.timestamp);
         CHECK(remaining.item->payload.buffer != nullptr);
     }
+
+    // A standard single-FC mono source must be converted to stereo on both
+    // Windows FFmpeg and Ubuntu's system libswresample, not only on the
+    // custom-channel-layout-capable FFmpeg builds.
+    AudioFormat stereo{
+        AudioSampleFormat::F32, AudioPacking::Interleaved,
+        48'000, {AudioChannel::FrontLeft, AudioChannel::FrontRight}, false
+    };
+    FfmpegAudioFrameConverter mono_to_stereo(stereo);
+    AudioFrame mono_frame{};
+    mono_frame.buffer = std::make_shared<MonoTestBuffer>();
+    const auto mono_result = mono_to_stereo.process(mono_frame);
+    CHECK(mono_result.status == AudioProcessStatus::Processed);
+    CHECK(mono_result.frame.has_value());
+    CHECK(mono_result.frame->buffer != nullptr);
+    CHECK(mono_result.frame->buffer->format().channels.size() == 2);
+    CHECK(mono_result.frame->buffer->sample_frame_count() > 0);
+    CHECK(mono_result.frame->buffer->plane_count() == 1);
+    const auto converted_plane = mono_result.frame->buffer->plane(0);
+    CHECK(converted_plane.data != nullptr);
+    CHECK(converted_plane.size_bytes >=
+        static_cast<std::size_t>(mono_result.frame->buffer->sample_frame_count()) *
+        sizeof(float) * 2);
 
     return 0;
 }

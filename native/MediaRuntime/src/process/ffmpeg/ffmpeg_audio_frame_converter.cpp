@@ -89,10 +89,37 @@ bool make_channel_layout(
         return false;
     }
 
-    // Build the custom-order channel map through the public AVChannelLayout
-    // struct and FFmpeg allocator. Unlike a channel-mask layout, this
-    // preserves explicit surround-channel order on every supported FFmpeg
-    // target (including the Ubuntu system package).
+    // Use a native channel mask whenever the requested order matches the
+    // canonical FFmpeg bit order. In particular, Ubuntu's libswresample does
+    // not accept AV_CHANNEL_ORDER_CUSTOM for a single front-center (mono)
+    // source, even though av_channel_layout_check considers it valid.
+    // Noncanonical layouts retain their explicit order via CUSTOM below.
+    std::uint64_t mask{};
+    int previous_channel = -1;
+    bool native_order = true;
+    for (const auto channel : format.channels) {
+        const int index = static_cast<int>(to_av_channel(channel));
+        if (index < 0 || index >= 64) {
+            return false;
+        }
+        const auto bit = std::uint64_t{1} << index;
+        if ((mask & bit) != 0) {
+            return false;
+        }
+        if (index <= previous_channel) {
+            native_order = false;
+        }
+        previous_channel = index;
+        mask |= bit;
+    }
+    if (native_order) {
+        if (av_channel_layout_from_mask(&layout, mask) == 0) {
+            return true;
+        }
+        av_channel_layout_uninit(&layout);
+    }
+
+    // Preserve explicit noncanonical surround-channel order when necessary.
     layout.order = AV_CHANNEL_ORDER_CUSTOM;
     layout.nb_channels = static_cast<int>(format.channels.size());
     layout.u.map = static_cast<AVChannelCustom*>(
